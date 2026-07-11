@@ -1,4 +1,4 @@
-.PHONY: install dev api web test lint typecheck build up down
+.PHONY: install dev api web migrate test lint typecheck build up down
 
 install:
 	corepack enable
@@ -14,8 +14,11 @@ api:
 web:
 	pnpm --filter @kinward/web dev
 
+migrate:
+	cd services/kinward && alembic -c alembic.ini upgrade head
+
 test:
-	pytest services/kinward/tests
+	cd services/kinward && pytest
 	pnpm -r test
 
 lint:
@@ -23,7 +26,7 @@ lint:
 	pnpm -r lint
 
 typecheck:
-	mypy services/kinward/src
+	cd services/kinward && mypy src
 	pnpm -r typecheck
 
 build:
