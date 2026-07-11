@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_prefix="KINWARD_", extra="ignore")
 
     environment: Literal["development", "test", "production"] = "development"
+    database_url: str = "sqlite+aiosqlite:///./kinward.db"
     memory_backend: Literal["honcho", "none"] = "none"
     knowledge_backend: Literal["llm_wiki", "none"] = "none"
     honcho_url: str | None = None
