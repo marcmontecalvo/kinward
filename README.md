@@ -1,0 +1,49 @@
+# Kinward
+
+A private, single-household AI platform where each person has their own assistant, with personal memory, household coordination, smart-home integration, and adaptable experiences across personal and shared devices.
+
+## Status
+
+Kinward is being rebuilt from a clean repository after the Homefront project pivoted from a commercial multi-tenant SaaS design to a private, Docker-deployed system for one household.
+
+The repository currently contains the authoritative product direction, UX specification, migration plan, and initial monorepo boundaries. Production implementation begins only after the salvage audit and architecture reset are complete.
+
+## Product principles
+
+- One private deployment serves one household.
+- Each person has one or more personal AI assistants.
+- Personal and assistant memory remain permission-bound.
+- Shared assistants are limited household fallbacks, not collective private brains.
+- Ordinary life is inferred from durable context rather than manually programmed routines.
+- Web/PWA is the first client.
+- Native Android capabilities are deferred until a proven requirement needs them.
+- The interface is built from modular cards and declarative surface layouts.
+- Kinward Control remains separate from everyday assistant use.
+- Home Assistant is an integration and physical-state authority, not the user experience.
+
+## Repository shape
+
+```text
+apps/web/                 Responsive web/PWA client
+services/kinward/         Single-household backend
+packages/contracts/       Shared API contracts
+packages/schemas/         Runtime schemas and validation
+packages/assistant-core/  Assistant domain primitives
+packages/card-sdk/        Card registry contracts
+packages/layout-sdk/      Surface and layout contracts
+packages/integration-sdk/ Integration adapter contracts
+infra/                    Docker and optional observability
+docs/                     Current product and technical documentation
+_bmad-output/             Authoritative BMAD planning artifacts
+```
+
+## Authoritative documents
+
+- [Product brief](_bmad-output/planning-artifacts/product-brief-Kinward-Assistant-Experience.md)
+- [UX specification](_bmad-output/planning-artifacts/ux-design-specification-Kinward-Assistant-Experience.md)
+- [Pivot and rebuild plan](docs/pivot/single-household-pivot-and-rebuild-plan.md)
+- [Salvage matrix](docs/pivot/salvage-matrix.md)
+
+## License
+
+Kinward is source-available under the PolyForm Noncommercial License 1.0.0. Personal, educational, research, hobby, and other qualifying noncommercial use is permitted. Commercial use requires a separate license from the copyright holder.
