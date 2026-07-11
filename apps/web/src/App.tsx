@@ -1,17 +1,45 @@
-type CardProps = {
-  title: string;
-  children: React.ReactNode;
-  className?: string;
-};
+import { getCard } from "./cards/registry";
 
-function Card({ title, children, className = "" }: CardProps) {
-  return (
-    <section className={`card ${className}`.trim()}>
-      <h2>{title}</h2>
-      {children}
-    </section>
-  );
-}
+const cards = [
+  {
+    id: "now",
+    type: "now",
+    title: "Now",
+    className: "now-card",
+    data: {
+      headline: "Your evening is clear until 6:30.",
+      detail: "Dinner shifted later and does not conflict with your calendar.",
+      action: "Review change",
+    },
+  },
+  {
+    id: "briefing",
+    type: "list",
+    title: "Quiet briefing",
+    data: {
+      items: [
+        "The school calendar added an early-release day next Friday.",
+        "The garage door was closed automatically.",
+        "No approvals are waiting.",
+      ],
+    },
+  },
+  {
+    id: "continue",
+    type: "topics",
+    title: "Continue",
+    data: { items: ["Summer trip", "Kitchen project", "Vehicle maintenance"] },
+  },
+  {
+    id: "house",
+    type: "now",
+    title: "House status",
+    data: {
+      headline: "All normal",
+      detail: "3 people home · doors secure · no active alerts",
+    },
+  },
+] as const;
 
 export function App() {
   return (
@@ -26,32 +54,11 @@ export function App() {
       </header>
 
       <section className="grid" aria-label="Your assistant overview">
-        <Card title="Now" className="now-card">
-          <p className="headline">Your evening is clear until 6:30.</p>
-          <p className="muted">Dinner shifted later and does not conflict with your calendar.</p>
-          <button>Review change</button>
-        </Card>
-
-        <Card title="Quiet briefing">
-          <ul>
-            <li>The school calendar added an early-release day next Friday.</li>
-            <li>The garage door was closed automatically.</li>
-            <li>No approvals are waiting.</li>
-          </ul>
-        </Card>
-
-        <Card title="Continue">
-          <div className="topic-list">
-            <button>Summer trip</button>
-            <button>Kitchen project</button>
-            <button>Vehicle maintenance</button>
-          </div>
-        </Card>
-
-        <Card title="House status">
-          <p className="headline">All normal</p>
-          <p className="muted">3 people home · doors secure · no active alerts</p>
-        </Card>
+        {cards.map((card) => {
+          const definition = getCard(card.type);
+          const Card = definition.render;
+          return <Card key={card.id} title={card.title} data={card.data} className={card.className} />;
+        })}
       </section>
 
       <form className="composer" onSubmit={(event) => event.preventDefault()}>
