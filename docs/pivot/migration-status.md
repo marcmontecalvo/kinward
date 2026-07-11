@@ -11,7 +11,10 @@ This document records the final-gate disposition of legacy Homefront subsystems.
 | Single-household architecture | `docs/architecture/README.md` | No control plane or tenancy |
 | Assistant ownership invariants | `services/kinward/src/kinward/domain/assistant_ownership.py` | Personal owner and shared fallback rules |
 | Child/owner permission guards | `services/kinward/src/kinward/domain/permissions.py` | Simplified household model |
-| Household domain contracts | `services/kinward/src/kinward/domain/models.py` | No persistence assumptions |
+| Household domain contracts | `services/kinward/src/kinward/domain/models.py` | Household-native vocabulary |
+| Clean persistence baseline | `services/kinward/src/kinward/persistence/` | Household, people, assistants, layouts, approvals, activity, memory index |
+| New migration history | `services/kinward/migrations/versions/001_initial_single_household.py` | Replaces the entire legacy chain |
+| Atomic initial onboarding | `services/kinward/src/kinward/api/setup.py` | Creates household, first admin, and first personal assistant together |
 | Optional integration resilience | `services/kinward/src/kinward/integrations/base.py` | Secure TLS defaults, safe fallback, circuit breaker |
 | Home Assistant seam | `services/kinward/src/kinward/integrations/home_assistant.py` | HA remains physical-state authority |
 | Memory/knowledge seams | `services/kinward/src/kinward/integrations/memory.py` | Optional and non-blocking |
@@ -19,7 +22,7 @@ This document records the final-gate disposition of legacy Homefront subsystems.
 | Health capability reporting | `services/kinward/src/kinward/app.py` | Disabled optional peers are not startup failures |
 | Modular UI card foundation | `apps/web/src/cards/registry.tsx` | Registry-driven first surface |
 | Surface/layout schemas | `packages/schemas/src/index.ts` | Shared validation contracts |
-| Public-safe Docker stack | `compose.yaml` | Single household with optional data profile |
+| Public-safe Docker stack | `compose.yaml` | Persistent SQLite default with optional data services |
 | Validation workflow | `.github/workflows/ci.yml` | Backend and frontend gates |
 
 ## Explicitly retired
@@ -40,11 +43,10 @@ These capabilities remain product requirements, but their legacy implementations
 
 | Capability | Reason for rebuild |
 |---|---|
-| Persistence and baseline migration | Legacy schema contains tenant, support, entitlement, and routine history |
 | Accounts and invitations | Must fit a simple single-household authentication model |
 | Gmail and Google Calendar adapters | Credentials and account boundaries need a fresh public-safe design |
 | Voice orchestration | Must align with surface handoff and future native Android boundaries |
-| Activity and approvals persistence | Legacy ledger vocabulary is too platform-oriented |
+| Activity and approvals services | Persistence exists; service and UI behavior need household-language rebuilding |
 | Progressive onboarding sessions | Old implementation is tied to the superseded onboarding journey |
 | Layout editor | New registry/schema foundation should drive it |
 | PWA notifications | Must be rebuilt without SaaS notification assumptions |
