@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fastapi import FastAPI
 
+from kinward.api.setup import router as setup_router
 from kinward.config import Settings, get_settings
 
 
@@ -14,6 +15,7 @@ def _capability(enabled: bool, disabled_detail: str) -> dict[str, str]:
 def create_app(settings: Settings | None = None) -> FastAPI:
     runtime = settings or get_settings()
     app = FastAPI(title="Kinward", version="0.1.0")
+    app.include_router(setup_router)
 
     @app.get("/api/health")
     def health() -> dict[str, object]:
