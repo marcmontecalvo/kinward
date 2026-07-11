@@ -4,12 +4,15 @@ services:
       context: ./services/kinward
     environment:
       KINWARD_ENVIRONMENT: ${KINWARD_ENVIRONMENT:-development}
+      KINWARD_DATABASE_URL: ${KINWARD_DATABASE_URL:-sqlite+aiosqlite:////data/kinward.db}
       KINWARD_MEMORY_BACKEND: ${KINWARD_MEMORY_BACKEND:-none}
       KINWARD_KNOWLEDGE_BACKEND: ${KINWARD_KNOWLEDGE_BACKEND:-none}
       KINWARD_HONCHO_URL: ${KINWARD_HONCHO_URL:-}
       KINWARD_LLM_WIKI_URL: ${KINWARD_LLM_WIKI_URL:-}
       KINWARD_HOME_ASSISTANT_URL: ${KINWARD_HOME_ASSISTANT_URL:-}
       KINWARD_HOME_ASSISTANT_TOKEN: ${KINWARD_HOME_ASSISTANT_TOKEN:-}
+    volumes:
+      - kinward-data:/data
     ports:
       - "${KINWARD_API_PORT:-8000}:8000"
     healthcheck:
@@ -39,5 +42,6 @@ services:
     restart: unless-stopped
 
 volumes:
+  kinward-data:
   kinward-postgres:
   kinward-redis:
