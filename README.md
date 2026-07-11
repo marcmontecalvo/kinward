@@ -4,9 +4,11 @@ A private, single-household AI platform where each person has their own assistan
 
 ## Status
 
-Kinward is being rebuilt from a clean repository after the Homefront project pivoted from a commercial multi-tenant SaaS design to a private, Docker-deployed system for one household.
+Kinward is the clean replacement for the legacy Homefront project after its pivot from a commercial multi-tenant SaaS design to a private, Docker-deployed system for one household.
 
-The repository currently contains the authoritative product direction, UX specification, migration plan, and initial monorepo boundaries. Production implementation begins only after the salvage audit and architecture reset are complete.
+Selective migration is underway. The repository now contains the authoritative product direction, a clean single-household backend foundation, optional integration adapters, shared contracts, a registry-driven web surface, Docker configuration, and validation gates. Legacy code is moved only after its useful behavior is separated from SaaS, routine, support-access, and tenant assumptions.
+
+See [Migration Status](docs/pivot/migration-status.md) for the final-gate disposition of each subsystem.
 
 ## Product principles
 
@@ -43,6 +45,29 @@ _bmad-output/             Authoritative BMAD planning artifacts
 - [UX specification](_bmad-output/planning-artifacts/ux-design-specification-Kinward-Assistant-Experience.md)
 - [Pivot and rebuild plan](docs/pivot/single-household-pivot-and-rebuild-plan.md)
 - [Salvage matrix](docs/pivot/salvage-matrix.md)
+- [Migration status](docs/pivot/migration-status.md)
+
+## Development
+
+```bash
+cp .env.example .env
+make install
+make test
+make build
+```
+
+Run the API and web client in separate terminals:
+
+```bash
+make api
+make web
+```
+
+Or start the Docker runtime:
+
+```bash
+make up
+```
 
 ## License
 
