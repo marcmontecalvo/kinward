@@ -1,0 +1,43 @@
+services:
+  kinward:
+    build:
+      context: ./services/kinward
+    environment:
+      KINWARD_ENVIRONMENT: ${KINWARD_ENVIRONMENT:-development}
+      KINWARD_MEMORY_BACKEND: ${KINWARD_MEMORY_BACKEND:-none}
+      KINWARD_KNOWLEDGE_BACKEND: ${KINWARD_KNOWLEDGE_BACKEND:-none}
+      KINWARD_HONCHO_URL: ${KINWARD_HONCHO_URL:-}
+      KINWARD_LLM_WIKI_URL: ${KINWARD_LLM_WIKI_URL:-}
+      KINWARD_HOME_ASSISTANT_URL: ${KINWARD_HOME_ASSISTANT_URL:-}
+      KINWARD_HOME_ASSISTANT_TOKEN: ${KINWARD_HOME_ASSISTANT_TOKEN:-}
+    ports:
+      - "${KINWARD_API_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-kinward}
+      POSTGRES_USER: ${POSTGRES_USER:-kinward}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+    volumes:
+      - kinward-postgres:/var/lib/postgresql/data
+    profiles: ["data"]
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - kinward-redis:/data
+    profiles: ["data"]
+    restart: unless-stopped
+
+volumes:
+  kinward-postgres:
+  kinward-redis:
