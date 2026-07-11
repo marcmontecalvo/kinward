@@ -1,6 +1,14 @@
 import { getCard } from "./cards/registry";
 
-const cards = [
+type CardView = {
+  id: string;
+  type: string;
+  title: string;
+  className?: string;
+  data: Record<string, unknown>;
+};
+
+const cards: CardView[] = [
   {
     id: "now",
     type: "now",
@@ -39,7 +47,7 @@ const cards = [
       detail: "3 people home · doors secure · no active alerts",
     },
   },
-] as const;
+];
 
 export function App() {
   return (
