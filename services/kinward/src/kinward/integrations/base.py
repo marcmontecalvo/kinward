@@ -9,10 +9,6 @@ import httpx
 IntegrationState = Literal["available", "degraded", "disabled"]
 
 
-class CircuitOpenError(RuntimeError):
-    pass
-
-
 @dataclass(frozen=True)
 class IntegrationStatus:
     name: str
@@ -21,12 +17,7 @@ class IntegrationStatus:
 
 
 class IntegrationClient:
-    """Small resilient HTTP client for optional household integrations.
-
-    This retains the useful degradation and circuit-breaker behavior from
-    Homefront while removing tenant IDs, database side effects, insecure TLS
-    defaults, and hard dependencies on any peer service.
-    """
+    """Small resilient HTTP client for optional household integrations."""
 
     def __init__(
         self,
@@ -68,6 +59,42 @@ class IntegrationClient:
             return IntegrationStatus(self.name, "degraded", self.last_error)
         return IntegrationStatus(self.name, "available")
 
+    async def request(
+        self,
+        method: str,
+        path: str,
+        *,
+        headers: dict[str, str] | None = None,
+        json: Any = None,
+        params: dict[str, Any] | None = None,
+    ) -> httpx.Response | None:
+        if not self.enabled or self.circuit_open:
+            return None
+
+        url = f"{self.base_url}/{path.lstrip('/')}"
+        try:
+            async with httpx.AsyncClient(
+                timeout=self.timeout_seconds,
+                transport=self.transport,
+            ) as client:
+                response = await client.request(
+                    method,
+                    url,
+                    headers=headers,
+                    json=json,
+                    params=params,
+                )
+                response.raise_for_status()
+            self.consecutive_failures = 0
+            self.last_error = None
+            return response
+        except httpx.HTTPError as exc:
+            self.consecutive_failures += 1
+            self.last_error = exc.__class__.__name__
+            if self.consecutive_failures >= self.failure_threshold:
+                self.opened_at = time.monotonic()
+            return None
+
     async def request_json(
         self,
         method: str,
@@ -76,26 +103,19 @@ class IntegrationClient:
         fallback: Any,
         headers: dict[str, str] | None = None,
         json: Any = None,
+        params: dict[str, Any] | None = None,
     ) -> Any:
-        if not self.enabled:
+        response = await self.request(
+            method,
+            path,
+            headers=headers,
+            json=json,
+            params=params,
+        )
+        if response is None:
             return fallback
-        if self.circuit_open:
-            return fallback
-
-        url = f"{self.base_url}/{path.lstrip('/')}"
         try:
-            async with httpx.AsyncClient(
-                timeout=self.timeout_seconds,
-                transport=self.transport,
-            ) as client:
-                response = await client.request(method, url, headers=headers, json=json)
-                response.raise_for_status()
-            self.consecutive_failures = 0
-            self.last_error = None
             return response.json()
-        except (httpx.HTTPError, ValueError) as exc:
-            self.consecutive_failures += 1
-            self.last_error = exc.__class__.__name__
-            if self.consecutive_failures >= self.failure_threshold:
-                self.opened_at = time.monotonic()
+        except ValueError:
+            self.last_error = "InvalidJSON"
             return fallback
