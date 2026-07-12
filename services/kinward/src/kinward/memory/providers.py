@@ -2,12 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Sequence
 
-from kinward.memory.contracts import (
-    ConversationMessage,
-    KnowledgeFact,
-    MemoryHit,
-    PrivacyLevel,
-)
+from kinward.memory.contracts import KnowledgeFact, MemoryHit, PrivacyLevel
 
 
 class NullConversationalMemoryProvider:
