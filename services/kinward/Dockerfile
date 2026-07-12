@@ -5,12 +5,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+RUN pip install --no-cache-dir uv
+
 COPY pyproject.toml ./
 COPY alembic.ini ./
 COPY migrations ./migrations
 COPY src ./src
 
-RUN pip install --no-cache-dir .
+RUN uv pip install --system .
 
 EXPOSE 8000
 
