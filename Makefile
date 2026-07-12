@@ -1,36 +1,38 @@
-.PHONY: install dev api web migrate test lint typecheck build up down
+.PHONY: install lock dev api web migrate test lint typecheck build check up down
 
 install:
-	corepack enable
-	pnpm install
-	python -m pip install -e 'services/kinward[dev]'
+	mise install
+	mise run install
+
+lock:
+	mise run lock
 
 dev:
-	@echo "Run 'make api' and 'make web' in separate terminals."
+	@echo "Run 'mise run api' and 'mise run web' in separate terminals."
 
 api:
-	uvicorn kinward.app:app --app-dir services/kinward/src --reload --host 0.0.0.0 --port 8000
+	mise run api
 
 web:
-	pnpm --filter @kinward/web dev
+	mise run web
 
 migrate:
-	cd services/kinward && alembic -c alembic.ini upgrade head
+	mise run migrate
 
 test:
-	cd services/kinward && pytest
-	pnpm -r test
+	mise run test
 
 lint:
-	ruff check services/kinward
-	pnpm -r lint
+	mise run lint
 
 typecheck:
-	cd services/kinward && mypy src
-	pnpm -r typecheck
+	mise run typecheck
 
 build:
-	pnpm -r build
+	mise run build
+
+check:
+	mise run check
 
 down:
 	docker compose down
