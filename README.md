@@ -42,6 +42,7 @@ _bmad-output/             Authoritative BMAD planning artifacts
 ## Authoritative documents
 
 - [Product brief](_bmad-output/planning-artifacts/product-brief-Kinward-Assistant-Experience.md)
+- [Product requirements document](_bmad-output/planning-artifacts/prd-Kinward-Assistant-Experience.md)
 - [UX specification](_bmad-output/planning-artifacts/ux-design-specification-Kinward-Assistant-Experience.md)
 - [Pivot and rebuild plan](docs/pivot/single-household-pivot-and-rebuild-plan.md)
 - [Salvage matrix](docs/pivot/salvage-matrix.md)
