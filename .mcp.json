@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "adectl": {
+      "type": "stdio",
+      "command": "adectl",
+      "args": [
+        "mcp"
+      ]
+    }
+  }
+}
