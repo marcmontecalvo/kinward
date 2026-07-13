@@ -4,413 +4,353 @@ createdAt: "2026-07-13"
 updatedAt: "2026-07-13"
 documentType: "BMAD Product Requirements Document"
 sourceDocuments:
-  - "product-brief-Kinward-Assistant-Experience.md"
-  - "ux-design-specification-Kinward-Assistant-Experience.md"
+  - "_bmad-output/planning-artifacts/product-brief-Kinward-Assistant-Experience.md"
+  - "_bmad-output/planning-artifacts/ux-design-specification-Kinward-Assistant-Experience.md"
   - "docs/pivot/single-household-pivot-and-rebuild-plan.md"
   - "docs/pivot/migration-status.md"
+  - "docs/pivot/salvage-matrix.md"
 ---
 
 # Product Requirements Document: Kinward Assistant Experience
 
-**Author:** Marc Montecalvo  
-**Date:** 2026-07-13  
 **Product:** Kinward  
 **Delivery model:** Private, single-household, Docker-deployed web/PWA platform
 
 ## 1. Purpose
 
-This PRD defines the product requirements for Kinward as a private household intelligence platform in which each household member has one or more personal AI assistants. It translates the approved product brief and UX specification into stable, testable product requirements for architecture, epic creation, implementation planning, and readiness review.
+Kinward is a private household intelligence platform in which each account-bearing household member may have one or more personal AI assistants. The product provides durable context, household coordination, integration-backed actions, and adaptive experiences across personal and shared surfaces without combining private personal information into a shared household brain.
 
-Kinward is not a multi-tenant SaaS product, a smart-home dashboard with a chatbot attached, a routine builder, or a generic chat interface. Its primary value is the continuing relationship between a person and their assistant: the assistant understands durable context, preserves privacy, coordinates with household systems and other people, and surfaces only what requires attention.
+Kinward is not a multi-tenant SaaS product, a routine builder, a generic chatbot, or a replacement for Home Assistant.
 
 ## 2. Product outcomes
 
-Kinward must enable a household to:
+Kinward must:
 
-1. Give each person a private, continuous assistant relationship.
-2. Build useful household understanding from durable facts rather than manually authored routines.
-3. Coordinate calendars, email, school, work, transportation, household responsibilities, and smart-home state without combining everyone’s private information into one shared memory.
-4. Continue work across personal devices, shared displays, and voice endpoints while applying surface-appropriate privacy.
-5. Delegate outcomes to assistants with understandable permissions, approvals, activity records, and undo where possible.
-6. Operate locally as a single-household Docker deployment while allowing optional cloud inference and external services.
+1. Give each person a private and continuous assistant relationship.
+2. Infer useful household logistics from durable facts rather than requiring routine construction.
+3. Coordinate information without exposing one person’s private memory to another person or to a household-shared assistant.
+4. Continue authorized work across personal mobile, desktop, and shared-display surfaces.
+5. Make external actions explicit, permission-bound, reviewable, and reversible where supported.
+6. Remain household-owned and operable without a SaaS control plane.
 
-## 3. Success measures
+## 3. Release boundaries
 
-Initial success is behavioral and household-focused rather than commercial.
+### 3.1 First cross-surface slice
 
-### 3.1 Primary measures
+The first implementation milestone must demonstrate one real assistant capability across:
 
-- Household members voluntarily use their personal assistants for recurring real needs.
-- A household member can complete initial setup without technical assistance or configuring routines, rooms, devices, or integrations.
-- Important calendar, school, household, or coordination changes are surfaced before they cause a missed commitment or preventable conflict.
-- Shared surfaces do not expose private information in tested low-confidence, multiple-person, or unknown-person scenarios.
-- Users can distinguish an assistant proposal, an action awaiting approval, an action in progress, and a completed action.
-- Users can inspect why a meaningful item appeared or why an action was allowed without seeing hidden prompts, chain-of-thought, credentials, or secrets.
-- Normal use does not require household members to understand cards, layouts, entities, services, automations, YAML, or integrations.
+- personal mobile,
+- personal desktop,
+- shared display,
+- and backend privacy enforcement.
 
-### 3.2 Counter-metrics
+The slice is complete only when one authenticated adult can submit a text request on a personal surface, receive an incremental response, continue the resulting topic on another personal surface, and see a household-safe representation on a shared display. Automated tests must prove that the shared representation omits private details. Static mock data does not satisfy this milestone.
 
-Kinward must not improve engagement by increasing noise or dependency. The product should monitor for:
+### 3.2 First usable household release
 
-- Excessive notifications, nudges, or interruptions.
-- Repeated requests for information Kinward should already know.
-- Routine, checklist, or reminder proliferation replacing durable context.
-- Private information appearing on shared surfaces.
-- Autonomous actions that users routinely reverse or distrust.
-- Technical administration required for ordinary household use.
+The first usable household release must include:
 
-## 4. Users and operating context
+- single-household bootstrap and authenticated accounts,
+- invitation and onboarding for at least one additional adult,
+- separate personal assistants and memory boundaries,
+- text conversation and topic continuity,
+- live personal mobile and desktop surfaces,
+- a live privacy-conservative shared display,
+- one read-capable calendar integration,
+- one Home Assistant state-and-action flow,
+- approval and activity records for meaningful external actions,
+- basic Kinward Control for people, assistants, integrations, privacy, activity, backup, and health,
+- and tested backup and restore of the defined household data contract.
 
-### 4.1 Household administrator
+The release is not usable if authentication, adult-to-adult privacy separation, shared-display privacy enforcement, activity records for external actions, or clean restore validation is absent.
 
-Creates the household, manages people and invitations, configures integrations and permissions, reviews system health and activity, and may customize surfaces and layouts.
+### 3.3 Later scope
 
-### 4.2 Adult household member
+Later scope includes email actions, voice-only endpoints, rich proactive coordination, visual and declarative layout editors, emergency surface mode, maintenance recall, advanced progressive onboarding, and native Android capabilities requiring OS-level access.
 
-Uses a private assistant for planning, communication, calendar and email awareness, household coordination, delegation, and ongoing topics.
+### 3.4 Explicit exclusions
 
-### 4.3 Teen household member
+Kinward excludes multi-household tenancy, SaaS control-plane behavior, billing and entitlements, support-operator access, mandatory external memory or knowledge services, routine-centric product behavior, permanent legacy frontend code, and arbitrary AI-generated client code.
 
-Uses a respectful private assistant with age-appropriate autonomy, school and activity support, and privacy from parents and shared surfaces except where explicit household policy permits otherwise.
+## 4. Measurable success and counter-metrics
 
-### 4.4 Child household member
+The first usable release must meet these conditions during a 30-day household pilot:
 
-Receives a simpler age-appropriate experience governed by stronger permissions and privacy boundaries. A child may exist in the household before receiving an account.
+- At least two adults complete onboarding without developer intervention.
+- At least two adults use Kinward on 10 or more distinct days.
+- At least 80% of sampled cross-surface topic continuations resume without restating the initial request.
+- Shared-surface privacy tests produce zero disclosures in unknown-person, candidate-identity, multiple-person, and expired-session states.
+- At least 90% of sampled meaningful external actions contain complete requester, assistant, authority, approval, integration, result, and reversibility records.
+- A clean deployment restores the supported backup and passes post-restore verification.
 
-### 4.5 Shared-surface participant
+Default counter-metrics:
 
-May be a recognized member, an unknown person, or one of several people present. Receives only information allowed for the current identity confidence, privacy state, room policy, and audience.
+- No more than three non-critical proactive interruptions per person per day.
+- Fewer than 10% of proactive nudges are dismissed as irrelevant or disabled by category.
+- Fewer than 5% of autonomous actions are reversed because intent or scope was wrong.
+- Zero private items remain visible after shared-surface identity confidence drops or a personal session expires.
+- Ordinary household use requires no YAML, entity IDs, service names, schema editing, or model administration.
 
-### 4.6 Pets and guests
+## 5. User and privacy classes
 
-Pets may be represented for care, medication, appointments, and household context but do not receive accounts. Guests are excluded from initial onboarding. Any later guest capability must be temporary and limited.
+### 5.1 Household administrator
 
-## 5. Product scope
+An adult account that manages household membership, child policy, integrations, shared surfaces, system health, and household-wide defaults. Administrator status does not grant access to another adult’s private memory, conversations, topics, calendar details, or email content.
 
-### 5.1 Initial product scope
+### 5.2 Adult member
 
-The initial usable product must include:
+An adult controls their personal assistant, private memory, private topics, personal integrations, and personal surfaces.
 
-- Single-household deployment and bootstrap.
-- Accounts, invitations, and current-person identity on personal surfaces.
-- Personal assistant creation and personality configuration.
-- Text-based assistant conversation with continuity.
-- Permission-bound memory and durable context.
-- A responsive personal web/PWA experience.
-- A privacy-conservative shared-display experience.
-- Registry-driven cards and declarative layouts with polished defaults.
-- Activity and approval records for meaningful actions.
-- At least one live calendar integration and one Home Assistant vertical slice.
-- Optional memory and knowledge providers that do not prevent Kinward from starting when unavailable.
-- Administrative Kinward Control foundations for people, assistants, integrations, permissions, activity, and health.
-- Backup, restore, and upgrade procedures adequate for a household-owned deployment.
+### 5.3 Teen member
 
-### 5.2 Later product scope
+A teen account uses the `teen` privacy class.
 
-The following remain product requirements but are not required for the first usable milestone:
+- Private conversations, private topics, inferred preferences, and private memory are not visible to administrators or other household members.
+- Administrators may manage account state, safety policy, action authority, and household-sharing settings, but may not read private content solely because of their role.
+- Private teen content may be shared only through an explicit teen sharing action or a separately defined emergency/legal policy.
+- Money, transportation, appointments, account security, and actions affecting another person require confirmation by default.
 
-- Email actions and deeper mailbox workflows.
-- Voice-only endpoints and cross-surface voice handoff.
-- Rich proactive coordination between household members.
-- Visual and declarative layout editors.
-- Emergency surface takeover.
-- Contextual maintenance recall.
-- Advanced school, work, personal, home, and transportation onboarding sessions.
-- Native Android capabilities such as background wake word, foreground services, widgets, share targets, proximity, biometrics, Android Auto, and system assistant integration.
+### 5.4 Child member
 
-### 5.3 Explicitly out of scope
+A child profile uses the `child` privacy class and may exist without an account.
 
-- Multi-household tenancy within one deployment.
-- SaaS control-plane behavior.
-- Billing, subscriptions, package entitlements, marketplace features, or managed deployment regions.
-- Support-operator access to household data.
-- Mandatory Home Assistant, Honcho, LLM-Wiki, or cloud inference dependencies.
-- A routine-centric product model.
-- A permanent legacy Homefront frontend or migration chain.
-- Arbitrary AI-generated client code.
+- External integrations are disabled unless explicitly permitted.
+- External-state actions require authorized-adult approval unless a narrow category is explicitly pre-authorized.
+- Each durable fact must be labeled `private-to-child`, `shared-with-guardians`, or `household-shared`.
+- Administrators may review configured facts and activity necessary for care, safety, school, transportation, health, and household responsibilities.
+- Child conversation content is not automatically copied into guardian memory.
 
-## 6. Core user journeys
+### 5.5 Shared-surface participant
 
-### UJ-1: Administrator creates the household
+A participant may be unknown, a likely candidate, a verified member, or one of several people present. Shared surfaces always begin in household-safe mode.
 
-Marc starts a new Kinward deployment. He creates the initial account, names the household, creates his profile, adds known adults and children, optionally records pets, names his first assistant, completes a short personality and interaction interview, and enters the assistant experience. He is not required to configure rooms, devices, integrations, routines, school details, notification rules, or layouts.
+## 6. Assistant ownership and privacy boundaries
 
-**Successful outcome:** The household, administrator, household members, and first personal assistant exist; Marc reaches a useful default home surface; incomplete optional setup is clearly available later without blocking entry.
+### 6.1 Personal and specialist assistants
 
-### UJ-2: Invited member establishes a private assistant
+- A personal or specialist assistant has exactly one owner.
+- It may use only information its owner can access.
+- Its private memory, conversations, topics, and personal integration data are not household-shared by default.
+- Specialist assistants inherit no broader access than the owner’s primary assistant.
 
-Lisa accepts an invitation, confirms her profile, creates or signs into her account, names her assistant, completes the short assistant interview, and enters a private personal surface. Her assistant does not inherit Marc’s private memories or account data.
+### 6.2 Household fallback assistant
 
-**Successful outcome:** Lisa has a distinct identity, personal assistant, memory boundary, and default experience while still participating in shared household coordination.
+The household fallback assistant is household-owned. It is not a combined personal assistant and does not aggregate private memories.
 
-### UJ-3: A user asks once and continues elsewhere
+It may access household-shared profiles, household-shared calendars, shared lists, announcements, household-safe facts, permitted Home Assistant state, and its own household activity history.
 
-Lisa asks Kinward on her phone to help plan a family trip. Later she opens Kinward on a desktop and sees the trip as an active topic with prior context, decisions, relevant calendar information, and assistant progress. She does not restate the request or search through raw chat history.
+It may not access private personal memory, private conversations, private topics, private email, private calendar details, personal credentials, or hidden summaries derived from those sources.
 
-**Successful outcome:** The topic continues across surfaces with the correct person, assistant, context, and privacy policy.
+A personal assistant may send it only a minimum-necessary, privacy-filtered coordination statement.
 
-### UJ-4: Kinward surfaces a meaningful change
+## 7. Deterministic shared-surface identity policy
 
-A school calendar adds an early-release day. Kinward associates the event with the correct child, compares it with household calendars and transportation context, and places a concise item in the appropriate adults’ briefings. It does not create a routine or send an urgent interruption unless the timing and conflict justify one.
+Shared surfaces use these states:
 
-**Successful outcome:** The right people understand what changed, why it matters, and whether action is required.
+- `unknown`: no recognized person or confidence below the recognition threshold,
+- `candidate`: one likely person, but not verified for private disclosure,
+- `verified`: one person has completed an accepted verification method for the active session,
+- `group`: multiple people are present or audience exclusivity is not established,
+- `expired`: a prior verified session timed out or confidence dropped.
 
-### UJ-5: Shared surface protects private information
+Required outcomes:
 
-Marc asks a shared kitchen display about a private appointment while other people are present. Kinward recognizes that the request concerns personal information and either answers generically, asks to continue privately, or transfers details to Marc’s personal device.
+- `unknown` and `expired` expose household-safe information only.
+- `candidate` may personalize a greeting but may not expose private details.
+- `verified` may expose private information only when the surface policy permits it and no additional audience is detected.
+- `group` suppresses private information unless every affected person has explicitly permitted group disclosure for that data class.
+- Any transition away from `verified` immediately removes private content.
+- When disclosure is blocked, Kinward must provide a household-safe summary and offer private-device handoff. It may not choose a less restrictive response.
 
-**Successful outcome:** The request remains useful without disclosing protected details to the room.
+## 8. Deterministic external-action policy
 
-### UJ-6: A delegated action requires approval
+Authority levels are:
 
-Lisa asks her assistant to reschedule an appointment. The assistant prepares the proposed change and presents an approval that states what will change, which service will be used, why approval is required, and whether the action can be reversed. After approval, the activity record distinguishes preparation, execution, result, and any failure.
+- `observe`: read-only,
+- `suggest`: describe a possible action,
+- `prepare`: construct a proposed mutation without submitting it,
+- `confirm`: submit only after explicit approval of the exact prepared mutation,
+- `autonomous`: submit without per-action approval only within a named bounded policy.
 
-**Successful outcome:** Lisa understands and controls the action without operating the underlying integration directly.
+Requirements:
 
-### UJ-7: Administrator inspects and repairs the system
+- New integrations default to `observe`.
+- Every capability declares a maximum authority level per person, action category, and integration.
+- Money, account security, legal commitments, medical actions, transportation bookings, appointment cancellation, message sending, and actions affecting another person default to `confirm` or lower.
+- `prepare` never changes external state.
+- `confirm` executes only the exact approved mutation; material changes require new approval.
+- `autonomous` requires an explicit category, target scope, limits, expiry or review date, and revocation control.
+- Ambiguous identity, ambiguous target, stale provider state, or policy mismatch prevents mutation and returns a deterministic approval-required or failed result.
+- Meaningful actions record request, preparation, approval, execution, result, and undo status.
 
-Marc opens Kinward Control to see that Home Assistant is available, the knowledge provider is disabled, and a calendar integration needs reauthorization. He can inspect plain-language health, recent activity, and actionable remediation without exposing secrets.
+## 9. Functional requirements
 
-**Successful outcome:** The household can operate and troubleshoot Kinward without a separate SaaS control plane.
-
-## 7. Functional requirements
-
-### 7.1 Household, people, accounts, and onboarding
+### Household and onboarding
 
 - **FR-001:** Kinward shall support exactly one household per deployment.
-- **FR-002:** Kinward shall prevent a normal setup flow from creating a second household in an already configured deployment.
-- **FR-003:** The initial administrator flow shall create the household, administrator profile, and first personal assistant as one recoverable setup operation.
-- **FR-004:** An administrator shall be able to add adults and children before those people have accounts.
-- **FR-005:** An administrator shall be able to optionally record pets without creating accounts for them.
-- **FR-006:** Initial onboarding shall not require integrations, rooms, devices, routines, detailed school or work context, notification rules, or layout configuration.
-- **FR-007:** An administrator shall be able to invite eligible household members by email.
-- **FR-008:** An invited member shall be able to accept an invitation, establish an account, confirm the intended household profile, and create a personal assistant.
-- **FR-009:** Kinward shall distinguish household role, account state, age-related policy state, and assistant ownership.
-- **FR-010:** Kinward shall provide short, optional, targeted onboarding sessions after initial entry for work, school, personal, home, and transportation context.
+- **FR-002:** Initial bootstrap shall create the household, administrator profile, account binding, and first personal assistant as one recoverable operation.
+- **FR-003:** Administrators shall add adults and minors before those people have accounts.
+- **FR-004:** Initial onboarding shall not require integrations, rooms, devices, routines, detailed school/work context, notification rules, or layout editing.
+- **FR-005:** Invitation acceptance shall bind the authenticated account to the intended existing profile without silently creating a duplicate.
+- **FR-006:** Kinward shall distinguish household role, account state, privacy class, assistant ownership, and action authority.
 
-### 7.2 Assistants and conversation
+### Assistants, conversation, and topics
 
-- **FR-011:** Each account-bearing household member shall be able to have at least one personal assistant.
-- **FR-012:** A personal assistant shall have exactly one personal owner.
-- **FR-013:** A household member shall be able to name an assistant and configure its personality, interaction preferences, and available voice characteristics.
-- **FR-014:** Kinward shall preserve a primary assistant as the default router when a user has multiple assistants.
-- **FR-015:** Kinward shall support text conversation from the web/PWA client.
-- **FR-016:** Assistant responses shall support incremental delivery and cancellation where the selected model provider permits it.
-- **FR-017:** Conversation continuity shall be associated with the current person, assistant, topic, and permissions rather than only a raw chat session.
-- **FR-018:** Kinward shall represent ongoing work as topics that may contain conversation, decisions, artifacts, relevant integration data, and assistant actions.
-- **FR-019:** A user shall be able to begin an interaction on one authorized personal surface and continue it on another without restating available context.
-- **FR-020:** The assistant shall clearly distinguish a proposal, a pending action, an action in progress, a completed action, uncertainty, and failure.
+- **FR-007:** Each account-bearing person shall have at least one personal assistant.
+- **FR-008:** Every personal or specialist assistant shall have exactly one owner.
+- **FR-009:** The household fallback assistant shall enforce Section 6.2.
+- **FR-010:** Kinward shall support text conversation with accepted, streaming, completed, uncertain, cancelled, and failed states.
+- **FR-011:** Conversation continuity shall be bound to person, assistant, topic, surface, and current authorization.
+- **FR-012:** A user shall continue an authorized topic across mobile and desktop without restating stored context.
 
-### 7.3 Memory, knowledge, and durable context
+### Memory and context
 
-- **FR-021:** Personal memory shall be bound to the person and assistant permissions under which it was created.
-- **FR-022:** Shared assistants and shared surfaces shall not receive unrestricted access to household members’ private memories.
-- **FR-023:** Kinward shall support a neutral memory-provider contract with a disabled provider and optional external providers.
-- **FR-024:** Kinward shall support a neutral knowledge-provider contract with a disabled provider and optional external providers.
-- **FR-025:** Kinward shall remain operational when optional memory or knowledge providers are disabled or temporarily unavailable.
-- **FR-026:** The assistant shall be able to retrieve relevant permitted memories and durable facts when constructing a response or action plan.
-- **FR-027:** Kinward shall distinguish user-confirmed durable facts from unconfirmed observations or transient conversation context.
-- **FR-028:** The assistant shall request confirmation before promoting an inferred observation into durable context when the information is consequential, sensitive, or likely to affect future behavior.
-- **FR-029:** Authorized users shall be able to inspect, correct, and delete durable memories and contextual facts that concern them.
-- **FR-030:** Kinward shall preserve provenance sufficient to explain the source category and confidence of a surfaced fact without exposing hidden model reasoning or secrets.
+- **FR-013:** Personal memory shall be bound to the owning person and creation permissions.
+- **FR-014:** Household-shared facts shall be stored or labeled separately from private memory.
+- **FR-015:** The household fallback assistant shall never query private personal memory indexes.
+- **FR-016:** Context assembly shall retrieve only information permitted for the current person, assistant, topic, surface, and action.
+- **FR-017:** Kinward shall distinguish confirmed facts, inferred observations, transient context, and household-shared facts.
+- **FR-018:** Consequential, sensitive, or behavior-changing observations require confirmation before becoming durable facts.
+- **FR-019:** Users shall inspect, correct, and delete durable facts about themselves, subject to required audit retention.
+- **FR-020:** Durable facts shall include source category, timestamp, sharing class, and confidence.
 
-### 7.4 Identity, privacy, and permissions
+### Identity and privacy
 
-- **FR-031:** Personal surfaces shall resolve the signed-in person before exposing private assistant content.
-- **FR-032:** Shared surfaces shall evaluate identity confidence, surface privacy, room policy, known audience, and user preference before showing personal information.
-- **FR-033:** When identity confidence is insufficient, Kinward shall use a household-safe response, ask for identity, or offer private-device handoff.
-- **FR-034:** When multiple people are present, Kinward shall not expose private information unless the applicable policy explicitly permits group disclosure.
-- **FR-035:** Kinward shall support age-appropriate permissions and stronger default restrictions for children.
-- **FR-036:** Kinward shall enforce assistant ownership and data-access rules in backend services rather than relying only on client visibility.
-- **FR-037:** Administrators shall be able to manage household policies without gaining automatic access to another adult’s private assistant memory.
-- **FR-038:** The product shall disclose uncertainty when identity, source data, or action eligibility is ambiguous.
+- **FR-021:** Personal surfaces require authentication before exposing private assistant content.
+- **FR-022:** Shared surfaces shall implement all states and outcomes in Section 7.
+- **FR-023:** Authorization shall be enforced by backend services, not only client rendering.
+- **FR-024:** Administrators shall not receive another adult’s private data merely because of role.
+- **FR-025:** Teen and child policy shall implement Section 5 and be covered by automated tests.
 
-### 7.5 Surfaces, cards, layouts, and interaction
+### Surfaces and layouts
 
-- **FR-039:** Kinward shall support surface classes for personal mobile, personal tablet, personal desktop, shared display, and voice.
-- **FR-040:** Every rendered experience shall receive a surface context containing ownership, room when applicable, privacy state, interaction capabilities, and viewing distance.
-- **FR-041:** Surface context shall influence available content, density, interaction size, personal-data visibility, layout selection, and handoff behavior.
-- **FR-042:** The default personal mobile surface shall support assistant presence, a Now area, quiet briefing, active topics, and persistent assistant input.
-- **FR-043:** A shared display shall default to household-safe ambient information and shall automatically return to that state after a personal interaction expires.
-- **FR-044:** Kinward shall render product surfaces from registered card definitions and validated layout definitions.
-- **FR-045:** Card definitions shall declare supported surfaces, data and configuration schemas, privacy characteristics, size constraints, and rendering behavior.
-- **FR-046:** Invalid or unknown card configuration shall fail safely and shall not replace the last valid layout.
-- **FR-047:** Built-in default layouts shall remain available and recoverable after customization.
-- **FR-048:** The assistant may generate temporary views only from registered components and validated schemas.
-- **FR-049:** A user shall be able to target a visible item as structured context for the next assistant request.
-- **FR-050:** A user shall be able to request an explanation of why a meaningful item appeared, what changed, which source categories were used, the relevant confidence, and available corrections.
+- **FR-026:** Kinward shall support personal mobile, personal desktop, and shared-display layouts in the first cross-surface slice.
+- **FR-027:** Every surface shall receive ownership, privacy, room when applicable, interaction, and viewing-distance context.
+- **FR-028:** The personal default shall include assistant presence, Now, briefing, topics, and persistent input.
+- **FR-029:** The shared-display default shall show household-safe ambient information and return to that state after personal-session expiry.
+- **FR-030:** Product surfaces shall render registered cards from validated layouts.
+- **FR-031:** Invalid configuration shall fail safely and preserve the last valid layout.
+- **FR-032:** Generated temporary views shall use registered components only.
+- **FR-033:** Users shall inspect why an item appeared, source categories, confidence, sharing class, and available correction without exposing hidden reasoning or secrets.
 
-### 7.6 Proactivity, coordination, approvals, and activity
+### Proactivity, approvals, and activity
 
-- **FR-051:** Kinward shall prioritize surfaced information by expected household relevance and required action rather than presenting an unfiltered notification feed.
-- **FR-052:** Proactive delivery shall support ambient, briefing, nudge, interruption, and explicitly authorized autonomous-action levels.
-- **FR-053:** Kinward shall default to the least disruptive delivery level consistent with timing, risk, and household policy.
-- **FR-054:** Kinward shall not require routine definitions to detect meaningful calendar, school, household, or transportation exceptions.
-- **FR-055:** A coordination request between household members shall disclose only the minimum information needed for the recipient to decide or respond.
-- **FR-056:** Coordination requests shall support accept, decline, counter, and delegate-to-assistant outcomes where applicable.
-- **FR-057:** Meaningful external actions shall be governed by an authority level of observe, suggest, prepare, act with confirmation, or act autonomously within explicit limits.
-- **FR-058:** An approval shall state the intended action, affected person or resource, service used, reason approval is required, and reversibility when known.
-- **FR-059:** Kinward shall record meaningful assistant and integration actions in a plain-language activity history.
-- **FR-060:** Activity records shall identify what happened, who requested it, which assistant acted, on whose behalf, why it was allowed, whether approval occurred, which integration was used, the result, and whether undo is available.
+- **FR-034:** Proactive delivery shall support ambient, briefing, nudge, interruption, and autonomous-action levels.
+- **FR-035:** Kinward shall default to the least disruptive level consistent with timing, risk, and policy.
+- **FR-036:** Non-critical interruptions shall respect the default cap in Section 4.
+- **FR-037:** Kinward shall detect relevant exceptions without requiring routine definitions.
+- **FR-038:** Coordination requests shall disclose only the minimum information required for a response.
+- **FR-039:** External actions shall implement all authority rules in Section 8.
+- **FR-040:** Activity records shall identify requester, acting assistant, represented person, authority basis, approval, integration, result, and undo availability.
 
-### 7.7 Integrations
+### Integrations and administration
 
-- **FR-061:** Integrations shall use vendor-neutral capability contracts where practical so product behavior is not embedded directly in one provider.
-- **FR-062:** Kinward shall expose integration capability and health independently from general application health.
-- **FR-063:** An unavailable optional integration shall degrade only the features that depend on it.
-- **FR-064:** Calendar integration shall support reading events and detecting relevant changes within the connected person’s authorization boundary.
-- **FR-065:** Calendar actions that modify external state shall follow the applicable approval and activity requirements.
-- **FR-066:** Email integration shall preserve account boundaries and shall not expose private message content to other household members or shared surfaces without permission.
-- **FR-067:** Home Assistant shall remain the authority for imported physical areas, devices, entities, and current home state.
-- **FR-068:** Kinward shall translate Home Assistant state and actions into household language rather than requiring ordinary users to operate entities or services directly.
-- **FR-069:** Home Assistant actions shall honor permissions, approvals, current state, and activity logging.
-- **FR-070:** Integrations shall use secure defaults, bounded retries, timeouts, and failure isolation.
+- **FR-041:** Optional integration failure shall degrade only dependent features.
+- **FR-042:** Calendar integration shall detect additions, removals, time changes, and cancellations within the connected person’s boundary.
+- **FR-043:** Home Assistant shall remain authoritative for physical areas, devices, entities, and current state.
+- **FR-044:** Home Assistant actions shall follow permission, stale-state, approval, and activity requirements.
+- **FR-045:** Kinward Control shall be separate from everyday assistant navigation.
+- **FR-046:** Administrators shall manage people, invitations, assistants, child policy, integrations, shared surfaces, proactive defaults, backup status, and health.
+- **FR-047:** Administrative views shall not expose credentials, hidden prompts, or unrestricted private adult content.
 
-### 7.8 Kinward Control
+## 10. Backup, restore, export, and upgrade contract
 
-- **FR-071:** Kinward shall provide a separate administrative experience rather than mixing system management into the default assistant navigation.
-- **FR-072:** Authorized administrators shall be able to manage household profiles, invitations, assistants, permissions, integrations, surfaces, layouts, proactivity settings, and system health.
-- **FR-073:** Users shall be able to manage their own assistant preferences, private memory, and personal integration connections without entering unrelated household administration.
-- **FR-074:** Kinward Control shall present health and degraded capabilities in plain language with actionable remediation.
-- **FR-075:** Administrative views shall not display credentials, secret values, raw hidden prompts, or unrestricted private memory.
-- **FR-076:** Authorized users shall be able to inspect activity and approvals using person, assistant, integration, status, and time filters.
+The first usable release backup contract includes:
 
-### 7.9 Deployment and household operations
+- household configuration,
+- people and account bindings excluding reusable authentication secrets,
+- assistants and personality settings,
+- privacy and authority policies,
+- topics and locally stored conversation records,
+- confirmed durable facts and sharing metadata,
+- layouts and surface assignments,
+- integration configuration excluding credentials that cannot be exported safely,
+- encrypted credential material where supported,
+- approvals and activity history,
+- and provider reference mappings required to reconnect optional stores.
 
-- **FR-077:** A standard Kinward deployment shall start through documented Docker Compose commands.
-- **FR-078:** The default deployment shall not require Home Assistant, external memory, external knowledge, or observability services to start.
-- **FR-079:** Kinward shall provide persistent storage for household configuration, people, assistants, layouts, approvals, activity, and memory references.
-- **FR-080:** Kinward shall provide documented backup and restore procedures for household-owned data and configuration.
-- **FR-081:** Kinward shall provide a documented upgrade process that preserves household data or stops safely with actionable recovery instructions.
-- **FR-082:** Kinward shall provide export and import mechanisms for supported household data required to move deployments or recover from a rebuild.
-- **FR-083:** Health reporting shall distinguish core application failure from optional capability degradation.
+Requirements:
 
-## 8. Nonfunctional requirements
+- **FR-048:** Backups shall contain a versioned manifest listing included, excluded, encrypted, and externally referenced data.
+- **FR-049:** Restore shall support a clean deployment on the same or a declared compatible schema version.
+- **FR-050:** Restore shall complete atomically or stop without replacing the existing valid household state.
+- **FR-051:** Post-restore verification shall validate household identity, people, assistants, topics, policies, layouts, activity, and provider-reference integrity.
+- **FR-052:** Excluded credentials shall be listed as required reauthorization steps.
+- **FR-053:** Migration export shall use documented versioned formats independent of the original host path.
+- **FR-054:** Upgrade shall require a restorable pre-upgrade backup and stop with actionable instructions when compatibility checks fail.
 
-### 8.1 Privacy and security
+## 11. Nonfunctional requirements
 
-- **NFR-001:** Authorization shall be enforced server-side for every private person, assistant, memory, topic, integration, approval, and activity resource.
-- **NFR-002:** Secrets and integration credentials shall be encrypted at rest or stored in a platform-appropriate secret mechanism and shall never be returned through normal API responses or logs.
-- **NFR-003:** Shared-surface privacy rules shall be covered by automated tests for recognized, unknown, multiple-person, timed-out, and reduced-confidence states.
-- **NFR-004:** Content obtained from email, calendars, documents, web pages, or Home Assistant shall be treated as untrusted input and shall not be able to override system permissions or action policy.
-- **NFR-005:** Sensitive operations shall produce tamper-evident or append-protected audit data sufficient for household troubleshooting.
-- **NFR-006:** The product shall minimize data sent to model and integration providers to the information required for the current permitted task.
+### Privacy and security
 
-### 8.2 Reliability and recoverability
+- **NFR-001:** Server-side authorization shall protect every private resource.
+- **NFR-002:** Secrets and credentials shall be encrypted at rest or stored in a platform-appropriate secret mechanism and shall not appear in normal responses or logs.
+- **NFR-003:** Automated tests shall cover every shared-surface state and transition.
+- **NFR-004:** Automated tests shall cover adult, teen, child, administrator, personal-assistant, specialist-assistant, and household-fallback boundaries.
+- **NFR-005:** External content shall be treated as untrusted and shall not override authorization or action policy.
+- **NFR-006:** Data sent to external providers shall be minimized to the permitted task.
 
-- **NFR-007:** Failure of an optional provider shall not prevent core household setup, authentication, administration, or local data access.
-- **NFR-008:** External calls shall use explicit timeouts, bounded retries, and circuit-breaking or equivalent failure isolation.
-- **NFR-009:** Actions that modify external state shall be idempotent where the provider permits it or shall guard against accidental duplicate execution.
-- **NFR-010:** Database migrations shall be transactional where supported and shall provide a tested rollback or restore path.
-- **NFR-011:** Backup restoration shall be tested against a clean deployment before the first household production milestone is declared ready.
+### Reliability and recoverability
 
-### 8.3 Performance
+- **NFR-007:** Optional provider failure shall not prevent setup, authentication, local administration, backup access, or local data access.
+- **NFR-008:** External calls shall use explicit timeouts, bounded retries, and failure isolation.
+- **NFR-009:** External mutations shall be idempotent where supported or protected against duplicate execution.
+- **NFR-010:** A clean-deployment restore test shall pass before the first usable release.
+- **NFR-011:** Automated backup/restore acceptance tests shall have zero known loss of data included in the backup contract.
 
-- **NFR-012:** The personal home surface shall render locally available content without waiting for model inference or unavailable external integrations.
-- **NFR-013:** Kinward shall visibly acknowledge a submitted assistant request promptly even when full model output or tool execution takes longer.
-- **NFR-014:** Shared-display privacy transitions shall remove disallowed private content immediately when identity confidence or audience state changes.
-- **NFR-015:** Health and administration pages shall remain usable during external-provider degradation.
+### Performance thresholds
 
-### 8.4 Accessibility and usability
+Measured on the documented reference deployment under normal local-network conditions:
 
-- **NFR-016:** Core web/PWA experiences shall meet WCAG 2.2 AA expectations for keyboard access, contrast, semantics, focus, and assistive technology support.
-- **NFR-017:** Shared-display controls shall support room-distance readability and appropriately large touch targets.
-- **NFR-018:** Normal household workflows shall use household language and shall not require knowledge of infrastructure, model providers, entities, schemas, or configuration syntax.
-- **NFR-019:** Meaningful destructive or externally visible actions shall provide confirmation or undo consistent with their configured authority level.
+- **NFR-012:** Cached personal-home content shall become interactive within 2 seconds at p95; cold load within 4 seconds at p95.
+- **NFR-013:** A submitted assistant request shall show accepted or streaming state within 500 ms at p95.
+- **NFR-014:** When a provider streams, first visible response content shall appear within 3 seconds at p95, excluding documented provider outage conditions.
+- **NFR-015:** Private shared-surface content shall be removed within 250 ms of the client receiving an identity downgrade and within 1 second of backend detection.
+- **NFR-016:** Local-only API operations shall complete within 500 ms at p95.
 
-### 8.5 Portability and maintainability
+### Accessibility and maintainability
 
-- **NFR-020:** Core product behavior shall depend on capability interfaces rather than direct assumptions about one model, memory, knowledge, calendar, email, or smart-home provider.
-- **NFR-021:** Shared schemas shall validate API payloads, cards, layouts, and integration boundaries across backend and frontend consumers.
-- **NFR-022:** Registered cards and layouts shall be versioned sufficiently to support validation and future migration.
-- **NFR-023:** The repository shall maintain automated backend and frontend validation gates for all accepted product foundations.
-- **NFR-024:** Current product documentation shall be maintained separately from archived Homefront SaaS and routine-centric material.
+- **NFR-017:** Core web/PWA experiences shall meet applicable WCAG 2.2 AA requirements.
+- **NFR-018:** Shared-display controls shall meet UX-specified room-distance readability and touch-target requirements.
+- **NFR-019:** Capability interfaces shall avoid direct dependency on one model, memory, knowledge, calendar, email, or smart-home provider.
+- **NFR-020:** Cards, layouts, policies, schemas, and backup manifests shall be versioned for migration.
 
-## 9. Delivery milestones
+## 12. Delivery milestones
 
-### Milestone A: Foundation already accepted
+### Milestone A: Accepted foundation
 
-- Clean single-household repository and vocabulary.
-- Core domain and persistence baseline.
-- Initial household bootstrap API.
-- Integration resilience and health capability reporting.
-- Neutral memory and knowledge provider contracts.
-- Honcho and LLM-Wiki provider adapters.
-- Registry-driven frontend proof of concept.
-- Docker, CI, `mise`, and `uv` workflows.
+Repository reset, domain and persistence baseline, bootstrap API, optional integration resilience, neutral memory/knowledge contracts, provider adapters, registry frontend proof of concept, Docker, CI, `mise`, and `uv`.
 
-### Milestone B: First end-to-end personal assistant slice
+### Milestone B: First cross-surface assistant slice
 
-- Authentication and current-person identity.
-- Web onboarding connected to household bootstrap.
-- Personal assistant conversation endpoint and model-provider contract.
-- Conversation and topic persistence.
-- Permission-bound memory retrieval and confirmed durable facts.
-- Live personal mobile home surface.
-- Activity records for assistant and integration operations.
+Authentication, onboarding UI, text assistant endpoint, topic persistence, permission-bound context assembly, live mobile view, live desktop continuation, live household-safe shared-display representation, privacy tests, and activity evidence for the demonstrated flow.
 
-### Milestone C: Household-aware usable product
+### Milestone C: First usable household release
 
-- Invitations and invited-member onboarding.
-- Multiple household profiles and personal assistants.
-- Calendar integration with change detection.
-- Home Assistant state and one permitted action flow.
-- Shared-display privacy behavior.
-- Approvals and basic Kinward Control.
-- Backup, restore, and upgrade validation.
+Invited second adult, separate adult assistants and memory, durable fact management, calendar change detection, Home Assistant state and approved action, deterministic identity policy, external-action policy, basic Kinward Control, versioned backup manifest, clean restore verification, and performance/accessibility/security gates.
 
 ### Milestone D: Coordinating household assistant
 
-- Email integration.
-- Progressive context onboarding.
-- Coordination requests.
-- Proactive delivery policy and background evaluation.
-- Richer cards, topics, and cross-surface continuity.
-- Layout editing and deeper administration.
+Email, progressive onboarding, coordination requests, proactive evaluation, richer topics/cards, and layout editing.
 
 ### Milestone E: Voice and advanced experiences
 
-- Voice orchestration and private handoff.
-- Emergency surface mode.
-- Contextual maintenance recall.
-- Native Android evaluation and only those modules justified by measured PWA limitations.
+Voice orchestration, private handoff, emergency mode, maintenance recall, and native evaluation based on measured PWA limitations.
 
-## 10. Dependencies and constraints
+## 13. Architecture decisions required
 
-- The architecture specification must define authentication, model-provider routing, assistant runtime, context assembly, memory flow, background work, integration credential storage, action execution, and deployment recovery before implementation stories for those areas are considered ready.
-- UX specifications remain authoritative for surface behavior, information architecture, card interaction, and shared-display privacy unless this PRD explicitly narrows release scope.
-- Home Assistant remains the authority for physical home state; Kinward must not recreate its device registry or automation engine.
-- Optional providers must remain optional and must not become implicit startup dependencies.
-- Legacy Homefront code may be referenced or selectively salvaged only after removal of multi-tenant, SaaS, routine-centric, support-access, and public-repository exposure assumptions.
+Architecture must resolve the default authentication and recovery mechanism, initial model provider contract, initial calendar synchronization transport, physical storage split among Kinward/Honcho/LLM-Wiki, mechanisms accepted for `verified` shared-surface identity, backup encryption and credential portability, and the reference deployment used for performance testing.
 
-## 11. Product risks
+These decisions may select mechanisms but may not weaken the product outcomes defined in this PRD.
 
-1. **Privacy leakage across shared surfaces or household relationships.** Mitigation requires backend authorization, conservative display policy, identity-confidence handling, and dedicated tests.
-2. **A generic chatbot experience instead of a useful household assistant.** Mitigation requires live durable context, topics, action capability, and meaningful Now/Briefing behavior in the first vertical slices.
-3. **Overbuilding abstractions before delivering a working assistant.** Milestone B must produce a complete user-visible flow before additional provider or framework expansion.
-4. **Notification and proactivity fatigue.** Delivery levels, counter-metrics, and conservative defaults must be implemented before broad background monitoring.
-5. **Unsafe external actions.** Approval, authority, idempotency, activity, and prompt-injection defenses must precede autonomous execution.
-6. **Household operations becoming fragile.** Backup, restore, upgrade, and degraded-mode behavior are release requirements rather than post-launch cleanup.
-7. **Identity ambiguity.** Shared-surface and voice experiences must fail toward privacy, not convenience.
+## 14. PRD readiness criteria
 
-## 12. Open product decisions
+This PRD may be marked final only when:
 
-These decisions do not block the PRD but must be resolved during architecture, epic planning, or readiness review before affected stories enter implementation:
-
-- Which authentication method is the default for a private household deployment and how account recovery works without a SaaS control plane.
-- Which model-provider implementation is used for the first assistant slice and which capabilities are mandatory in the neutral provider contract.
-- Which calendar provider is implemented first and what polling, webhook, or synchronization behavior is acceptable for the initial household.
-- Which data is stored directly in Kinward versus indexed or referenced in Honcho and LLM-Wiki.
-- Which identity-confidence signals are available in the initial shared-display release before voice or proximity features exist.
-- The minimum supported export format and restore guarantee for the first production household deployment.
-- The threshold and household controls for moving proactive behavior from briefing to nudge, interruption, or autonomous action.
-
-## 13. PRD completion criteria
-
-This PRD is ready to be marked final when:
-
-- The product owner reviews scope, milestones, functional requirements, and open decisions.
-- The architecture specification confirms that every Milestone B and Milestone C requirement has an implementable system boundary.
-- Epics map every functional and nonfunctional requirement to delivery work without creating a competing product scope.
-- Stories for the first milestone have testable acceptance criteria and identify required security, privacy, and operational validation.
-- The implementation-readiness review finds no unresolved phase blocker for the first planned milestone.
+- repository safety review confirms no private household names, addresses, credentials, infrastructure identifiers, or private fixtures,
+- every source path resolves,
+- deterministic privacy and action policies are accepted,
+- the cross-surface slice and first usable release are accepted,
+- architecture can map every Milestone B and C requirement to a concrete boundary,
+- epics map every functional and nonfunctional requirement without creating competing scope,
+- and implementation-readiness review finds no unresolved blocker for Milestone B.
