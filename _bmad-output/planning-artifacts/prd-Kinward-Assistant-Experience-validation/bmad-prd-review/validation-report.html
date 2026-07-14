@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>PRD Validation: Kinward Assistant Experience</title>
+<style>
+  :root {
+    --bg: #fafaf9;
+    --surface: #ffffff;
+    --border: #e7e5e4;
+    --text: #1c1917;
+    --muted: #78716c;
+
+    --verdict-strong: #16a34a;
+    --verdict-adequate: #65a30d;
+    --verdict-thin: #d97706;
+    --verdict-broken: #dc2626;
+
+    --sev-low: #64748b;
+    --sev-medium: #ca8a04;
+    --sev-high: #ea580c;
+    --sev-critical: #dc2626;
+
+    --grd-exc: #16a34a;
+    --grd-good: #65a30d;
+    --grd-fair: #d97706;
+    --grd-poor: #dc2626;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+    font-size: 15px;
+  }
+  .container { max-width: 960px; margin: 0 auto; padding: 32px 24px 64px; }
+
+  header.report-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 24px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 24px;
+  }
+  .title h1 { margin: 0; font-size: 22px; font-weight: 600; letter-spacing: -0.01em; }
+  .title .subtitle { color: var(--muted); font-size: 13px; margin-top: 4px; font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+  .grade {
+    padding: 10px 18px;
+    border-radius: 8px;
+    font-weight: 600;
+    color: white;
+    font-size: 15px;
+    white-space: nowrap;
+  }
+  .grade-excellent { background: var(--grd-exc); }
+  .grade-good { background: var(--grd-good); }
+  .grade-fair { background: var(--grd-fair); }
+  .grade-poor { background: var(--grd-poor); }
+
+  .synthesis {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--muted);
+    border-radius: 8px;
+    padding: 18px 22px;
+    margin-bottom: 24px;
+    font-size: 15.5px;
+  }
+  .synthesis p { margin: 0 0 10px; }
+  .synthesis p:last-child { margin-bottom: 0; }
+
+  .dimension-summary {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 10px;
+    margin-bottom: 24px;
+  }
+  .dim-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 14px;
+  }
+  .dim-card .dim-name { font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+  .dim-card .dim-verdict { font-size: 14px; font-weight: 600; }
+
+  section.dimension, section.reviewer-section { margin-bottom: 14px; }
+  section.dimension details, section.reviewer-section details {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  section summary {
+    padding: 14px 20px;
+    cursor: pointer;
+    user-select: none;
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  section summary::-webkit-details-marker { display: none; }
+  section summary::before {
+    content: "▸";
+    display: inline-block;
+    color: var(--muted);
+    transition: transform 0.15s ease;
+  }
+  section details[open] summary::before { transform: rotate(90deg); }
+  section summary h2 {
+    display: inline;
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+    letter-spacing: -0.005em;
+    flex: 1;
+  }
+  .verdict-pill {
+    font-size: 11px;
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: white;
+  }
+  .verdict-strong { background: var(--verdict-strong); }
+  .verdict-adequate { background: var(--verdict-adequate); }
+  .verdict-thin { background: var(--verdict-thin); }
+  .verdict-broken { background: var(--verdict-broken); }
+
+  .dim-body { padding: 4px 20px 18px; }
+  .dim-judgment { color: var(--text); font-size: 14.5px; }
+  .dim-judgment p { margin: 0 0 10px; }
+
+  .findings-list { padding: 0 20px 4px; }
+  article.finding {
+    padding: 14px 0;
+    border-top: 1px solid var(--border);
+  }
+  article.finding:first-child { border-top: none; }
+  article.finding header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 6px;
+  }
+  .badge {
+    font-size: 10.5px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    line-height: 1.4;
+  }
+  .badge-sev-low { background: rgba(100, 116, 139, 0.12); color: var(--sev-low); }
+  .badge-sev-medium { background: rgba(202, 138, 4, 0.14); color: var(--sev-medium); }
+  .badge-sev-high { background: rgba(234, 88, 12, 0.14); color: var(--sev-high); }
+  .badge-sev-critical { background: rgba(220, 38, 38, 0.14); color: var(--sev-critical); }
+  .finding-title { margin: 0; font-size: 15px; font-weight: 500; flex: 1; min-width: 200px; }
+  .finding-location { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12.5px; color: var(--muted); }
+  .finding-note, .finding-fix { margin-top: 6px; font-size: 14px; }
+  .finding-fix strong { color: var(--muted); font-weight: 500; }
+
+  .reviewer-source {
+    font-size: 12px;
+    color: var(--muted);
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+
+  .mechanical {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin-top: 24px;
+    font-size: 14px;
+  }
+  .mechanical h3 { margin: 0 0 10px; font-size: 14px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  .mechanical ul { margin: 0; padding-left: 20px; }
+  .mechanical li { margin-bottom: 4px; color: var(--text); }
+
+  footer.report-footer {
+    margin-top: 40px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+    font-size: 12px;
+    color: var(--muted);
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  footer .meta { display: flex; gap: 24px; flex-wrap: wrap; }
+</style>
+</head>
+<body>
+  <div class="container">
+
+    <header class="report-header">
+      <div class="title">
+        <h1>Kinward Assistant Experience — Validation Report</h1>
+        <div class="subtitle">_bmad-output/planning-artifacts/prd-Kinward-Assistant-Experience.md</div>
+      </div>
+      <div class="grade grade-excellent">Excellent</div>
+    </header>
+
+    <div class="synthesis">
+      <p>This is an unusually disciplined chain-top PRD. It carries a clear thesis (durable context over routines, private-by-default, relationship-first), backs it with 86 FRs and 37 NFRs that are mostly testable, exposes every open decision in two registers (AD/PD) with safe interim behavior, and traces every requirement to a source, milestone, invariant, verification method, and owner — the brownfield salvage rule is even encoded into the Milestone A exit gate. What holds it back from pristine is a localized downstream-usability gap (three of nine user journeys lack the named protagonists the PRD's own Section 5 header promises) and a thesis-critical but under-bounded proactive-level selection rule (FR-046) that no decision register owns. No contradictions were found; no dimension is broken.</p>
+      <p>The grade is Excellent under the rubric rule (all seven dimensions strong or adequate, zero high or critical findings); it borders Good solely because the two medium findings sit in dimensions (done-ness, downstream usability) that matter most for a chain-top PRD. No additional reviewers were dispatched (<code>finalize_reviewers</code> resolves empty; nested model calls unavailable, so the sequential fallback was used).</p>
+    </div>
+
+    <div class="dimension-summary">
+      <div class="dim-card">
+        <div class="dim-name">Decision-readiness</div>
+        <div class="dim-verdict" style="color: var(--verdict-strong)">strong</div>
+      </div>
+      <div class="dim-card">
+        <div class="dim-name">Substance over theater</div>
+        <div class="dim-verdict" style="color: var(--verdict-strong)">strong</div>
+      </div>
+      <div class="dim-card">
+        <div class="dim-name">Strategic coherence</div>
+        <div class="dim-verdict" style="color: var(--verdict-strong)">strong</div>
+      </div>
+      <div class="dim-card">
+        <div class="dim-name">Done-ness clarity</div>
+        <div class="dim-verdict" style="color: var(--verdict-adequate)">adequate</div>
+      </div>
+      <div class="dim-card">
+        <div class="dim-name">Scope honesty</div>
+        <div class="dim-verdict" style="color: var(--verdict-strong)">strong</div>
+      </div>
+      <div class="dim-card">
+        <div class="dim-name">Downstream usability</div>
+        <div class="dim-verdict" style="color: var(--verdict-adequate)">adequate</div>
+      </div>
+      <div class="dim-card">
+        <div class="dim-name">Shape fit</div>
+        <div class="dim-verdict" style="color: var(--verdict-strong)">strong</div>
+      </div>
+    </div>
+
+    <section class="dimension">
+      <details>
+        <summary>
+          <h2>Decision-readiness</h2>
+          <span class="verdict-pill verdict-strong">strong</span>
+        </summary>
+        <div class="dim-body">
+          <div class="dim-judgment">
+            <p>Decisions are stated as decisions, not buried as considerations. Section 18 (15 architecture decisions) and Section 19 (7 product decisions) each carry a stable ID, owner, status, due milestone, affected requirements, an explicit <em>safe interim behavior</em>, and a disposition slot — the strongest decision surfacing the rubric expects. Open items are genuinely open: AD-10 ("Accepted mechanisms for <code>verified</code> shared-surface identity") interim is "Shared surfaces remain household-safe with no <code>verified</code> state until resolved," which honestly blocks the <code>verified</code> outcome in Section 10 rather than silently assuming it. Trade-offs are mostly decisive, not neutralized — e.g. Section 9.2 categorically lists what the household fallback assistant "may not access"; PD-06's interim excludes credential material from backups by default rather than hedging. The one soft spot: the PRD presents some already-made choices as absolutes without naming the alternative that was rejected (e.g. a personal-fallback model is never named as the thing Section 9.2's household-owned fallback replaces). That is optional elaboration, not a decision-readiness gap.</p>
+          </div>
+        </div>
+        <div class="findings-list">
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-low">low</span>
+              <h3 class="finding-title">AD-13 / PD-05 overlap on activity retention</h3>
+              <span class="finding-location">§18 AD-13, §19 PD-05</span>
+            </header>
+            <div class="finding-note">AD-13 ("Activity retention and append-protection strategy", Architect) and PD-05 ("Default retention periods for … activity, and approvals", Product owner) both cover activity retention with the same interim ("retain all … no pruning / no automatic deletion"). The concerns are distinct (append-protection vs. retention period) but the affected-requirement overlap (FR-082) and interim duplication could let a story pick the wrong owner.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Add a one-line cross-reference in each entry naming the other as the complementary concern, or split the activity-retention scope between them explicitly.</div>
+          </article>
+        </div>
+      </details>
+    </section>
+
+    <section class="dimension">
+      <details>
+        <summary>
+          <h2>Substance over theater</h2>
+          <span class="verdict-pill verdict-strong">strong</span>
+        </summary>
+        <div class="dim-body">
+          <div class="dim-judgment">
+            <p>No furniture detected. Personas are load-bearing: Section 17.5 derives journey coverage from the per-requirement table, and UJ-1/UJ-2 (Alex, Jordan) drive the onboarding and adult-separation FRs. The 9-UJ count is appropriate density for a multi-stakeholder consumer product, not padding. No "innovation" or "differentiation" section was written to satisfy a template. NFRs are product-specific with real thresholds — NFR-017 through NFR-022 pin p95 latencies (2 s cached home, 500 ms accepted state, 250 ms client-side / 1 s backend private-content removal), NFR-003/NFR-004 name the exact boundary sets the privacy suite must cover. The Vision/Purpose (Section 1) is specific to this product ("ask once, delegate outcomes, and receive useful exceptions without manually programming ordinary household life") and could not swap into another category unchanged. The "household language only" requirement is restated across INV-9, FR-063, NFR-027, and counter-metric 6.4, but that is reinforcement of a core invariant, not theater.</p>
+          </div>
+        </div>
+      </details>
+    </section>
+
+    <section class="dimension">
+      <details>
+        <summary>
+          <h2>Strategic coherence</h2>
+          <span class="verdict-pill verdict-strong">strong</span>
+        </summary>
+        <div class="dim-body">
+          <div class="dim-judgment">
+            <p>The PRD has a thesis the features serve. Section 1 + the 11 governing invariants (INV-1 through INV-11) bet on durable-context-over-routines, private-by-default, and relationship-first; the milestone arc (A foundation → B first live slice → C first usable → D coordination → E voice) follows that thesis — the surface/privacy architecture is validated (A, mock-backed) before any live behavior (B), and proactive nudge/interruption/autonomous levels are explicitly held for D (FR-045, FR-047, FR-050, FR-051) with counter-metric 6.4 asserting zero such deliveries during the C pilot. Success metrics measure thesis outcomes, not activity: 6.1 tests engagement <em>quality</em> (70% of sessions produce a response/update/explanation/action "without developer repair"; 80% cross-surface continuations resume; 75% of Now/briefing items useful), and counter-metrics are present (6.4) and milestone-scoped (6.5 gates D). MVP scope kind is coherent: "experience + platform," with the first usable release (Milestone C) as the MVP and scope logic matching the thesis.</p>
+          </div>
+        </div>
+      </details>
+    </section>
+
+    <section class="dimension">
+      <details open>
+        <summary>
+          <h2>Done-ness clarity</h2>
+          <span class="verdict-pill verdict-adequate">adequate</span>
+        </summary>
+        <div class="dim-body">
+          <div class="dim-judgment">
+            <p>The bulk of FRs carry at least one testable consequence: FR-001 ("exactly one household per deployment"), FR-006 ("single-use, expiring, revocable, and unusable after the target profile is bound"), FR-017 (cancellation "shall prevent unsubmitted actions and visibly mark the request cancelled"), FR-025 (durable facts "shall include source category, timestamp, sharing class, confirmation state, and confidence") are all verifiable as written. NFR-020's 250 ms / 1 s removal windows and Section 11's "<code>unknown</code>, not <code>completed</code>" rule are crisply testable. The PRD correctly leans on FR consequences + the Section 17.4 verification-method column rather than a separate Acceptance section, which is acceptable. The weakness is concentrated in the proactive subsystem, which is thesis-critical: FR-046 ("default to the least disruptive level consistent with timing, consequence, confidence, and policy") names the factors but gives no thresholds, weights, or decision rule, and <em>no AD or PD owns the selection algorithm</em>. FR-048 ("detect relevant exceptions without requiring routine definitions") and FR-063 ("translate relevant state and actions into household language") use "relevant" loosely, though FR-045's milestone scoping narrows FR-048 to calendar-change exceptions for C and counter-metric 6.4 concretizes FR-063's "household language" into a checkable list (no YAML, entity IDs, service names, schema editing, database access, or model administration). For a chain-top PRD the rubric says to be unforgiving here; the proactive gap keeps this dimension at adequate rather than strong.</p>
+          </div>
+        </div>
+        <div class="findings-list">
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">medium</span>
+              <h3 class="finding-title">FR-046 proactive-level selection lacks testable thresholds and an owning decision</h3>
+              <span class="finding-location">§13.6, FR-046</span>
+            </header>
+            <div class="finding-note">"Least disruptive level consistent with timing, consequence, confidence, and policy" names four factors but no rule for combining them, no thresholds separating ambient from briefing from nudge, and no entry in the Section 18 or 19 registers that owns the selection algorithm. The thesis ("most successful assistance should happen quietly") rests on this requirement. The gap is bounded for Milestone C (only ambient/briefing are enabled per FR-045, and 6.1/6.4 measure outcome quality post-hoc), but bites hard at Milestone D when nudge/interruption/autonomous levels activate and 6.5's "fewer than 20% dismissed as irrelevant" / "fewer than 5% reversed" need a deterministic selector to test against.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Either add an AD (Architect, due Milestone D start) defining the level-selection inputs, thresholds, and tie-break rule with a <code>privacy-test</code>/<code>unit</code> verification gate, or add acceptance criteria to FR-046 stating the minimum decision inputs and the "must not exceed" level given each input combination — and link it from FR-046 and 6.5.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-low">low</span>
+              <h3 class="finding-title">"Relevant" is unbounded in two thesis-adjacent FRs</h3>
+              <span class="finding-location">§13.6 FR-048, §13.8 FR-063</span>
+            </header>
+            <div class="finding-note">FR-048's "relevant exceptions" and FR-063's "relevant state and actions" leave "relevant" to the implementer. FR-045 narrows FR-048 to calendar-change exceptions for C (mitigating), and FR-063's "without requiring entity IDs or service syntax" is testable on its own, but the word "relevant" itself is not.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Replace "relevant" with a defined scope (e.g. "exceptions derived from connected calendar, household-transportation, and confirmed-fact sources" for FR-048) or link an owning PD that defines the initial category set per milestone.</div>
+          </article>
+        </div>
+      </details>
+    </section>
+
+    <section class="dimension">
+      <details>
+        <summary>
+          <h2>Scope honesty</h2>
+          <span class="verdict-pill verdict-strong">strong</span>
+        </summary>
+        <div class="dim-body">
+          <div class="dim-judgment">
+            <p>Omissions are explicit, not inferred. Section 4.4 ("Explicit exclusions") and Section 1's "Kinward is not" list name what is out (multi-household tenancy, SaaS control plane, billing, support-operator access, mandatory external services, routine-centric behavior, legacy frontend, arbitrary AI-generated client code, admin access to another adult's private content, covert monitoring). Section 4.3 ("Later scope") honestly defers email, voice-only endpoints, richer coordination, layout editors, emergency mode, maintenance recall, progressive onboarding, tablet workspaces, and native Android. Per-FR milestone tags (e.g. FR-047 "(Milestone D)", FR-050/FR-051 "Milestone D scope") serve the <code>[NON-GOAL for MVP]</code> function at the requirement level. Open-item density is appropriate for the stakes: 22 open decisions (15 AD + 7 PD) for a chain-top PRD, each with a due milestone and safe interim behavior, and Section 20 readiness criteria require each to be resolved or explicitly accepted as open before <code>status: final</code>. No silent de-scoping was found — the rebuild plan's "do not move" list is reflected in the exclusions, and the salvage-matrix acceptance rule is enforced in the Milestone A exit gate.</p>
+          </div>
+        </div>
+      </details>
+    </section>
+
+    <section class="dimension">
+      <details open>
+        <summary>
+          <h2>Downstream usability</h2>
+          <span class="verdict-pill verdict-adequate">adequate</span>
+        </summary>
+        <div class="dim-body">
+          <div class="dim-judgment">
+            <p>The traceability machinery is strong: Section 3 glossary defines the seven core domain nouns (personal/specialist/fallback assistant, topic, durable fact, surface, meaningful external action); FR-001–FR-086, NFR-001–NFR-037, UJ-1–UJ-9, AD-01–AD-15, PD-01–PD-07, INV-1–INV-11 are all contiguous with no gaps or duplicates; cross-references spot-checked (FR-035→§4.1.1/4.1.2, FR-045→§6.5, FR-052→§11, FR-029→§10, FR-038→§12.4, FR-026→§8.2) all resolve; and Section 17.5 derives a journey-coverage summary from the authoritative 17.4 table with an explicit bidirectional-coverage rule for epic decomposition. The two weaknesses keep this at adequate. First, the glossary does not define several nouns used as FR subjects — "Now", "Briefing", "Continue", "Activity", and "Kinward Control" appear in FRs (FR-037, FR-038, FR-015, FR-053/FR-054, FR-068) but are defined only behaviorally in later sections, not in Section 3; usage is consistent across the PRD, so this is an indexing gap not drift. Second, and more consequential, three of nine user journeys lack the named protagonists Section 5's own header ("All names below are fictional test personas") leads a reviewer to expect — UJ-4, UJ-7, and UJ-8 have no named person carrying context inline. UJ-8 is purely operational (provider offline) and arguably needs none, but UJ-4 (a calendar change for a child) and especially UJ-7 (a child asks for homework help, then to message a teacher) are exactly the scenarios where named-protagonist context — the child's age, family role, guardian relationship — should travel inline into story creation. The FRs (FR-032, NFR-004) still carry the testable requirements, so the journeys are not floating, but the persona context the rubric wants is absent.</p>
+          </div>
+        </div>
+        <div class="findings-list">
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">medium</span>
+              <h3 class="finding-title">Three user journeys lack named protagonists</h3>
+              <span class="finding-location">§5 UJ-4, UJ-7, UJ-8</span>
+            </header>
+            <div class="finding-note">UJ-4 ("A connected calendar adds an early-release event associated with a child profile"), UJ-7 ("A child account asks for homework help"), and UJ-8 ("The memory provider or Home Assistant is offline") have no named person. Section 5's header promises fictional test personas and the rubric (chain-top, consumer, meaningful UX) treats named protagonists as load-bearing. UJ-7 is the most impactful miss: child-to-guardian approval routing, age-appropriate tone, and "not automatically copied into guardian memory" all benefit from a named child protagonist with inline age/family context.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Give UJ-4 and UJ-7 a named child protagonist (and a named adult recipient where relevant) with one line of inline family/age context, mirroring UJ-1/UJ-2/UJ-5/UJ-6/UJ-9. UJ-8 may stay protagonist-free if the PRD explicitly marks operational/failure journeys as exempt from the named-protagonist rule.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-low">low</span>
+              <h3 class="finding-title">Glossary does not cover all domain nouns used as FR subjects</h3>
+              <span class="finding-location">§3</span>
+            </header>
+            <div class="finding-note">"Now", "Briefing", "Continue", "Activity", and "Kinward Control" are defined behaviorally (§12.4, §12.3, FR-053, FR-068) but not in Section 3, so a reader pulling a single FR out of context must hunt for the definition. Usage is consistent across FRs, UJs, and SM definitions — this is an indexing gap, not drift.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Add five short glossary entries in §3 pointing to their behavioral definitions, or rename the §3 heading to "Core product concepts" and add a "See also" note listing the behaviorally-defined terms.</div>
+          </article>
+        </div>
+      </details>
+    </section>
+
+    <section class="dimension">
+      <details>
+        <summary>
+          <h2>Shape fit</h2>
+          <span class="verdict-pill verdict-strong">strong</span>
+        </summary>
+        <div class="dim-body">
+          <div class="dim-judgment">
+            <p>The shape matches the product. Kinward is a consumer, multi-stakeholder household product with meaningful UX on multiple surfaces — exactly the case the rubric says warrants load-bearing UJs, and the PRD carries 9 of them at appropriate density (not over-formalized for a single-operator tool, not under-formalized for a consumer product). As a chain-top PRD it leans into the dimensions that matter more downstream: full per-requirement traceability, journey coverage with a bidirectional-coverage rule for epics, and readiness criteria (Section 20) that require decision-register resolution, architecture mapping of every B/C requirement, and implementation-readiness review with no unresolved Milestone B blocker. As a brownfield PRD it satisfies the rubric's "existing-code references must be accurate" check — salvage citations (FR-010 "Salvage (personal assistants)", FR-018 "Salvage (memory)", FR-053 "Salvage (activity ledger)", FR-055 "Salvage (calendar integration)", FR-062 "Salvage (Home Assistant)") match the salvage matrix, and the matrix's 6-step acceptance rule is reproduced verbatim as the Milestone A exit-gate condition (Section 16). The three protagonist-less journeys are a shape-fit blemish captured under downstream usability; they do not by themselves make the shape wrong.</p>
+          </div>
+        </div>
+      </details>
+    </section>
+
+    <div class="mechanical">
+      <h3>Mechanical notes</h3>
+      <ul>
+        <li>Glossary coverage: five domain nouns used as FR subjects (Now, Briefing, Continue, Activity, Kinward Control) are absent from Section 3 but defined behaviorally elsewhere and used consistently — indexing gap, not drift.</li>
+        <li>ID continuity: clean across FR-001–086, NFR-001–037, UJ-1–9, AD-01–15, PD-01–07, INV-1–11; no duplicates, no gaps, no deprecated-without-superseder entries.</li>
+        <li>Cross-references: ten FR→Section spot-checks (§4.1.1, §4.1.2, §6.5, §7, §8.2, §9.2, §10, §11, §12.1, §12.4) all resolve.</li>
+        <li>Assumptions Index roundtrip: no <code>[ASSUMPTION]</code> tags and no Assumptions Index present. The PRD substitutes the AD/PD decision registers with explicit "safe interim behavior"; the function is served, the literal convention and its roundtrip are dropped. A one-line note in §18 or §20 stating that open AD/PD entries stand in for the Assumptions Index would close the loop.</li>
+        <li>UJ protagonist naming: 6 of 9 UJs name a protagonist (Alex, Jordan); UJ-4, UJ-7, UJ-8 do not (see Medium finding in Downstream usability).</li>
+        <li>Required sections for stakes: all present and appropriate to a chain-top, privacy-critical, single-household PRD.</li>
+      </ul>
+    </div>
+
+    <footer class="report-footer">
+      <div class="meta">
+        <span>Rubric: .claude/skills/bmad-prd/assets/prd-validation-checklist.md</span>
+        <span>Generated: 2026-07-13T23:23:59Z</span>
+      </div>
+    </footer>
+  </div>
+</body>
+</html>

@@ -1,0 +1,598 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PRD Validation: Kinward Assistant Experience</title>
+<style>
+  :root {
+    --bg: #fafaf9;
+    --surface: #ffffff;
+    --border: #e7e5e4;
+    --text: #1c1917;
+    --muted: #78716c;
+
+    --verdict-strong: #16a34a;
+    --verdict-adequate: #65a30d;
+    --verdict-thin: #d97706;
+    --verdict-broken: #dc2626;
+
+    --sev-low: #64748b;
+    --sev-medium: #ca8a04;
+    --sev-high: #ea580c;
+    --sev-critical: #dc2626;
+
+    --grade-exc: #16a34a;
+    --grade-good: #65a30d;
+    --grade-fair: #d97706;
+    --grade-poor: #dc2626;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+    font-size: 15px;
+  }
+  .container { max-width: 960px; margin: 0 auto; padding: 32px 24px 64px; }
+
+  header.report-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 24px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 24px;
+  }
+  .title h1 { margin: 0; font-size: 22px; font-weight: 600; letter-spacing: -0.01em; }
+  .title .subtitle { color: var(--muted); font-size: 13px; margin-top: 4px; font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+  .grade {
+    padding: 10px 18px;
+    border-radius: 8px;
+    font-weight: 600;
+    color: white;
+    font-size: 15px;
+    white-space: nowrap;
+  }
+  .grade-excellent { background: var(--grade-exc); }
+  .grade-good { background: var(--grade-good); }
+  .grade-fair { background: var(--grade-fair); }
+  .grade-poor { background: var(--grade-poor); }
+
+  .synthesis {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--muted);
+    border-radius: 8px;
+    padding: 18px 22px;
+    margin-bottom: 24px;
+    font-size: 15.5px;
+  }
+  .synthesis p { margin: 0 0 10px; }
+  .synthesis p:last-child { margin-bottom: 0; }
+
+  .dimension-summary {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 10px;
+    margin-bottom: 24px;
+  }
+  .dim-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 14px;
+  }
+  .dim-card .dim-name { font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+  .dim-card .dim-verdict { font-size: 14px; font-weight: 600; }
+
+  section.dimension, section.reviewer-section { margin-bottom: 14px; }
+  section.dimension details, section.reviewer-section details {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  section summary {
+    padding: 14px 20px;
+    cursor: pointer;
+    user-select: none;
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  section summary::-webkit-details-marker { display: none; }
+  section summary::before {
+    content: "▸";
+    display: inline-block;
+    color: var(--muted);
+    transition: transform 0.15s ease;
+  }
+  section details[open] summary::before { transform: rotate(90deg); }
+  section summary h2 {
+    display: inline;
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+    letter-spacing: -0.005em;
+    flex: 1;
+  }
+  .verdict-pill {
+    font-size: 11px;
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: white;
+  }
+  .verdict-strong { background: var(--verdict-strong); }
+  .verdict-adequate { background: var(--verdict-adequate); }
+  .verdict-thin { background: var(--verdict-thin); }
+  .verdict-broken { background: var(--verdict-broken); }
+
+  .dim-body { padding: 4px 20px 18px; }
+  .dim-judgment { color: var(--text); font-size: 14.5px; }
+  .dim-judgment p { margin: 0 0 10px; }
+
+  .findings-list { padding: 0 20px 4px; }
+  article.finding {
+    padding: 14px 0;
+    border-top: 1px solid var(--border);
+  }
+  article.finding:first-child { border-top: none; }
+  article.finding header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 6px;
+  }
+  .badge {
+    font-size: 10.5px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    line-height: 1.4;
+  }
+  .badge-sev-low { background: rgba(100, 116, 139, 0.12); color: var(--sev-low); }
+  .badge-sev-medium { background: rgba(202, 138, 4, 0.14); color: var(--sev-medium); }
+  .badge-sev-high { background: rgba(234, 88, 12, 0.14); color: var(--sev-high); }
+  .badge-sev-critical { background: rgba(220, 38, 38, 0.14); color: var(--sev-critical); }
+  .finding-title { margin: 0; font-size: 15px; font-weight: 500; flex: 1; min-width: 200px; }
+  .finding-location { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12.5px; color: var(--muted); }
+  .finding-note, .finding-fix { margin-top: 6px; font-size: 14px; }
+  .finding-fix strong { color: var(--muted); font-weight: 500; }
+
+  .reviewer-source {
+    font-size: 12px;
+    color: var(--muted);
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+
+  .mechanical {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin-top: 24px;
+    font-size: 14px;
+  }
+  .mechanical h3 { margin: 0 0 10px; font-size: 14px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  .mechanical ul { margin: 0; padding-left: 20px; }
+  .mechanical li { margin-bottom: 4px; color: var(--text); }
+
+  footer.report-footer {
+    margin-top: 40px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+    font-size: 12px;
+    color: var(--muted);
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  footer .meta { display: flex; gap: 24px; flex-wrap: wrap; }
+</style>
+</head>
+<body>
+  <div class="container">
+
+    <header class="report-header">
+      <div class="title">
+        <h1>Kinward Assistant Experience — Validation Report</h1>
+        <div class="subtitle">_bmad-output/planning-artifacts/prd-Kinward-Assistant-Experience.md</div>
+      </div>
+      <div class="grade grade-fair">Fair — near Good</div>
+    </header>
+
+    <div class="synthesis">
+      <p><strong>Strong and close to finalizable.</strong> The revision genuinely closes every high-severity defect from the prior rubric review: the non-authoritative source is gone, Milestone A is evidence-gated against the salvage-matrix acceptance rule, the five-context frontend-foundation gate restores the authoritative cross-surface validation shape, both decision registers now carry owners/status/due/affected-IDs/safe-interim behavior, and Section 17.4 provides complete per-requirement traceability that survived mechanical verification with zero errors. What remains on the rubric side is a set of medium-severity residuals — an undefined pilot metric dictionary, operation-level Milestone C scope for Kinward Control, a missing teen journey, one qualitative NFR, and a handful of qualifier escape hatches.</p>
+      <p>The adversarial pass materially sharpens the picture and is what holds the grade at Fair: it confirms all seven of its prior high-severity findings were structurally addressed, but finds two new high-severity defects the fixes introduced or exposed — the group-state <code>selected-share</code> exception is unsatisfiable under its own "presence detection is never proof" caveat and reopens the disclosure risk the fix was meant to close, and the privacy-class taxonomy is now internally inconsistent across Sections 7, 8, and 10 (<code>private-to-child</code>/<code>shared-with-guardians</code>/<code>teen</code> do not map to the Section 8.1 enumeration). It also flags decision-register due dates that postdate Milestone A work depending on them and a member (non-administrator) post-restore access gap. One more focused revision pass should close the document.</p>
+    </div>
+
+    <div class="dimension-summary">
+      <div class="dim-card">
+        <div class="dim-name">Decision-readiness</div>
+        <div class="dim-verdict" style="color: var(--verdict-strong)">Strong</div>
+      </div>
+      <div class="dim-card">
+        <div class="dim-name">Substance over theater</div>
+        <div class="dim-verdict" style="color: var(--verdict-adequate)">Adequate</div>
+      </div>
+      <div class="dim-card">
+        <div class="dim-name">Strategic coherence</div>
+        <div class="dim-verdict" style="color: var(--verdict-strong)">Strong</div>
+      </div>
+      <div class="dim-card">
+        <div class="dim-name">Done-ness clarity</div>
+        <div class="dim-verdict" style="color: var(--verdict-adequate)">Adequate</div>
+      </div>
+      <div class="dim-card">
+        <div class="dim-name">Scope honesty</div>
+        <div class="dim-verdict" style="color: var(--verdict-adequate)">Adequate</div>
+      </div>
+      <div class="dim-card">
+        <div class="dim-name">Downstream usability</div>
+        <div class="dim-verdict" style="color: var(--verdict-strong)">Strong</div>
+      </div>
+      <div class="dim-card">
+        <div class="dim-name">Shape fit</div>
+        <div class="dim-verdict" style="color: var(--verdict-strong)">Strong</div>
+      </div>
+    </div>
+
+    <section class="dimension">
+      <details>
+        <summary>
+          <h2>Decision-readiness</h2>
+          <span class="verdict-pill verdict-strong">Strong</span>
+        </summary>
+        <div class="dim-body">
+          <div class="dim-judgment">
+            <p>Sections 18 and 19 are now real decision registers: 15 architecture decisions (AD-01–AD-15) and 7 product decisions (PD-01–PD-07), each with owner, status, due milestone, affected requirement IDs, and a genuinely conservative safe interim behavior. The closing rule forbids silently deciding these inside stories, and Section 20 requires resolution or explicit accepted-open status before finalization. All 22 decisions are honestly marked Open — a decision-maker can see exactly what blocks Milestone B and what conservative behavior applies meanwhile.</p>
+            <p>No rubric findings. (The adversarial review flags a register sequencing defect — AD-01/AD-02/AD-06 due dates postdating Milestone A work that depends on them — see the adversarial section.)</p>
+          </div>
+        </div>
+      </details>
+    </section>
+
+    <section class="dimension">
+      <details>
+        <summary>
+          <h2>Substance over theater</h2>
+          <span class="verdict-pill verdict-adequate">Adequate</span>
+        </summary>
+        <div class="dim-body">
+          <div class="dim-judgment">
+            <p>The document overwhelmingly states enforceable behavior: deterministic shared-surface states with per-state outcomes, a five-level action-authority policy with unknown-result and stale-state rules, an observable request lifecycle, and a concrete backup/restore contract including post-restore account access. The Section 10 group state is now categorical, and NFR-012 mandates the duplicate-execution fallback.</p>
+          </div>
+        </div>
+        <div class="findings-list">
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">Medium</span>
+              <h3 class="finding-title">Residual qualifier escape hatches</h3>
+              <span class="finding-location">§8.2 L337 · §12.1 L440 · FR-048 L555 · NFR-016 L670</span>
+            </header>
+            <div class="finding-note">Four qualifiers still permit materially different implementations: derived-data invalidation "where the product can identify the dependency" without mandating dependency registration; cancellation never defines the terminal state for an already-submitted mutation; FR-048's "relevant exceptions" has no relevance predicate; NFR-016's "retry-bounded" has no product-visible bound or terminal status. AD-07/AD-11/PD-04 own the designs, but their resolutions could be judged compliant against text that never states the mandatory floor.</div>
+            <div class="finding-fix"><strong>Fix:</strong> One sentence each: require a dependency record at derivation time; define the cancellation terminal state per submission stage; state the relevance inputs and correction loop for FR-048; require a declared retry limit and terminal user-visible job status.</div>
+          </article>
+        </div>
+      </details>
+    </section>
+
+    <section class="dimension">
+      <details>
+        <summary>
+          <h2>Strategic coherence</h2>
+          <span class="verdict-pill verdict-strong">Strong</span>
+        </summary>
+        <div class="dim-body">
+          <div class="dim-judgment">
+            <p>The thesis — relationship-first, durable context over routines, privacy-conservative sharing, household-owned — is carried consistently into requirements, and the previously flagged narrowing is fixed: Section 4.1.1 restores the source-authoritative validation shape (eight capabilities × five surface contexts from one card and layout registry, mock-backed), with the live-slice narrowing recorded and bounded in Section 3.6. The Milestone C/D proactivity split makes success metrics milestone-scoped and adds a genuine counter-metric (zero nudge/interruption/autonomous deliveries during the C pilot). Metrics validate the thesis, not raw activity. No findings.</p>
+          </div>
+        </div>
+      </details>
+    </section>
+
+    <section class="dimension">
+      <details>
+        <summary>
+          <h2>Done-ness clarity</h2>
+          <span class="verdict-pill verdict-adequate">Adequate</span>
+        </summary>
+        <div class="dim-body">
+          <div class="dim-judgment">
+            <p>Release boundaries, deterministic policies, and most NFRs create real pass/fail conditions; the perf reference environment, previously unmoored, is now managed by AD-15 with a blocking interim behavior.</p>
+          </div>
+        </div>
+        <div class="findings-list">
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">Medium</span>
+              <h3 class="finding-title">Pilot metrics still lack reproducible measurement definitions</h3>
+              <span class="finding-location">§6.1–6.4, L240–264</span>
+            </header>
+            <div class="finding-note">"Sampled assistant sessions," "marked useful, acted upon, or left undisputed," and similar terms have targets but no event schema, denominator, sampling method, minimum sample size, or evaluator. The same pilot data can still yield different pass/fail results.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Add a metric dictionary (event definition, denominator, minimum N, sampling, exclusions, evaluator) for every percentage measure in 6.1–6.5.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">Medium</span>
+              <h3 class="finding-title">NFR-024 has no objective pass condition</h3>
+              <span class="finding-location">L686</span>
+            </header>
+            <div class="finding-note">It defers to "UX-specified room-distance readability and touch-target requirements," but the UX source has no dimensions, distances, or test protocol. The table's a11y-audit verification method cannot be executed against this.</div>
+            <div class="finding-fix"><strong>Fix:</strong> State minimum touch-target size, reference viewing distances per room profile, and type-size/contrast criteria, or assign the gap a register entry due before Milestone C.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-low">Low</span>
+              <h3 class="finding-title">"Measurable" versus "met": pilot gating relationship undefined</h3>
+              <span class="finding-location">L236 vs L725</span>
+            </header>
+            <div class="finding-note">The Milestone C exit gate requires Section 6 conditions to be "measurable," while Section 6 requires them "met" during a 30-day pilot; the PRD never says what happens if the pilot misses a threshold after the gate passes.</div>
+            <div class="finding-fix"><strong>Fix:</strong> One sentence stating the gating relationship — e.g., Milestone D entry requires the Milestone C pilot conditions met, not merely measurable.</div>
+          </article>
+        </div>
+      </details>
+    </section>
+
+    <section class="dimension">
+      <details>
+        <summary>
+          <h2>Scope honesty</h2>
+          <span class="verdict-pill verdict-adequate">Adequate</span>
+        </summary>
+        <div class="dim-body">
+          <div class="dim-judgment">
+            <p>Scope is now largely explicit and mechanically recoverable: every FR/NFR carries a milestone in Section 17.4; FR-045 splits ambient/briefing (C) from nudge/interruption/autonomous (D) with a stay-disabled clause verified by a counter-metric; FR-047/050/051 are tagged Milestone D in both text and table; unresolved decisions must enter epics as blockers or assumptions.</p>
+          </div>
+        </div>
+        <div class="findings-list">
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">Medium</span>
+              <h3 class="finding-title">"Basic Kinward Control" is still not an operation-level release boundary</h3>
+              <span class="finding-location">§4.2 L131 · FR-068–FR-073</span>
+            </header>
+            <div class="finding-note">The FRs use "manage" across nine resource areas without stating which create/read/update/revoke/reconnect operations are mandatory at Milestone C. A read-only status page and a full management suite both satisfy the current wording.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Add a Milestone C Control capability matrix (resource × mandatory operation), deferring the rest explicitly.</div>
+          </article>
+        </div>
+      </details>
+    </section>
+
+    <section class="dimension">
+      <details>
+        <summary>
+          <h2>Downstream usability</h2>
+          <span class="verdict-pill verdict-strong">Strong</span>
+        </summary>
+        <div class="dim-body">
+          <div class="dim-judgment">
+            <p>The prior review's weakest dimension is now the revision's biggest win. Section 17.1 adds ID governance; Section 17.4 provides a per-requirement row for all 86 FRs and 37 NFRs with source, journey, milestone, invariant, verification method, and evidence owner — mechanically verified with no gaps, duplicates, or dangling cross-references, and the 17.5 journey summary matches the table exactly. The epic-decomposition preservation rule makes the mapping binding downstream.</p>
+          </div>
+        </div>
+        <div class="findings-list">
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">Medium</span>
+              <h3 class="finding-title">Teen policy still has no end-to-end journey</h3>
+              <span class="finding-location">§7.3 L291–299 · UJ-1–UJ-9</span>
+            </header>
+            <div class="finding-note">The `teen` privacy class has guardian-visible categories and default approval rules, but the nine journeys cover adults, a child, degraded providers, and restore. Epics can pass the automated-boundary bar while missing the lived teen experience.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Add a fictional teen journey (UJ-10 under the 17.1 governance rule) with success and refusal/handoff outcomes, mapped to FR-032, NFR-004, and the relevant action FRs.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-low">Low</span>
+              <h3 class="finding-title">Actor vocabulary still drifts</h3>
+              <span class="finding-location">FR-008/009/015/016/024/054/055</span>
+            </header>
+            <div class="finding-note">Requirements alternate among "person," "user," "account-bearing person," and "member" without a normative relationship model tying profile, account, authenticated principal, role, and participant/audience together.</div>
+            <div class="finding-fix"><strong>Fix:</strong> A short normative actor-relationship paragraph in Section 3 plus a declaration of UI-only synonyms.</div>
+          </article>
+        </div>
+      </details>
+    </section>
+
+    <section class="dimension">
+      <details>
+        <summary>
+          <h2>Shape fit</h2>
+          <span class="verdict-pill verdict-strong">Strong</span>
+        </summary>
+        <div class="dim-body">
+          <div class="dim-judgment">
+            <p>The shape matches the product: named-protagonist fictional journeys, deterministic policy sections where privacy and actions demand constraint traceability, milestone gates for a chain-top PRD, and now managed decision registers and per-requirement traceability appropriate to downstream consumers. The brownfield/salvage dimension is handled correctly: Milestone A binds every retained legacy subsystem to the salvage matrix's six-step acceptance rule and demotes status reports to evidence with no product authority. No findings.</p>
+          </div>
+        </div>
+      </details>
+    </section>
+
+    <section class="reviewer-section">
+      <details open>
+        <summary>
+          <h2>Adversarial review</h2>
+          <span class="reviewer-source">review-adversarial-general.md</span>
+        </summary>
+        <div class="dim-body">
+          <div class="dim-judgment">
+            <p><strong>Materially improved but not yet ready for architecture or epic decomposition.</strong> All seven prior high-severity findings were structurally addressed, and five prior focus areas are fully resolved. However, the group-mode fix introduces a <code>selected-share</code> exception that its own audience caveat makes unsafe, the privacy-classification taxonomy is now internally inconsistent across Sections 7, 8, and 10, and the new decision registers assign due dates that postdate Milestone A work that depends on them. One more focused revision pass should close the document. Counts: 0 critical, 2 high, 10 medium, 4 low.</p>
+          </div>
+        </div>
+        <div class="findings-list">
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-high">High</span>
+              <h3 class="finding-title">Group-state `selected-share` exception is unsatisfiable under its own audience caveat</h3>
+              <span class="finding-location">L392, L328, L248</span>
+            </header>
+            <div class="finding-note">Line 392 permits rendering "a `selected-share` that is valid for every detected audience member" while the same sentence states "presence detection is never treated as proof that every audience member is known." If detection can never establish the audience, no selected-share can ever be proven valid for everyone present — the permission is either dead text or will be implemented against detected presence and disclose selected-share content (which originates from private data) to undetected people, recreating exactly the group-mode leak the revision was written to eliminate.</div>
+            <div class="finding-fix"><strong>Fix:</strong> In `group` state permit `household-shared` rendering only; route `selected-share` and all private content through private-device handoff, or require every detected person to hold a currently `verified` session plus explicit surface-policy opt-in, with any unverified presence downgrading to household-shared. Also state that an explicit sharing act reclassifies the shared statement per Section 8.2.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-high">High</span>
+              <h3 class="finding-title">Privacy-class taxonomy internally inconsistent across Sections 7, 8, and 10</h3>
+              <span class="finding-location">L291, L306, L324–331, L392, L940</span>
+            </header>
+            <div class="finding-note">Section 8.1 enumerates exactly six mandatory data classes, but Section 7.4 uses `private-to-child` (naming drift from `private-child`) and `shared-with-guardians` (absent from the enumeration; PD-02's interim is keyed to it), and Section 7.3's `teen` class has no stated mapping — so the group-state prohibition, which names only `private-person` and `private-child`, does not literally cover teen private data. FR-029/FR-032/NFR-003/NFR-004 tests cannot be written consistently against three divergent taxonomies.</div>
+            <div class="finding-fix"><strong>Fix:</strong> One normative mapping: `private-to-child` = `private-child`; `shared-with-guardians` = a constrained `selected-share` naming the guardians; state which class teen private content uses; rephrase the group prohibition to close over the complete class set (e.g., "everything except `household-shared`"); align PD-02's wording.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">Medium</span>
+              <h3 class="finding-title">UJ-3 contradicts the coordination-statement alternative in Section 4.1.2</h3>
+              <span class="finding-location">L102–115 vs L194</span>
+            </header>
+            <div class="finding-note">Section 4.1.2 allows the shared fixture to be a private topic represented by an approved household-safe coordination statement; UJ-3 still permits the generic shared item "only when the topic is household-shared," forbidding that branch, and "shared/unshared" is undefined for it.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Define "shared" for the slice as household-shared or having an approved Section 8.2 coordination statement; amend UJ-3's shared-display outcome to permit the generic item when either condition holds.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">Medium</span>
+              <h3 class="finding-title">Decision-register due dates postdate Milestone A work that depends on them</h3>
+              <span class="finding-location">L711, L494, L772, L917–922</span>
+            </header>
+            <div class="finding-note">Milestone A includes the bootstrap API (FR-002 creates account bindings), neutral memory/knowledge contracts, and provider adapters — yet AD-01 (authentication/binding), AD-02 (model-provider contract), and AD-06 (storage split) are due only at Milestone B start. Milestone A either implements ahead of its governing decisions or the milestone assignments are wrong; the salvage rule requires contracts before migration.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Pull the contract-shaping parts of AD-01/AD-02/AD-06 forward to Milestone A start (or split each into an A-scoped contract decision and a B-scoped mechanism decision), or move the dependent Milestone A content to B.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">Medium</span>
+              <h3 class="finding-title">Member (non-administrator) post-restore access is neither specified nor verified</h3>
+              <span class="finding-location">§14.3 L629–630 · FR-085/086</span>
+            </header>
+            <div class="finding-note">The new contract gives the administrator a documented recovery procedure and verifies it, but members get one sentence with no required procedure; all pre-restore invitations are invalid and no supersession rule covers a profile's orphaned prior account record. FR-086 never verifies member re-access, so INV-8 can pass with every non-admin locked out.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Require a documented member re-access procedure (post-restore invitation to the existing profile or portable member recovery material), define supersession of prior credentials, and extend FR-086 to verify member re-access for at least one non-administrator profile.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">Medium</span>
+              <h3 class="finding-title">Autonomous-authority machinery: Milestone C or D scope is ambiguous</h3>
+              <span class="finding-location">L408–419, L552, L559, L264–272</span>
+            </header>
+            <div class="finding-note">FR-052 (Milestone C) requires "every authority rule in Section 11," including the full `autonomous` grant contract, while FR-045 and Section 6.4 mandate autonomous delivery stays disabled until D. The PRD never says whether C builds the (disabled) grant mechanism or FR-052 is satisfied vacuously.</div>
+            <div class="finding-fix"><strong>Fix:</strong> State that during Milestone C no `autonomous` grant can be created or activated (Section 11 autonomous rules enforce "always deny") and the grant mechanism, controls, and Section 6.5 measurement ship in Milestone D.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">Medium</span>
+              <h3 class="finding-title">Guardian review of child data contradicts PD-02; child account path undefined</h3>
+              <span class="finding-location">§7.4 L306–307 · FR-032 · PD-02 · UJ-7</span>
+            </header>
+            <div class="finding-note">Section 7.4 still grants administrators review "necessary for care, safety, school…" without precedence over `private-to-child`, a necessity principal, or audit trail — contradicting PD-02's interim; FR-032 (Milestone C) requires implementing Section 7 as written, which is unimplementable while PD-02 is open. UJ-7 depends on a child account no FR creates.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Subordinate 7.4's review sentence to PD-02's resolution; add precedence, decision principal, minimum-necessary disclosure, and append-protected audit for exceptional access; add or explicitly defer a child-account onboarding/binding FR.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">Medium</span>
+              <h3 class="finding-title">Action authority still has no grant/approval/revocation principal matrix</h3>
+              <span class="finding-location">§11 L410–422 · FR-053</span>
+            </header>
+            <div class="finding-note">Carried from the prior review: the PRD never states who may grant or revoke a capability maximum or bounded autonomy, or who is an eligible approver when an action affects another person; no AD/PD entry owns the gap.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Add a grant/approval/revocation matrix keyed by privacy class, represented person, action category, affected person, and integration ownership with execution-time validation — or minimally a register entry with a safe interim.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">Medium</span>
+              <h3 class="finding-title">Inference-provider degradation still less defined than memory and Home Assistant</h3>
+              <span class="finding-location">L135, L159, L222–226, L918</span>
+            </header>
+            <div class="finding-note">AD-02's interim helps, but no FR defines behavior when no model provider is configured, whether accepted requests fail or hang on outage, or the minimum inference capability required for the Milestone C "working assistant conversation path" gate.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Add an FR mirroring FR-027/FR-067 for the inference capability and define the minimum configured inference capability for pilot entry; extend UJ-8.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">Medium</span>
+              <h3 class="finding-title">Specialist assistants still have no lifecycle requirement or milestone</h3>
+              <span class="finding-location">§3.2, §9.1, FR-010, NFR-004</span>
+            </header>
+            <div class="finding-note">Carried, unchanged: no FR lets an owner create, select, retire, or delete a specialist and no milestone or explicit deferral covers the lifecycle, so NFR-004 tests a boundary no requirement brings into existence.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Assign a minimum lifecycle to a milestone or defer it explicitly in Section 4.3, preserving multi-assistant schema compatibility and forbidding implicit private-memory merges.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">Medium</span>
+              <h3 class="finding-title">Prepared approvals and activity records omit "what information was used"</h3>
+              <span class="finding-location">L416, L560, L547</span>
+            </header>
+            <div class="finding-note">Carried, unchanged: FR-053's record lists actors, authority, approval, integration, results, and undo — but not the privacy-filtered source categories or correctable facts the action relied on.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Require prepared approvals and final activity records to include privacy-filtered source categories and referenced user-correctable facts, excluding others' private data, secrets, prompts, and hidden reasoning.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">Medium</span>
+              <h3 class="finding-title">"Exactly one household" still lacks enforcement-path requirements</h3>
+              <span class="finding-location">FR-001, FR-076, INV-1</span>
+            </header>
+            <div class="finding-note">INV-1 and FR-076 improve this, but no requirement rejects a second household through APIs, jobs, imports, or restore-to-populated paths, and nothing prohibits tenant-routing or commercial-role fields in Kinward contracts.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Extend FR-001 to require rejection on every path and prohibit tenant/entitlement/support-operator fields absent an approved justification.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-low">Low</span>
+              <h3 class="finding-title">Security-significant vocabulary partially implementation-defined</h3>
+              <span class="finding-location">L389, L59/102/110/208, L560, L494</span>
+            </header>
+            <div class="finding-note">`household-safe`, `system-safe`, `represented person`, and `account binding` gate rendering, activity, and restore semantics but are never normatively defined.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Add short normative definitions to Section 3 or 8 and reference them from Sections 10, 11, 13, and 14.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-low">Low</span>
+              <h3 class="finding-title">Traceability Source column attributes PRD-original values to sources that lack them</h3>
+              <span class="finding-location">L873–878, L817, L939</span>
+            </header>
+            <div class="finding-note">Numeric thresholds (latencies, interruption cap, 10-minute timeout) appear nowhere in the cited sources; the table presents legitimate PRD-level decisions as sourced.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Mark such rows "PRD-defined threshold; theme from &lt;source §&gt;" or add a `PRD` source token.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-low">Low</span>
+              <h3 class="finding-title">Dangling "prior 10% target" with no document history</h3>
+              <span class="finding-location">L271, L743</span>
+            </header>
+            <div class="finding-note">Section 6.5 references a superseded draft target, and Section 17.1 requires material changes be recorded in a document history the PRD doesn't have.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Add a document-history section or restate the sentence self-contained.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-low">Low</span>
+              <h3 class="finding-title">Milestone D/E content lacks requirement coverage; "—" legend misplaced</h3>
+              <span class="finding-location">L729, L735, L909, L759</span>
+            </header>
+            <div class="finding-note">Email, layout editing, and voice have no FRs while Section 17.5 demands bidirectional epic mapping; the "—" Invariant-column legend sits in Section 17.2 but describes the 17.4 table.</div>
+            <div class="finding-fix"><strong>Fix:</strong> State that D/E content without FR coverage requires a PRD revision issuing requirements before decomposition; move the legend note into 17.4.</div>
+          </article>
+        </div>
+      </details>
+    </section>
+
+    <div class="mechanical">
+      <h3>Mechanical notes</h3>
+      <ul>
+        <li><strong>IDs:</strong> FR-001–FR-086, NFR-001–NFR-037, UJ-1–UJ-9, AD-01–AD-15, PD-01–PD-07 all contiguous and unique in both definitions and the traceability table; no gaps, duplicates, or dangling cross-references.</li>
+        <li><strong>Sources:</strong> front matter lists exactly the four authoritative sources; all paths resolve; zero references to <code>docs/pivot/migration-status.md</code> remain anywhere in the PRD.</li>
+        <li>Every Brief/UX/Plan section citation and Salvage matrix row cited in Section 17.4 exists in the corresponding source document; the 17.5 journey summary matches the 17.4 table exactly.</li>
+        <li><strong>Public-repository safety:</strong> pass — personas are labeled fictional; no real names, addresses, credentials, hostnames, or secrets found.</li>
+        <li>Prior-finding disposition — rubric (12 prior): 6 resolved, 2 partially resolved, 4 still open. Adversarial (16 prior): 5 resolved, 8 partially resolved, 3 unresolved. All 9 targeted high-severity fixes verified as structurally landed; 2 new high-severity residuals emerged from the group-mode and privacy-taxonomy interactions.</li>
+      </ul>
+    </div>
+
+    <footer class="report-footer">
+      <div class="meta">
+        <span>Rubric: .claude/skills/bmad-prd/assets/prd-validation-checklist.md</span>
+        <span>Generated: 2026-07-13T19:22:23+00:00</span>
+      </div>
+    </footer>
+  </div>
+</body>
+</html>

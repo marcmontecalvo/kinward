@@ -10,6 +10,7 @@ build/
 coverage/
 playwright-report/
 test-results/
+.playwright-mcp/
 
 # Environment and secrets
 .env
@@ -28,3 +29,8 @@ test-results/
 data/
 backups/
 .volumes/
+.contextception/
+
+# In Memoria
+in-memoria.db
+.in-memoria/cache/

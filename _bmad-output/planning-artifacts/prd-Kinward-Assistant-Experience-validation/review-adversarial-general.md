@@ -1,179 +1,35 @@
-# Adversarial PRD Review: Kinward Assistant Experience
+## Summary
 
-## Review Basis
-
-This review evaluates `prd-Kinward-Assistant-Experience.md` only against these authoritative sources:
-
-- `product-brief-Kinward-Assistant-Experience.md`
-- `ux-design-specification-Kinward-Assistant-Experience.md`
-- `docs/pivot/single-household-pivot-and-rebuild-plan.md`
-- `docs/pivot/salvage-matrix.md`
-
-## Verdict
-
-**Not ready for architecture or epic decomposition without correction.** The PRD captures the broad product direction, but it weakens or leaves unresolved several source-level invariants at the exact boundaries where implementation needs deterministic contracts: source authority, one-household enforcement, shared-assistant ownership, youth privacy, identity-confidence behavior, external-action authority, inference degradation, and recovery scope. It also moves the required cross-surface foundation behind the personal-mobile slice, conflicting with both the UX specification and rebuild execution order.
-
-## Severity Counts
-
-| Severity | Count |
-|---|---:|
-| Critical | 0 |
-| High | 10 |
-| Medium | 5 |
-| Low | 0 |
+This PRD is unusually disciplined about privacy boundaries and deterministic policy states, which is exactly why the gaps stand out so sharply: the author lavishes precision on shared-surface identity transitions while leaving the actual measurability machinery, several defined-but-unbacked concepts, and a number of requirement/decision contradictions loose. At least a dozen requirements are untestable as written because their predicates ("relevant," "consequential," "sampled," "where supported") are undefined, and the milestone gate leans on at least two open architecture decisions whose interim behaviors directly contradict Milestone C FRs. A document this careful in places has no excuse for the holes below.
 
 ## Findings
 
-### 1. High: The PRD declares the wrong source set
+- **Section 6.1 repeatedly relies on "sampled" without defining the sampling procedure.** "At least 70% of sampled assistant sessions," "at least 80% of sampled cross-surface topic continuations," and "at least 75% of sampled Now or briefing items" give no sample size, sampling method, selector, or evidence owner. An engineer cannot build a test that passes or fails these thresholds, and Section 17.4 assigns them only to `e2e`/`integration` owners with no sampling artifact named. The 30-day pilot window is stated, but the sampling frame inside it is not.
 
-**Exact PRD lines:** 6-10, 381-384
+- **UJ-7 exercises a message-to-teacher flow that has no backing functional requirement and whose channel is later scope.** The journey says "Message sending is blocked or routed to authorized-adult approval," but Section 4.3 defers email reading and sending to later scope, and no FR defines any other message channel (chat, in-app, carrier) for a child. Section 17.5 maps UJ-7 only to FR-032, NFR-004, plus FR-007/FR-028/FR-052–FR-053 — none of which define a message-sending capability. The journey dodges the hard case by referencing a capability that does not exist in any milestone.
 
-**Impact:** The frontmatter omits the authoritative salvage matrix and adds `docs/pivot/migration-status.md`, which is not one of the governing sources. The body grants explicit continuing authority only to the UX specification and does not establish the product brief, rebuild plan, and salvage matrix as constraints. Architecture and epics could therefore justify scope or completion claims from a non-authoritative status document or bypass the salvage acceptance rule.
+- **No FR requires the household fallback assistant to be created or instantiated.** Section 3.3 defines it, FR-011 says it "shall enforce Section 9.2," FR-020 forbids it from querying private memory, and UJ-5 depends on it — but no FR states that a deployment must actually create or possess a fallback assistant, when it is created, or who owns the lifecycle. FR-009 covers personal assistants per account-bearing person; the fallback assistant has no equivalent existence requirement, leaving UJ-5 and FR-011 suspended on an unstated assumption.
 
-**Concrete fix:** Replace line 10 with `docs/pivot/salvage-matrix.md`. Add a source-authority statement naming all four governing documents and state that status reports and legacy Homefront material are evidence only, not product authority. Preserve the UX specification's authority over surface behavior while preserving the rebuild plan and salvage matrix as authority over sequencing and migration.
+- **Section 14.1 and PD-06 contradict each other on credential material in backups.** Section 14.1 lists "encrypted credential material where supported" as included data in the first usable release backup. PD-06's safe interim behavior says "Exclude credential material; every integration requires reauthorization after restore." FR-074 (Milestone C) requires the manifest to list included, excluded, encrypted, externally referenced, and rebuildable data, and FR-084 requires import of only portable material. A reviewer cannot tell whether encrypted credentials are in or out for Milestone C, and the two sources give opposite answers.
 
-**Authoritative basis:** Rebuild plan lines 115-117 and 206-210 require an authoritative current planning set; salvage matrix lines 34-43 define the acceptance rule for moved subsystems.
+- **FR-023's trigger "consequential, sensitive, or behavior-changing observations" is undefined.** No section defines what makes an observation consequential, sensitive, or behavior-changing. The requirement that such observations "require confirmation before becoming durable facts" is therefore untestable: an engineer cannot decide whether a given inferred observation crosses the threshold, and Section 17.4 assigns it only `integration` verification with no oracle. The same undefined-predicate problem recurs in FR-048 ("detect relevant exceptions") and FR-063 ("relevant state and actions").
 
-### 2. High: "Foundation already accepted" is unsupported by the authoritative sources
+- **Section 8.2's escape clause "where the product can identify the dependency" makes FR-026 untestable, and AD-07 is still open against it.** FR-026 (Milestone C, `privacy-test`) requires enforcement of Section 8.2, but Section 8.2 itself limits the invalidation obligation to dependencies "the product can identify," and AD-07 — which is supposed to define the invalidation and deletion behavior — is open with interim "mark references inaccessible and disclose the limitation." The PRD marks FR-026 Milestone C-ready while the mechanism that would make it enforceable is undecided. The privacy-test gate has nothing concrete to test against.
 
-**Exact PRD lines:** 331-340
+- **The specialist-assistant concept (Sections 3.2 and 9.1) has no functional requirement covering its creation, invocation, or delegation.** Section 9.1 specifies that "Assistants may exchange information only through an explicit delegation record containing purpose, permitted data, expiry, and recipient," but no FR requires such a delegation record to exist, be enforced, or be inspectable. FR-010 covers ownership only. The entire specialist-assistant and inter-assistant-delegation surface is defined conceptually and then never required, yet NFR-004 names "specialist-assistant boundaries" as a test target with no FR backing the behavior under test.
 
-**Impact:** None of the four authoritative sources certifies these items as accepted. Several listed items are salvage candidates whose movement is conditional, including the Honcho and LLM-Wiki adapters and generic infrastructure. Treating them as accepted can cause architecture and stories to inherit code before current behavior, removed assumptions, Kinward contracts, focused tests, and subsystem checks are demonstrated.
+- **Section 4.1.2 says "shared display" (singular) while Section 4.1.1 defines two distinct shared surface contexts (shared kitchen display and shared living-room display).** The first live slice requires "personal mobile, personal desktop, shared display, and backend privacy enforcement," but does not say whether one or both shared-display contexts must be live. FR-035 only requires the live slice to support "shared-display layouts." An engineer cannot determine whether satisfying one shared context satisfies the slice, and the privacy behavior in Section 10 is described per-surface, not per-context.
 
-**Concrete fix:** Rename Milestone A to a planned or evidence-gated foundation milestone unless acceptance is established by an authorized readiness process. For every salvaged item, make completion contingent on the six salvage-matrix checks; do not infer acceptance from migration status or repository presence.
+- **FR-042 ("Generated temporary views shall use registered components only") references a concept that is never defined in the PRD body.** "Generated temporary views" appears in the traceability table (Section 17.4) and nowhere in Sections 1–14. The term is undefined, has no journey, no source citation beyond "UX §Generated Views," and is gated to Milestone D. A requirement whose subject is undefined cannot be implemented or verified.
 
-**Authoritative basis:** Rebuild plan lines 33-34 and 163-168 prohibit automatic movement; salvage matrix lines 34-43 require six checks before a subsystem may move.
+- **NFR-020 and Section 10 do not reconcile their timing models, and both depend on the open AD-10.** Section 10 says "Any transition away from `verified` removes private content from the next render and invalidates private fetch authorization." NFR-020 requires removal within 250 ms of the client receiving an identity downgrade and within 1 second of backend detection. "Next render" has no deadline bound to it, and the client-side 250 ms obligation presupposes a client notification mechanism that AD-10 (open) is supposed to define. The PRD marks NFR-020 Milestone C with `perf-test, privacy-test` while the verification mechanism is undecided.
 
-### 3. High: The single-household invariant is not carried into enforceable storage and service boundaries
+- **Section 6.2 mixes a 100% bar ("Zero actions are reported complete when the provider returned failure, timeout, unknown status, or no confirmation") with no stated population or sampling frame, unlike Section 6.1.** It is unclear whether "zero" applies across the 30-day pilot, across all actions ever, or across a sampled subset. Combined with the undefined "sampled" in 6.1, the trust-and-privacy metrics are not operationally comparable and an engineer cannot tell when the bar is met or broken.
 
-**Exact PRD lines:** 123-129, 180-182, 280-286, 384
+- **No user journey exercises the teen member (Section 7.3).** UJ-7 is explicitly a child. The teen privacy classification, guardian-sharing transformation, "categories guardian-visible versus private" disclosure requirement, and teen action-approval defaults are never walked through end-to-end. Section 17.5 lists UJ-7 against FR-032 and NFR-004, but FR-032 covers "teen and child policy" generically; the teen-specific behaviors in 7.3 (e.g., that money/transportation/appointments require adult approval by default, that the product must show the teen which categories are guardian-visible) have no journey and no dedicated FR beyond the bundled FR-032.
 
-**Impact:** FR-001 states the outcome, but FR-002 only prevents a second household through the "normal setup flow." It does not require all APIs, background jobs, persistence paths, imports, or recovery paths to preserve one household, nor does it prohibit retained tenant identifiers and tenant routing. An implementation could satisfy the onboarding test while retaining multi-tenant architecture and permitting a second household through another path, directly undermining the simplification and privacy boundary of the pivot.
+- **AD-01's interim behavior ("No implementation of invitation, session, or recovery flows until resolved") collides with FR-002 at Milestone A.** FR-002 requires bootstrap to create the household, administrator profile, account binding, and first personal assistant "as one recoverable operation," and is gated to Milestone A with `integration` verification. AD-01 is due "Milestone A start" and blocks recovery implementation until resolved. The phrase "recoverable operation" in FR-002 cannot be satisfied if recovery flows are blocked, and the PRD gives no rule for which prevails when an open AD contradicts a same-milestone FR.
 
-**Concrete fix:** Require the one-household invariant at database, service, import/restore, and background-work boundaries; reject creation or import of a second household through every path. State that current Kinward contracts and schema must not retain tenant routing, tenant IDs, control-plane ownership, or commercial-role semantics unless a non-tenancy use is explicitly justified.
+- **Section 6.4's counter-metric "Ordinary household use requires no YAML, entity IDs, service names, schema editing, database access, or model administration" is duplicated as NFR-027 and is not measurable as a counter-metric.** It is a universal negative with no sampling or test procedure, and it appears both in the success-metrics section and in the NFR list (NFR-027, `inspection`, owner PO). The duplication creates two owners for the same proposition and no defined method to detect a violation during the pilot.
 
-**Authoritative basis:** Product brief lines 38-46; rebuild plan lines 101-107 and 123-129; salvage matrix lines 7-8, 21-22, and 25-32.
-
-### 4. High: The shared fallback assistant has no ownership or capability contract
-
-**Exact PRD lines:** 22, 193-200, 206-215, 219-226
-
-**Impact:** FR-012 defines ownership only for personal assistants, while FR-022 refers to shared assistants without defining their owner, lifecycle, routing role, memory boundary, or permitted capability set. Low-confidence shared-surface behavior can therefore be implemented by routing into a personal assistant, a synthetic "household owner," or a combined household memory, all contrary to the source model that personal assistants are primary and shared AI is a limited fallback.
-
-**Concrete fix:** Add an explicit shared-assistant contract: it has no personal owner, is household-scoped, is the limited fallback for household-safe requests, and cannot receive unrestricted personal memory. Define routing from low-confidence/unknown shared interactions to that fallback and keep personal-assistant access contingent on resolved identity and surface policy.
-
-**Authoritative basis:** Product brief lines 175-181, 183-190, and 238-245; UX specification lines 206-208 and 465.
-
-### 5. High: Teen and child privacy is reduced to an undefined policy override
-
-**Exact PRD lines:** 72-79, 223-226, 272-275
-
-**Impact:** The teen persona changes source language from privacy from parents and shared surfaces to privacy "except where explicit household policy permits otherwise." No requirement bounds that exception. FR-035 merely says "age-appropriate" and "stronger default restrictions," while FR-037 protects only another adult's memory from administrators. The result permits an implementation in which an administrator or parent can expose teen or child assistant memory through policy, Kinward Control, activity, approvals, or shared surfaces without violating a testable PRD statement. It also gives no deterministic behavior for a child profile without an account.
-
-**Concrete fix:** Define testable youth privacy and permission rules separately from adult administration. Preserve the teen's private-assistant and parent/shared-surface boundary from the product brief; specify which narrowly defined household-safe coordination facts may be shared without exposing private assistant memory. Extend server-side authorization and administrative-view requirements to child and teen resources, and define the restricted behavior of child profiles that have no account or personal assistant.
-
-**Authoritative basis:** Product brief lines 94-100 and 175-181; UX specification lines 49-53, 206-208, 433, 465, and 478-483.
-
-### 6. High: Identity-confidence behavior cannot be tested independently of undecided signals
-
-**Exact PRD lines:** 80-82, 219-226, 294-295, 311-312, 398-405
-
-**Impact:** FR-032 lists inputs and FR-033 uses the undefined threshold "insufficient," but the PRD does not retain the authoritative high/medium/low behavior matrix. The signals themselves remain an open decision even though shared-display privacy is due in Milestone C. Tests can cover named states without a normative expected result, especially for medium confidence, confidence drops during a session, unknown people, multiple people, and private handoff. This makes privacy acceptance implementation-defined.
-
-**Concrete fix:** Specify behavior by confidence state without depending on which signals supply it: high confidence may personalize only within surface policy; medium confidence must stay generic and offer authenticated private-device handoff; low confidence must ask identity or use the household fallback; multiple-person state must not disclose private memory. Define immediate removal and ambient reset when confidence drops or a personal session expires. Resolve only the signal implementation separately.
-
-**Authoritative basis:** Product brief lines 183-190; UX specification lines 206-208, 220-228, and 421-425.
-
-### 7. High: External-action authority and approval semantics are not executable requirements
-
-**Exact PRD lines:** 164-168, 245-254, 262-267, 303-305, 319-320, 392
-
-**Impact:** "Meaningful," "explicit limits," "applicable approval," and "consistent with their configured authority level" are not defined. The PRD does not say how authority is bound to a person, assistant, capability, resource, or period; who may grant or revoke it; what happens when policy or external state changes after preparation; or which result prevents a duplicate retry. Teams cannot derive a stable policy schema or acceptance tests, and a provider-specific implementation could silently widen autonomous action.
-
-**Concrete fix:** Define a testable action-policy contract for observe, suggest, prepare, confirm, and bounded autonomous action. Require an explicit authorized principal and scope, deny execution outside that scope, re-check permissions and relevant current state at execution, identify the approver, preserve distinct prepared/approved/executing/succeeded/failed states, and specify duplicate and reversal behavior. Define which action classes are always recorded instead of relying on the word "meaningful."
-
-**Authoritative basis:** Product brief lines 192-204; UX specification lines 20-22, 34-47, 234-244, and 270; salvage matrix line 15.
-
-### 8. High: The milestone sequence contradicts the required first cross-surface slice
-
-**Exact PRD lines:** 331-360
-
-**Impact:** Milestone B delivers only a personal mobile home surface, while shared displays arrive in Milestone C and tablet/desktop distinct layouts are not committed in either milestone. The UX source requires the first implementation slice to render the same capability set across mobile, tablet, desktop, shared kitchen, and shared living-room surfaces to validate cards, layouts, surfaces, and privacy before expansion. The rebuild plan likewise places that cross-surface frontend foundation before household foundation. Deferring shared and larger surfaces allows the architecture to harden around a mobile-only layout and postpones the primary privacy proof.
-
-**Concrete fix:** Put the source-defined cross-surface slice into the first frontend foundation milestone, using mocks where live household capabilities are not yet available. Require mobile, tablet, desktop, shared kitchen, and shared living-room layouts from one registry with the initial Presence, Now, Briefing, Continue, Schedule, House Status, Approval, and Input capability set. Keep live authentication, memory, calendar, and Home Assistant delivery in later milestones as needed.
-
-**Authoritative basis:** UX specification lines 435-448 and 450-466; rebuild plan lines 135-140 and 170-180.
-
-### 9. High: Cloud/model inference can become an undeclared mandatory dependency
-
-**Exact PRD lines:** 35, 44-49, 104-105, 185, 301-312, 400-401
-
-**Impact:** The PRD calls cloud inference optional and says onboarding requires no integrations, but the startup requirements enumerate Home Assistant, memory, knowledge, and observability while omitting model inference. The first assistant slice depends on an unresolved model provider, and no requirement defines behavior when no inference provider is configured or the configured provider is unavailable. This can produce either a hidden mandatory cloud dependency or an apparently successful onboarding flow whose assistant cannot function, conflicting with household-owned deployment and safe degradation.
-
-**Concrete fix:** State explicitly that Kinward can boot, authenticate, onboard, administer, restore, and render locally available surfaces without cloud inference. Define the visible degraded state and unavailable capabilities when no model provider is configured or it fails. Separately define what configured inference capability is required before text conversation is considered usable; do not imply that a third-party SaaS backend is mandatory.
-
-**Authoritative basis:** Product brief lines 38-46 and 206-224; rebuild plan lines 101-111 and 123-125.
-
-### 10. High: Backup and recovery are milestone requirements with an unresolved and incomplete data contract
-
-**Exact PRD lines:** 106, 279-286, 299-305, 354-360, 398-405
-
-**Impact:** FR-080 requires documentation, FR-082 refers circularly to "supported household data required" for recovery, and the minimum export/restore guarantee remains open while Milestone C claims backup/restore validation. Persistence enumerates only part of the user-visible state and does not establish whether people, accounts, assistants, personality, conversations/topics, useful memories versus references, integration settings, Home Assistant mappings, approvals, activity, cards/layouts, and recovery-critical configuration survive a clean rebuild. A restore test can pass against a narrow implementation while losing the household's assistant continuity or integration mapping.
-
-**Concrete fix:** Resolve the recovery data contract before Milestone C stories are ready. At minimum, carry forward the rebuild plan's explicit people, assistants, personality settings, useful memories, integration settings, and Home Assistant mappings, then identify all additional PRD-owned state required for assistant continuity. Define clean-deployment restore acceptance, version compatibility/failure behavior, and a verification step proving restored ownership and privacy boundaries before declaring the household production milestone ready.
-
-**Authoritative basis:** Product brief lines 38-43; rebuild plan lines 127-133; PRD's authoritative operational direction is also constrained by the rebuild plan's requirement for explicit export/import rather than legacy migration.
-
-### 11. Medium: Multiple-assistant support has routing but no lifecycle requirements
-
-**Exact PRD lines:** 22, 96, 193-200, 272-273
-
-**Impact:** FR-014 presumes multiple assistants and a primary router, but the only creation requirements cover the first assistant during onboarding. There is no requirement to create, classify, select as primary, retire, or delete specialist or temporary assistants while preserving ownership and memory boundaries. Architecture must nevertheless choose cardinality and lifecycle behavior, and stories can accidentally implement a permanent one-assistant model that still satisfies FR-011.
-
-**Concrete fix:** Add the minimum lifecycle contract supported by the source: an account-bearing user can create additional specialist or temporary personal assistants, each has exactly one owner, one assistant is the default router, and changing or retiring assistants does not merge private memory implicitly. Assign this to a milestone or explicitly defer it while keeping the schema compatible.
-
-**Authoritative basis:** Product brief lines 175-181; rebuild plan lines 35-40; salvage matrix line 8.
-
-### 12. Medium: Personal-memory correction and deletion authority is ambiguous for cross-person facts
-
-**Exact PRD lines:** 206-215, 225-226, 273-275
-
-**Impact:** FR-029 gives unspecified "authorized users" access to facts that "concern them." A fact may concern several people while residing in one person's or one assistant's private memory. The wording can be interpreted either to deny a person correction of shared household facts or to permit them to inspect and delete another owner's private memory merely because it mentions them. FR-037 only rules out automatic administrator access to another adult's memory and does not settle this conflict.
-
-**Concrete fix:** Define separate authorization semantics for owner-bound personal memory, assistant-bound memory, confirmed shared household facts, and multi-person coordination facts. Make inspection, correction, and deletion preserve the source requirement for per-user/per-assistant ownership and privacy; expose only the minimum shared fact needed for coordination rather than the containing private memory.
-
-**Authoritative basis:** Product brief lines 14-20, 175-181, and 192-204; salvage matrix line 9.
-
-### 13. Medium: Optional memory and knowledge degradation has no functional fallback contract
-
-**Exact PRD lines:** 104, 208-215, 259-267, 301-312
-
-**Impact:** FR-025 says Kinward remains "operational," and FR-063 says only dependent features degrade, but neither identifies which assistant behaviors remain available with the disabled provider versus a temporarily failed provider. The PRD does not define whether durable writes queue, fail visibly, remain local, or are discarded, nor how retrieval confidence and recovery are presented. Different adapters can therefore produce materially different continuity and privacy behavior while all claiming safe degradation.
-
-**Concrete fix:** Define the provider-neutral degraded contract: core boot/auth/onboarding/admin/local data remain available; provider-dependent retrieval or indexing reports an explicit unavailable/degraded result; no durable-memory claim is made for data that was not persisted; health identifies the affected capability; and recovery does not silently duplicate or broaden stored data. Keep provider-specific retry details outside the product contract.
-
-**Authoritative basis:** Rebuild plan lines 101-105 and 123-125; salvage matrix lines 9 and 19-20.
-
-### 14. Medium: Home Assistant authority lacks an explicit stale/unavailable-state edge condition
-
-**Exact PRD lines:** 258-267, 301-312, 382-383
-
-**Impact:** FR-067 correctly names Home Assistant as current-state authority, but the PRD does not say how cached imported state is represented when Home Assistant becomes unavailable. FR-063 permits degradation and FR-069 requires current state for action, yet no requirement prevents Kinward from displaying cached data as current or executing against an unverifiable state. This can create false physical-state claims and unsafe controls during provider degradation.
-
-**Concrete fix:** Require imported physical state to carry availability/freshness sufficient to avoid presenting stale data as current. When Home Assistant is unavailable or relevant current state cannot be verified, show the capability as degraded and do not claim action completion or execute an action whose policy requires current state. Do not create a competing Kinward device registry or authoritative automation state.
-
-**Authoritative basis:** Product brief lines 48-58; rebuild plan lines 101-105; salvage matrix line 13.
-
-### 15. Medium: Action transparency drops the source requirement to identify information used
-
-**Exact PRD lines:** 47-48, 164-168, 251-254
-
-**Impact:** FR-060 records why an action was allowed and which integration was used, but omits what information was used. An approval likewise describes the intended change without requiring the relevant source information or categories. Users may be unable to detect an action based on stale, incorrect, or inappropriate context even though the product brief explicitly requires this transparency for every meaningful action.
-
-**Concrete fix:** Add the permitted source categories and relevant user-correctable facts used to approval and activity explanations, with privacy filtering and without exposing hidden reasoning, credentials, or another person's private data. Link this requirement to FR-030 and FR-050 so action explanations use the same provenance model.
-
-**Authoritative basis:** Product brief lines 192-204; UX specification lines 188-190, 355-367, and 270.
-
-## Release-Blocking Corrections
-
-Before architecture or epics are treated as ready, the PRD should at minimum resolve findings 1, 3-10. Finding 2 must be corrected before any salvaged subsystem is accepted as complete. Findings 11-15 can be assigned to explicit milestones, but their contracts must be settled before the affected architecture and stories enter implementation.
+- **INV-1 and Section 4.4 rely on the undefined term "control-plane behavior."** INV-1 forbids "control-plane behavior" and Section 4.4 excludes "SaaS control-plane behavior," but no section defines what falls inside or outside that term. Given that the product includes Kinward Control (Section 13.9), administrator management of people/integrations/health, and backup orchestration, the line between permitted household administration and forbidden "control-plane behavior" is unspecified and untestable as an invariant.
