@@ -1,15 +1,10 @@
 from __future__ import annotations
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Response, status
 
 from kinward.api.setup import router as setup_router
 from kinward.config import Settings, get_settings
-
-
-def _capability(enabled: bool, disabled_detail: str) -> dict[str, str]:
-    if enabled:
-        return {"state": "available"}
-    return {"state": "disabled", "detail": disabled_detail}
+from kinward.health import HealthResponse, probe_health
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -17,27 +12,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(title="Kinward", version="0.1.0")
     app.include_router(setup_router)
 
-    @app.get("/api/health")
-    def health() -> dict[str, object]:
-        capabilities = {
-            "memory": _capability(
-                runtime.memory_enabled,
-                "No memory backend is configured; core household features remain available.",
-            ),
-            "knowledge": _capability(
-                runtime.knowledge_enabled,
-                "No knowledge backend is configured; contextual knowledge is unavailable.",
-            ),
-            "homeAssistant": _capability(
-                runtime.home_assistant_enabled,
-                "Home Assistant is not configured; physical-home control is unavailable.",
-            ),
-        }
-        return {
-            "status": "ok",
-            "service": "kinward",
-            "capabilities": capabilities,
-        }
+    @app.get("/api/v1/health", response_model=HealthResponse, response_model_exclude_none=True)
+    async def health(response: Response) -> HealthResponse:
+        result = await probe_health(runtime)
+        if result.status == "unhealthy":
+            response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+        return result
 
     return app
 

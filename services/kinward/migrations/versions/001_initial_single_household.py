@@ -104,9 +104,24 @@ def upgrade() -> None:
         sa.Column("confidence", sa.Float(), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
     )
+    op.create_table(
+        "outbox_messages",
+        sa.Column("id", sa.String(length=36), primary_key=True),
+        sa.Column("topic", sa.String(length=120), nullable=False),
+        sa.Column("payload", sa.JSON(), nullable=False),
+        sa.Column("state", sa.String(length=16), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+    )
+    op.create_table(
+        "worker_heartbeats",
+        sa.Column("worker_name", sa.String(length=40), primary_key=True),
+        sa.Column("heartbeat_at", sa.DateTime(timezone=True), nullable=False),
+    )
 
 
 def downgrade() -> None:
+    op.drop_table("worker_heartbeats")
+    op.drop_table("outbox_messages")
     op.drop_table("memory_index")
     op.drop_table("activity")
     op.drop_table("approvals")

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any
 
+from email_validator import EmailNotValidError, validate_email
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import AfterValidator, BaseModel, Field, WithJsonSchema
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,6 +15,30 @@ from kinward.persistence.session import session_dependency
 router = APIRouter(prefix="/api/setup", tags=["setup"])
 
 
+def _validate_admin_email(value: str) -> str:
+    local_part, separator, domain = value.rpartition("@")
+    fictional = bool(separator and domain.lower().endswith(".invalid"))
+    validation_value = value
+    if fictional:
+        validation_value = f"{local_part}@{domain[: -len('.invalid')]}.test"
+    try:
+        validated = validate_email(
+            validation_value,
+            check_deliverability=False,
+            test_environment=fictional,
+        )
+    except EmailNotValidError as error:
+        raise ValueError(str(error)) from None
+    return value if fictional else validated.normalized
+
+
+AdminEmail = Annotated[
+    str,
+    AfterValidator(_validate_admin_email),
+    WithJsonSchema({"type": "string", "format": "email"}),
+]
+
+
 class SetupStatusResponse(BaseModel):
     configured: bool
 
@@ -21,7 +46,7 @@ class SetupStatusResponse(BaseModel):
 class HouseholdBootstrapRequest(BaseModel):
     household_name: str = Field(min_length=1, max_length=120)
     admin_name: str = Field(min_length=1, max_length=120)
-    admin_email: EmailStr | None = None
+    admin_email: AdminEmail | None = None
     assistant_name: str = Field(min_length=1, max_length=120)
     assistant_personality: dict[str, Any] = Field(default_factory=dict)
     assistant_accent: str | None = Field(default=None, max_length=32)

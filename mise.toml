@@ -1,8 +1,7 @@
 [tools]
-python = "3.12"
-uv = "latest"
-node = "22"
-pnpm = "10.13.1"
+python = "3.14.4"
+uv = "0.11.28"
+node = { version = "24.18.0", postinstall = "corepack enable" }
 
 [env]
 _.python.venv = { path = "services/kinward/.venv", create = true }
@@ -10,24 +9,28 @@ _.python.venv = { path = "services/kinward/.venv", create = true }
 [tasks.install]
 description = "Install Python and JavaScript dependencies"
 run = [
-  "uv sync --project services/kinward --all-groups",
-  "pnpm install",
+  "uv sync --project services/kinward --all-groups --frozen",
+  "corepack pnpm install --frozen-lockfile",
 ]
 
 [tasks.lock]
 description = "Refresh dependency lockfiles"
 run = [
   "uv lock --project services/kinward",
-  "pnpm install --lockfile-only",
+  "corepack pnpm install --lockfile-only",
 ]
 
 [tasks.api]
 description = "Run the Kinward API"
 run = "uv run --project services/kinward uvicorn kinward.app:app --reload --host 0.0.0.0 --port 8000"
 
+[tasks.worker]
+description = "Run the Kinward durable worker readiness process"
+run = "uv run --project services/kinward python -m kinward.worker"
+
 [tasks.web]
 description = "Run the Kinward web client"
-run = "pnpm --filter @kinward/web dev"
+run = "corepack pnpm --filter @kinward/web dev"
 
 [tasks.migrate]
 description = "Apply database migrations"
@@ -37,26 +40,26 @@ run = "uv run --project services/kinward alembic -c services/kinward/alembic.ini
 description = "Run all tests"
 run = [
   "uv run --project services/kinward pytest services/kinward/tests",
-  "pnpm -r test",
+  "corepack pnpm -r test",
 ]
 
 [tasks.lint]
 description = "Run all linters"
 run = [
   "uv run --project services/kinward ruff check services/kinward",
-  "pnpm -r lint",
+  "corepack pnpm -r lint",
 ]
 
 [tasks.typecheck]
 description = "Run all type checks"
 run = [
   "cd services/kinward && uv run mypy src",
-  "pnpm -r typecheck",
+  "corepack pnpm -r typecheck",
 ]
 
 [tasks.build]
 description = "Build all applications and packages"
-run = "pnpm -r build"
+run = "corepack pnpm -r build"
 
 [tasks.check]
 description = "Run the complete validation suite"

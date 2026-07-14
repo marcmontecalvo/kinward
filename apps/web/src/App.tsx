@@ -65,7 +65,14 @@ export function App() {
         {cards.map((card) => {
           const definition = getCard(card.type);
           const Card = definition.render;
-          return <Card key={card.id} title={card.title} data={card.data} className={card.className} />;
+          return (
+            <Card
+              key={card.id}
+              title={card.title}
+              data={card.data}
+              {...(card.className === undefined ? {} : { className: card.className })}
+            />
+          );
         })}
       </section>
 

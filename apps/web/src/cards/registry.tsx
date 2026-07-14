@@ -42,7 +42,7 @@ registerCard({
   type: "now",
   supportedSurfaces: ["personal-mobile", "personal-tablet", "personal-desktop", "shared-display"],
   render: ({ title, data, className }) => (
-    <Shell title={title} className={className}>
+    <Shell title={title} {...(className === undefined ? {} : { className })}>
       <p className="headline">{String(data.headline ?? "Nothing needs attention.")}</p>
       <p className="muted">{String(data.detail ?? "")}</p>
       {data.action ? <button>{String(data.action)}</button> : null}
@@ -54,7 +54,7 @@ registerCard({
   type: "list",
   supportedSurfaces: ["personal-mobile", "personal-tablet", "personal-desktop", "shared-display"],
   render: ({ title, data, className }) => (
-    <Shell title={title} className={className}>
+    <Shell title={title} {...(className === undefined ? {} : { className })}>
       <ul>{Array.isArray(data.items) ? data.items.map((item) => <li key={String(item)}>{String(item)}</li>) : null}</ul>
     </Shell>
   ),
@@ -64,7 +64,7 @@ registerCard({
   type: "topics",
   supportedSurfaces: ["personal-mobile", "personal-tablet", "personal-desktop"],
   render: ({ title, data, className }) => (
-    <Shell title={title} className={className}>
+    <Shell title={title} {...(className === undefined ? {} : { className })}>
       <div className="topic-list">
         {Array.isArray(data.items) ? data.items.map((item) => <button key={String(item)}>{String(item)}</button>) : null}
       </div>
