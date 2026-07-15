@@ -1,0 +1,62 @@
+# Kinward household dashboard
+#
+# Import: Settings -> Dashboards -> Add dashboard -> New dashboard from scratch,
+# then use the top-right three-dot menu -> "Edit dashboard" -> three-dot menu ->
+# "Raw configuration editor", and paste this file's contents over the default.
+#
+# Every `person.replace_with_*` and `calendar.replace_with_*` entity below is a
+# placeholder. Replace them with this household's real entity IDs before daily
+# use - do not commit real household member names or entity IDs anywhere in
+# source control (see AGENTS.md's public-repository safety rules).
+#
+# Built entirely from Home Assistant core cards; no Kinward-owned frontend code
+# is required to use it (epics.md Story 1.6).
+
+title: Kinward
+views:
+  - title: Home
+    path: home
+    icon: mdi:home-heart
+    sections:
+      - type: grid
+        cards:
+          - type: heading
+            heading: Household
+          - type: tile
+            entity: person.replace_with_household_member_one
+          - type: tile
+            entity: person.replace_with_household_member_two
+
+      - type: grid
+        cards:
+          - type: heading
+            heading: Kinward
+          - type: tile
+            entity: binary_sensor.kinward_backend
+            name: Backend
+          - type: tile
+            entity: sensor.kinward_household_status
+            name: Household status
+          - type: markdown
+            title: Briefing
+            content: >-
+              {{ states('sensor.kinward_briefing')
+                 if states('sensor.kinward_briefing') not in ['unknown', 'unavailable']
+                 else 'No briefing yet.' }}
+          - type: entities
+            title: Attention
+            entities:
+              - sensor.kinward_attention
+          - type: tile
+            entity: conversation.kinward
+            name: Talk to Kinward
+            tap_action:
+              action: assist
+
+      - type: grid
+        cards:
+          - type: heading
+            heading: Today
+          - type: calendar
+            entities:
+              - calendar.replace_with_household_calendar

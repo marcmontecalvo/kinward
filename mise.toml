@@ -37,10 +37,18 @@ run = "uv run --project services/kinward ruff check services/kinward"
 description = "Run all type checks"
 run = "cd services/kinward && uv run mypy src"
 
+[tasks.lint-ha]
+description = "Lint the custom_components/kinward Home Assistant integration"
+run = "uv run --project custom_components/kinward ruff check custom_components/kinward"
+
+[tasks.test-ha]
+description = "Run the custom_components/kinward pure-logic unit tests"
+run = "uv run --project custom_components/kinward pytest custom_components/kinward/tests"
+
 [tasks.build]
 description = "Build all applications and packages"
 run = "echo 'No build step: services/kinward runs from source; see custom_components/kinward for the HA integration.'"
 
 [tasks.check]
 description = "Run the complete validation suite"
-depends = ["lint", "typecheck", "test", "build"]
+depends = ["lint", "typecheck", "test", "lint-ha", "test-ha", "build"]

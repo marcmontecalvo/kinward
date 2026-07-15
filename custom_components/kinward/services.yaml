@@ -1,0 +1,7 @@
+refresh:
+  name: Refresh
+  description: >-
+    Re-poll the Kinward backend now instead of waiting for the next scheduled
+    update. There is no backend "generate a briefing" capability yet (Epic 5),
+    so this simply forces a fresh read of the current household-safe summary.
+  fields: {}

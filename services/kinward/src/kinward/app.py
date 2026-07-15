@@ -6,6 +6,7 @@ from fastapi.responses import JSONResponse
 
 from kinward.api.setup import router as setup_router
 from kinward.api.layouts import router as layouts_router
+from kinward.api.integration import router as integration_router
 from kinward.config import Settings, get_settings
 from kinward.health import HealthResponse, probe_health
 
@@ -16,6 +17,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.settings = runtime
     app.include_router(setup_router)
     app.include_router(layouts_router)
+    app.include_router(integration_router)
 
     @app.exception_handler(RequestValidationError)
     async def sanitized_validation_error(

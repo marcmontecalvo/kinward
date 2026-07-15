@@ -256,6 +256,62 @@ class SetupCapabilityRecord(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
 
 
+class IntegrationTokenRecord(Base):
+    __tablename__ = "integration_tokens"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    record_version: Mapped[int] = mapped_column(default=1, nullable=False)
+    classification: Mapped[str] = mapped_column(String(32), default="system-operational", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
+
+
+class HaUserMappingRecord(Base):
+    __tablename__ = "ha_user_mappings"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    ha_user_id: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    person_id: Mapped[str] = mapped_column(ForeignKey("people.id", ondelete="CASCADE"), nullable=False)
+    record_version: Mapped[int] = mapped_column(default=1, nullable=False)
+    classification: Mapped[str] = mapped_column(String(32), default="system-operational", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now, nullable=False)
+
+
+class TopicRecord(Base):
+    __tablename__ = "topics"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    household_id: Mapped[str] = mapped_column(ForeignKey("households.id", ondelete="CASCADE"), nullable=False)
+    person_id: Mapped[str] = mapped_column(ForeignKey("people.id", ondelete="CASCADE"), nullable=False)
+    assistant_id: Mapped[str] = mapped_column(ForeignKey("assistants.id", ondelete="CASCADE"), nullable=False)
+    state: Mapped[str] = mapped_column(String(16), default="open", nullable=False)
+    record_version: Mapped[int] = mapped_column(default=1, nullable=False)
+    classification: Mapped[str] = mapped_column(String(32), default="private-person", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now, nullable=False)
+
+    turns: Mapped[list[TopicTurnRecord]] = relationship(back_populates="topic", cascade="all, delete-orphan")
+
+
+class TopicTurnRecord(Base):
+    __tablename__ = "topic_turns"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    topic_id: Mapped[str] = mapped_column(ForeignKey("topics.id", ondelete="CASCADE"), nullable=False)
+    request_text: Mapped[str] = mapped_column(Text, nullable=False)
+    response_text: Mapped[str] = mapped_column(Text, nullable=False)
+    outcome: Mapped[str] = mapped_column(String(16), nullable=False)
+    record_version: Mapped[int] = mapped_column(default=1, nullable=False)
+    classification: Mapped[str] = mapped_column(String(32), default="private-person", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
+
+    topic: Mapped[TopicRecord] = relationship(back_populates="turns")
+
+
 class BootstrapAttemptRecord(Base):
     __tablename__ = "bootstrap_attempts"
 

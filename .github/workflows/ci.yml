@@ -22,3 +22,15 @@ jobs:
       - run: cd services/kinward && uv run mypy src
       - run: uv run --project services/kinward pytest services/kinward/tests
       - run: uv run --project services/kinward alembic -c services/kinward/alembic.ini upgrade head
+
+  ha-integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.14"
+          enable-cache: true
+      - run: uv sync --project custom_components/kinward --all-groups
+      - run: uv run --project custom_components/kinward ruff check custom_components/kinward
+      - run: uv run --project custom_components/kinward pytest custom_components/kinward/tests

@@ -22,6 +22,11 @@ This document records the final-gate disposition of legacy Homefront subsystems.
 | Health capability reporting | `services/kinward/src/kinward/app.py` | Disabled optional peers are not startup failures |
 | Public-safe Docker stack | `compose.yaml` | Persistent SQLite default with optional data services |
 | Validation workflow | `.github/workflows/ci.yml` | Backend gates |
+| HA-native integration contract | `services/kinward/src/kinward/api/integration.py`, `services/kinward/src/kinward/application/integration_tokens.py` | Hashed, revocable service tokens; household-shared `/context` and `/summary` endpoints; truthful `intentionally-disabled` capability states for unbuilt Epic 5 data |
+| Home Assistant custom integration | `custom_components/kinward/` | manifest/config flow/coordinator/entities for epics.md Stories 1.3-1.7; own dev-tooling uv project and CI job; see that package's README |
+| HA dev profile | `compose.yaml` (`ha` profile), `scripts/ha-dev-smoke.sh` | Pinned HA 2026.7.2, kept out of the default inventory |
+| HA-user-to-profile mapping | `services/kinward/src/kinward/application/ha_user_mappings.py`, `custom_components/kinward/config_flow.py` (Options flow) | epics.md Story 2.1; backend-authoritative, fail-closed on missing/removed-account mappings, audited via `ActivityRecord` |
+| Kinward conversation lifecycle | `services/kinward/src/kinward/application/conversation.py`, `custom_components/kinward/conversation.py` | epics.md Story 2.2; real persisted topics/turns with multi-turn continuity; truthful no-model capability report since no model provider is configured yet |
 
 ## Explicitly retired
 

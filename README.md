@@ -8,7 +8,7 @@ Kinward is the clean replacement for the legacy Homefront project after its pivo
 
 Selective migration is underway. The repository now contains the authoritative product direction, a clean single-household backend foundation, optional integration adapters, Docker configuration, and validation gates. Legacy code is moved only after its useful behavior is separated from SaaS, routine, support-access, and tenant assumptions.
 
-Kinward's own standalone frontend has been retired in favor of a Home Assistant-native application shell: Home Assistant owns dashboards, responsive rendering, and voice, and Kinward exposes household intelligence through a `custom_components/kinward` integration (not yet created — see the reset doc below for the build sequence). See [the HA-native reset](_bmad-output/implementation-artifacts/ha-native-reset-2026-07-15.md) and [migration status](docs/pivot/migration-status.md) for the final-gate disposition of each subsystem.
+Kinward's own standalone frontend has been retired in favor of a Home Assistant-native application shell: Home Assistant owns dashboards, responsive rendering, and voice, and Kinward exposes household intelligence through the [`custom_components/kinward`](custom_components/kinward/README.md) integration. See [the HA-native reset](_bmad-output/implementation-artifacts/ha-native-reset-2026-07-15.md) and [migration status](docs/pivot/migration-status.md) for the final-gate disposition of each subsystem.
 
 ## Product principles
 
@@ -149,6 +149,42 @@ migration, API, and worker roles; the versioned setup handler delegates through 
 and one transaction; the single-household SQL model remains authoritative; and optional adapters degrade without blocking
 startup. No legacy tenant, entitlement, control-plane, support-access, or routine behavior is
 carried into this deployment foundation.
+
+## Home Assistant development
+
+A pinned Home Assistant 2026.7.2 development instance is available under the `ha` compose profile. It
+stays out of the default inventory (`docker compose up` never starts it) and is fully independent of
+Kinward's own health: either can start, stop, or restart without the other.
+
+```bash
+docker compose --profile ha up --build
+```
+
+Home Assistant is published on <http://localhost:8123>. Its configuration persists in the
+`kinward-homeassistant` volume. `custom_components/kinward` is bind-mounted read-only into the
+container's `/config/custom_components/kinward`, so there is no manual copy/install step for local
+development; restart the `homeassistant` service (or use Home Assistant's own reload) to pick up code
+changes.
+
+Reset Home Assistant's local state entirely:
+
+```bash
+docker compose --profile ha down --volumes
+```
+
+Once both `api` and `homeassistant` are healthy, generate a service token for the integration and use
+it (with `http://api:8000` as the backend URL, from inside the Home Assistant container's network) in
+the integration's config flow:
+
+```bash
+docker compose exec api python -m kinward.cli create-integration-token --name "Home Assistant"
+```
+
+The plaintext token is printed exactly once; it is stored only as a hash and can be revoked with
+`python -m kinward.cli revoke-integration-token <id>`. See
+[`custom_components/kinward/README.md`](custom_components/kinward/README.md) for installing the
+integration, importing the dashboard, and the household trial runbook at
+[`docs/ha-native/household-trial.md`](docs/ha-native/household-trial.md).
 
 ## License
 

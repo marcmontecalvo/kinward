@@ -1,6 +1,6 @@
 ---
 title: "HA-Native Implementation Reset"
-status: ready-for-implementation
+status: partially-implemented
 created: 2026-07-15
 homeAssistantBaseline: 2026.7.2
 ---
@@ -100,3 +100,30 @@ After the household trial, address defects before adding presentation features. 
 - HACS packaging;
 - official Home Assistant integration submission;
 - voice satellite hardware changes.
+
+## Implementation status (2026-07-16)
+
+Steps 1-6 of the same-day sequence above are implemented, matching epics.md
+Stories 1.3-1.7: the pinned HA 2026.7.2 dev profile, `custom_components/kinward`
+(manifest, config flow, coordinator, initial entities, `services.yaml`), the
+backend's `/api/v1/integration` contract with hashed service tokens, an
+importable core-card dashboard, and `scripts/ha-dev-smoke.sh` plus
+`docs/ha-native/household-trial.md` for verification. The trial's backend/API
+behavior was exercised end to end against a real HA container; a human
+browser/Companion-app pass through the dashboard and config-flow UI itself is
+still open (see that runbook's Notes section).
+
+**2026-07-16 update**: epics.md Stories 2.1 and 2.2 are also implemented -
+an Options-flow-driven HA-user-to-Kinward-profile mapping (backend-authoritative,
+fail-closed on missing/removed-account mappings) and a real `conversation.kinward`
+lifecycle with persisted topics/turns and multi-turn continuity, verified live
+by the household operator against their own bootstrapped data (see the runbook's
+2026-07-16 trial note). Stories 2.3 (cancellation), 2.4 (cross-client topic
+continuity UI), and 2.5 (fallback-assistant boundary) remain open, as does
+`AccountRecord` state modeling (active/disabled/locked) needed for the fuller
+fail-closed behavior Story 2.1 describes.
+
+Story 2.1 (HA-user-to-Kinward-profile mapping) and Story 2.2 (the real
+`conversation.kinward` lifecycle) are explicitly deferred - `conversation.kinward`
+exists but only returns a truthful "not implemented yet" placeholder, and the
+integration token used above is household-level only, not per-person.

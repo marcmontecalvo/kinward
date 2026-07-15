@@ -59,6 +59,28 @@ services:
       start_period: 5s
     restart: unless-stopped
 
+  homeassistant:
+    image: ghcr.io/home-assistant/home-assistant:2026.7.2
+    profiles: ["ha"]
+    volumes:
+      - kinward-homeassistant:/config
+      - ./custom_components/kinward:/config/custom_components/kinward:ro
+    ports:
+      - "${KINWARD_HA_PORT:-8123}:8123"
+    healthcheck:
+      test:
+        - CMD
+        - python3
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen('http://127.0.0.1:8123/manifest.json', timeout=2)
+      interval: 5s
+      timeout: 3s
+      retries: 60
+      start_period: 30s
+    restart: unless-stopped
+
   postgres:
     image: postgres:18.4-alpine3.23
     profiles: ["postgres"]
@@ -80,6 +102,7 @@ services:
 volumes:
   kinward-data:
   kinward-postgres:
+  kinward-homeassistant:
 
 secrets:
   postgres_password:

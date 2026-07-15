@@ -1,4 +1,4 @@
-.PHONY: install lock dev api worker migrate test lint typecheck build check smoke up down
+.PHONY: install lock dev api worker migrate test lint typecheck build check smoke smoke-ha up down
 
 install:
 	mise install
@@ -36,6 +36,9 @@ check:
 
 smoke:
 	bash scripts/compose-smoke.sh
+
+smoke-ha:
+	bash scripts/ha-dev-smoke.sh
 
 down:
 	docker compose down

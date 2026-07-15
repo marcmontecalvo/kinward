@@ -1,0 +1,52 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to Kinward",
+        "description": "Enter your Kinward backend URL and an integration service token. Create one by running this on the machine hosting Kinward (not inside Home Assistant): `docker compose exec api python -m kinward.cli create-integration-token --name \"Home Assistant\"`.",
+        "data": {
+          "base_url": "Backend URL",
+          "token": "Integration token"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Could not reach the Kinward backend at that URL.",
+      "invalid_auth": "The integration token was rejected. Check the token and try again.",
+      "incompatible_api": "This Kinward backend reports an API contract version this integration does not support.",
+      "household_not_configured": "This Kinward backend has no household set up yet. Complete household setup first.",
+      "unknown": "An unexpected error occurred."
+    },
+    "abort": {
+      "already_configured": "This household is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "map_user": {
+        "title": "Map Home Assistant users to Kinward profiles",
+        "description": "Which Kinward profile is {ha_user_name}? Choose \"Not mapped\" if they don't have one yet.",
+        "data": {
+          "person_id": "Kinward profile"
+        }
+      }
+    },
+    "abort": {
+      "cannot_connect": "Could not reach the Kinward backend to load or save the mapping.",
+      "no_account_bearing_people": "No Kinward profile has an account yet, so there is nothing to map to.",
+      "no_ha_users": "No Home Assistant users are available to map."
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "backend": { "name": "Backend" }
+    },
+    "sensor": {
+      "household_status": { "name": "Household status" },
+      "briefing": { "name": "Briefing" },
+      "attention": { "name": "Attention" },
+      "next_event": { "name": "Next event" },
+      "last_refresh": { "name": "Last refresh" }
+    }
+  }
+}
