@@ -6,9 +6,9 @@ A private, single-household AI platform where each person has their own assistan
 
 Kinward is the clean replacement for the legacy Homefront project after its pivot from a commercial multi-tenant SaaS design to a private, Docker-deployed system for one household.
 
-Selective migration is underway. The repository now contains the authoritative product direction, a clean single-household backend foundation, optional integration adapters, shared contracts, a registry-driven web surface, Docker configuration, and validation gates. Legacy code is moved only after its useful behavior is separated from SaaS, routine, support-access, and tenant assumptions.
+Selective migration is underway. The repository now contains the authoritative product direction, a clean single-household backend foundation, optional integration adapters, Docker configuration, and validation gates. Legacy code is moved only after its useful behavior is separated from SaaS, routine, support-access, and tenant assumptions.
 
-See [Migration Status](docs/pivot/migration-status.md) for the final-gate disposition of each subsystem.
+Kinward's own standalone frontend has been retired in favor of a Home Assistant-native application shell: Home Assistant owns dashboards, responsive rendering, and voice, and Kinward exposes household intelligence through a `custom_components/kinward` integration (not yet created — see the reset doc below for the build sequence). See [the HA-native reset](_bmad-output/implementation-artifacts/ha-native-reset-2026-07-15.md) and [migration status](docs/pivot/migration-status.md) for the final-gate disposition of each subsystem.
 
 ## Product principles
 
@@ -17,23 +17,14 @@ See [Migration Status](docs/pivot/migration-status.md) for the final-gate dispos
 - Personal and assistant memory remain permission-bound.
 - Shared assistants are limited household fallbacks, not collective private brains.
 - Ordinary life is inferred from durable context rather than manually programmed routines.
-- Web/PWA is the first client.
 - Native Android capabilities are deferred until a proven requirement needs them.
-- The interface is built from modular cards and declarative surface layouts.
 - Kinward Control remains separate from everyday assistant use.
-- Home Assistant is an integration and physical-state authority, not the user experience.
+- Home Assistant is the committed application shell: it owns dashboards, responsive rendering, mobile access, and voice. Kinward exposes household intelligence through a documented Home Assistant custom integration rather than a standalone frontend.
 
 ## Repository shape
 
 ```text
-apps/web/                 Responsive web/PWA client
 services/kinward/         Single-household backend
-packages/contracts/       Shared API contracts
-packages/schemas/         Runtime schemas and validation
-packages/assistant-core/  Assistant domain primitives
-packages/card-sdk/        Card registry contracts
-packages/layout-sdk/      Surface and layout contracts
-packages/integration-sdk/ Integration adapter contracts
 infra/                    Docker and optional observability
 docs/                     Current product and technical documentation
 _bmad-output/             Authoritative BMAD planning artifacts
@@ -57,28 +48,26 @@ make test
 make build
 ```
 
-Run the API and web client in separate terminals:
+Run the API in a terminal:
 
 ```bash
 make api
-make web
 ```
 
 ## Core deployment
 
-A clean checkout needs no `.env` file and no provider credentials. Start the production-built,
-same-origin core exactly as follows:
+A clean checkout needs no `.env` file and no provider credentials. Start the production-built
+core exactly as follows:
 
 ```bash
 docker compose up
 ```
 
-Compose builds four default services:
+Compose builds three default services:
 
 - `migrate` applies the sole root revision, `001_initial_single_household`, then exits with status 0.
 - `worker` records durable SQL heartbeat readiness and exposes no later-story action semantics.
-- `api` serves the backend only after migration succeeds.
-- `web` serves the built PWA on <http://localhost:8080> and proxies `/api/v1` to the API.
+- `api` serves the backend only after migration succeeds, published on <http://localhost:8000>.
 
 SQLite data is retained in the project-scoped `kinward-data` volume. The API and worker never run
 Alembic during normal startup. Both wait for the one-shot migration service and fail readiness when
@@ -86,10 +75,10 @@ the schema is incompatible. It is normal for `docker compose ps -a` to show `mig
 The example environment file uses the same shared `/data/kinward.db` path, so copying it for local
 development does not split migration, API, and worker state across container-local files.
 
-The versioned health contract is available through the same origin:
+The versioned health contract is available directly from the API:
 
 ```text
-http://localhost:8080/api/v1/health
+http://localhost:8000/api/v1/health
 ```
 
 It reports application, database, schema, bootstrap, and worker/outbox health independently.
@@ -112,11 +101,13 @@ docker compose up
 ```
 
 Use a randomly generated value of at least 24 characters; do not use the illustrative values from
-tests. Visit <http://localhost:8080/setup> and enter the same value. The form creates the household,
+tests. Submit it to `POST http://localhost:8000/api/v1/setup/household` (directly, or through the
+Home Assistant `config_flow` once `custom_components/kinward` exists) along with the household,
+administrator, and any selected adult, child, or pet details; the endpoint creates the household,
 administrator account, administrator-owned personal assistant, ownerless household fallback, and
-any selected adult, child, or pet profiles in one transaction. It requires no provider or integration.
-Pets receive no credentials, account, assistant, private memory, approval, delegation, or action
-authority; only explicitly entered household-shared care facts are retained.
+those profiles in one transaction. It requires no provider or integration. Pets receive no
+credentials, account, assistant, private memory, approval, delegation, or action authority; only
+explicitly entered household-shared care facts are retained.
 
 Setup uses an explicit CSRF token, Argon2id password verification, and an idempotency identity. The
 authorization is stored only as a hash and becomes terminally unusable after commit. Remove the
@@ -126,7 +117,7 @@ is available or complete; it never returns a password verifier or reusable setup
 Restart the long-running processes without rerunning the migration service:
 
 ```bash
-docker compose restart api worker web
+docker compose restart api worker
 ```
 
 Stop containers while retaining SQLite data, or explicitly remove the project volumes:
@@ -149,7 +140,7 @@ observability, and development peers are also absent from the default topology.
 
 Run the reproducible Milestone A deployment gate with `make smoke`. The script owns synthetic,
 project-scoped containers and volumes, validates migration failure gating, idempotency, restart
-safety, health, same-origin reachability, and service inventory, then cleans up. OPS owns the
+safety, health, API reachability, and service inventory, then cleans up. OPS owns the
 startup/restart/inventory evidence, BE owns migration/health/worker evidence, and QA owns evidence
 completeness and public-repository safety.
 

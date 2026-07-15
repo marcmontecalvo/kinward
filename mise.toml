@@ -1,24 +1,17 @@
 [tools]
 python = "3.14.4"
 uv = "0.11.28"
-node = { version = "24.18.0", postinstall = "corepack enable" }
 
 [env]
 _.python.venv = { path = "services/kinward/.venv", create = true }
 
 [tasks.install]
-description = "Install Python and JavaScript dependencies"
-run = [
-  "uv sync --project services/kinward --all-groups --frozen",
-  "corepack pnpm install --frozen-lockfile",
-]
+description = "Install Python dependencies"
+run = "uv sync --project services/kinward --all-groups --frozen"
 
 [tasks.lock]
 description = "Refresh dependency lockfiles"
-run = [
-  "uv lock --project services/kinward",
-  "corepack pnpm install --lockfile-only",
-]
+run = "uv lock --project services/kinward"
 
 [tasks.api]
 description = "Run the Kinward API"
@@ -28,42 +21,25 @@ run = "uv run --project services/kinward uvicorn kinward.app:app --reload --host
 description = "Run the Kinward durable worker readiness process"
 run = "uv run --project services/kinward python -m kinward.worker"
 
-[tasks.web]
-description = "Run the Kinward web client"
-run = "corepack pnpm --filter @kinward/web dev"
-
 [tasks.migrate]
 description = "Apply database migrations"
 run = "uv run --project services/kinward alembic -c services/kinward/alembic.ini upgrade head"
 
 [tasks.test]
 description = "Run all tests"
-run = [
-  "uv run --project services/kinward pytest services/kinward/tests",
-  "corepack pnpm -r test",
-]
-
-[tasks.browser-test]
-description = "Run the Chromium five-surface and accessibility evidence suite"
-run = "corepack pnpm --filter @kinward/web test:e2e"
+run = "uv run --project services/kinward pytest services/kinward/tests"
 
 [tasks.lint]
 description = "Run all linters"
-run = [
-  "uv run --project services/kinward ruff check services/kinward",
-  "corepack pnpm -r lint",
-]
+run = "uv run --project services/kinward ruff check services/kinward"
 
 [tasks.typecheck]
 description = "Run all type checks"
-run = [
-  "cd services/kinward && uv run mypy src",
-  "corepack pnpm -r typecheck",
-]
+run = "cd services/kinward && uv run mypy src"
 
 [tasks.build]
 description = "Build all applications and packages"
-run = "corepack pnpm -r build"
+run = "echo 'No build step: services/kinward runs from source; see custom_components/kinward for the HA integration.'"
 
 [tasks.check]
 description = "Run the complete validation suite"

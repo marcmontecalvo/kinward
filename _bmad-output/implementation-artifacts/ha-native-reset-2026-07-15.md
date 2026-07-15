@@ -97,10 +97,6 @@ After the household trial, address defects before adding presentation features. 
 ## Explicit non-goals
 
 - polished custom cards;
-- custom dashboard strategy;
-- custom panel;
-- standalone app cleanup beyond what is required to remove active build/test coupling;
-- broad backend feature completion;
 - HACS packaging;
 - official Home Assistant integration submission;
 - voice satellite hardware changes.

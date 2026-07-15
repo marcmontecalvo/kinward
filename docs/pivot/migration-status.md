@@ -20,10 +20,8 @@ This document records the final-gate disposition of legacy Homefront subsystems.
 | Memory/knowledge seams | `services/kinward/src/kinward/integrations/memory.py` | Optional and non-blocking |
 | Calendar/mail/voice contracts | `services/kinward/src/kinward/integrations/protocols.py` | Vendor-neutral protocols |
 | Health capability reporting | `services/kinward/src/kinward/app.py` | Disabled optional peers are not startup failures |
-| Modular UI card foundation | `apps/web/src/cards/registry.tsx` | Registry-driven first surface |
-| Surface/layout schemas | `packages/schemas/src/index.ts` | Shared validation contracts |
 | Public-safe Docker stack | `compose.yaml` | Persistent SQLite default with optional data services |
-| Validation workflow | `.github/workflows/ci.yml` | Backend and frontend gates |
+| Validation workflow | `.github/workflows/ci.yml` | Backend gates |
 
 ## Explicitly retired
 
@@ -36,6 +34,14 @@ This document records the final-gate disposition of legacy Homefront subsystems.
 - Legacy database migration history
 - SaaS production and cost-model documentation
 - Any fixture or configuration containing real household or infrastructure data
+- Standalone `apps/web` five-surface frontend, its `packages/schemas`/`packages/contracts` support packages, and the JS/pnpm toolchain that only served them — retired under the 2026-07-15 HA-native reset (`_bmad-output/implementation-artifacts/ha-native-reset-2026-07-15.md`) in favor of `custom_components/kinward` plus core-card HA dashboards. Salvage review found no code meeting the reset's preserve criteria (see the section below for the two concepts carried forward without code).
+
+## Retired frontend: concepts carried forward without code
+
+The standalone frontend's salvage review (2026-07-15) found no file meeting the reset's preserve criteria as code, but two concepts remain useful for HA-native work and should not be silently lost with the deleted files:
+
+- **Privacy classification taxonomy** (was `apps/web/src/foundation/policy.ts`): the backend contract and HA integration must keep distinguishing `private-person` / `private-child` / `selected-share` / `household-shared` / `surface-ephemeral` / `system-operational` data, and the shared-surface identity states (`unknown` / `candidate` / `group` / `verified-selected` / `expired` / `authorization-loss`) that gate what a shared HA dashboard may ever render.
+- **Accessibility test technique** (was `apps/web/e2e/foundation.spec.ts`): axe (`wcag2a`/`wcag2aa`/`wcag22aa`) plus explicit checks for focus visibility, `prefers-reduced-motion`, `forced-colors`, and a 48px minimum interactive target — worth reapplying if a custom dashboard strategy is ever built (deferred, epics.md Story 10.2).
 
 ## Rebuild rather than copy
 

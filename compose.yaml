@@ -29,6 +29,8 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
+    ports:
+      - "${KINWARD_API_PORT:-8000}:8000"
     healthcheck:
       test:
         - CMD
@@ -51,24 +53,6 @@ services:
         condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "python", "-m", "kinward.worker", "--check"]
-      interval: 5s
-      timeout: 3s
-      retries: 12
-      start_period: 5s
-    restart: unless-stopped
-
-  web:
-    image: kinward-web:local
-    build:
-      context: .
-      dockerfile: apps/web/Dockerfile
-    depends_on:
-      api:
-        condition: service_healthy
-    ports:
-      - "${KINWARD_WEB_PORT:-8080}:8080"
-    healthcheck:
-      test: ["CMD", "wget", "--quiet", "--spider", "http://127.0.0.1:8080/"]
       interval: 5s
       timeout: 3s
       retries: 12

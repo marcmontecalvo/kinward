@@ -5,12 +5,12 @@ readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly PROJECT="kinward-smoke-$$"
 readonly FAILURE_PROJECT="${PROJECT}-migration-failure"
 readonly EXAMPLE_PROJECT="${PROJECT}-example-env"
-readonly WEB_PORT="${KINWARD_SMOKE_PORT:-18080}"
+readonly API_PORT="${KINWARD_SMOKE_PORT:-18080}"
 readonly TMP_DIR="$(mktemp -d)"
 readonly OVERRIDE_FILE="${TMP_DIR}/migration-failure.yaml"
 readonly EXAMPLE_ENV_FILE="${TMP_DIR}/example.env"
 
-export KINWARD_WEB_PORT="${WEB_PORT}"
+export KINWARD_API_PORT="${API_PORT}"
 export KINWARD_DATABASE_URL="sqlite+aiosqlite:////data/kinward.db"
 export KINWARD_MODEL_PROVIDER="none"
 export KINWARD_MEMORY_BACKEND="none"
@@ -23,7 +23,7 @@ export KINWARD_HOME_ASSISTANT_TOKEN=""
 
 COMPOSE=(docker compose --env-file /dev/null --project-directory "${ROOT}" -f "${ROOT}/compose.yaml" -p "${PROJECT}")
 FAILURE_COMPOSE=(docker compose --env-file /dev/null --project-directory "${ROOT}" -f "${ROOT}/compose.yaml" -f "${OVERRIDE_FILE}" -p "${FAILURE_PROJECT}")
-EXAMPLE_COMPOSE=(env -u KINWARD_DATABASE_URL -u KINWARD_WEB_PORT docker compose --env-file "${EXAMPLE_ENV_FILE}" --project-directory "${ROOT}" -f "${ROOT}/compose.yaml" -p "${EXAMPLE_PROJECT}")
+EXAMPLE_COMPOSE=(env -u KINWARD_DATABASE_URL -u KINWARD_API_PORT docker compose --env-file "${EXAMPLE_ENV_FILE}" --project-directory "${ROOT}" -f "${ROOT}/compose.yaml" -p "${EXAMPLE_PROJECT}")
 
 fail() {
   printf 'compose smoke: FAIL: %s\n' "$*" >&2
@@ -89,7 +89,7 @@ command -v curl >/dev/null || fail "curl is required"
 docker info >/dev/null 2>&1 || fail "the Docker daemon is unavailable to this user"
 
 default_services="$("${COMPOSE[@]}" config --services | sort)"
-expected_default=$'api\nmigrate\nweb\nworker'
+expected_default=$'api\nmigrate\nworker'
 [[ "${default_services}" == "${expected_default}" ]] || fail "default service inventory was: ${default_services//$'\n'/, }"
 for forbidden in postgres redis model memory knowledge calendar home-assistant observability; do
   if grep -qx "${forbidden}" <<<"${default_services}"; then
@@ -98,7 +98,7 @@ for forbidden in postgres redis model memory knowledge calendar home-assistant o
 done
 
 profile_services="$("${COMPOSE[@]}" --profile postgres config --services | sort)"
-expected_profile=$'api\nmigrate\npostgres\nweb\nworker'
+expected_profile=$'api\nmigrate\npostgres\nworker'
 [[ "${profile_services}" == "${expected_profile}" ]] || fail "PostgreSQL profile inventory was: ${profile_services//$'\n'/, }"
 if grep -q 'redis' <<<"${profile_services}"; then
   fail "Redis is present in the PostgreSQL profile"
@@ -137,12 +137,9 @@ migrate_started_at="$(docker inspect --format '{{.State.StartedAt}}' "${migrate_
 
 wait_for_healthy worker
 wait_for_healthy api
-wait_for_healthy web
 
-curl --fail --silent --show-error "http://127.0.0.1:${WEB_PORT}/" >"${TMP_DIR}/web.html" || fail "web root is unreachable"
-grep -q '<div id="root"></div>' "${TMP_DIR}/web.html" || fail "web root did not serve the built application"
-curl --fail --silent --show-error "http://127.0.0.1:${WEB_PORT}/api/v1/health" >"${TMP_DIR}/health.json" || fail "same-origin API health is unreachable"
-setup_status="$(curl --fail --silent --show-error "http://127.0.0.1:${WEB_PORT}/api/v1/setup/status")" || fail "versioned setup status route is unreachable"
+curl --fail --silent --show-error "http://127.0.0.1:${API_PORT}/api/v1/health" >"${TMP_DIR}/health.json" || fail "API health is unreachable"
+setup_status="$(curl --fail --silent --show-error "http://127.0.0.1:${API_PORT}/api/v1/setup/status")" || fail "versioned setup status route is unreachable"
 [[ "${setup_status}" == '{"configured":false,"bootstrap_available":false}' ]] || fail "clean deployment setup status was unexpected"
 if ! python3 - "${TMP_DIR}/health.json" <<'PY'
 import json
@@ -178,8 +175,7 @@ revision_before="$("${COMPOSE[@]}" exec -T api python -c "import sqlite3; print(
 "${COMPOSE[@]}" restart api worker
 wait_for_healthy worker
 wait_for_healthy api
-wait_for_healthy web
-curl --fail --silent --show-error "http://127.0.0.1:${WEB_PORT}/api/v1/health" >"${TMP_DIR}/health-after-restart.json" || fail "health did not recover after restart"
+curl --fail --silent --show-error "http://127.0.0.1:${API_PORT}/api/v1/health" >"${TMP_DIR}/health-after-restart.json" || fail "health did not recover after restart"
 grep -q '"status":"healthy"' "${TMP_DIR}/health-after-restart.json" || fail "core was not healthy after restart"
 
 migrate_started_after_restart="$(docker inspect --format '{{.State.StartedAt}}' "${migrate_id}")"
@@ -193,7 +189,6 @@ cp "${ROOT}/.env.example" "${EXAMPLE_ENV_FILE}"
 wait_for_state migrate exited 30 EXAMPLE_COMPOSE
 wait_for_healthy worker 45 EXAMPLE_COMPOSE
 wait_for_healthy api 45 EXAMPLE_COMPOSE
-wait_for_healthy web 45 EXAMPLE_COMPOSE
 example_database_url="$("${EXAMPLE_COMPOSE[@]}" exec -T worker python -c "from kinward.config import get_settings; print(get_settings().database_url)")"
 [[ "${example_database_url}" == "sqlite+aiosqlite:////data/kinward.db" ]] || fail "copied .env.example did not select the shared SQLite path"
 example_revision="$("${EXAMPLE_COMPOSE[@]}" exec -T worker python -c "import sqlite3; print(sqlite3.connect('/data/kinward.db').execute('SELECT version_num FROM alembic_version').fetchone()[0])")"
