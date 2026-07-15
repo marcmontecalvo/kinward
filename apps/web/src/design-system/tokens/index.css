@@ -1,7 +1,0 @@
-/* Single entry point for the token system. Import order matters: each
-   layer may only reference variables declared in a layer imported before
-   it — primitive -> semantic -> component -> surface. */
-@import "./primitive.css";
-@import "./semantic.css";
-@import "./component.css";
-@import "./surface.css";
