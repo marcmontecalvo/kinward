@@ -6,7 +6,14 @@ from typing import Any, Literal
 
 import httpx
 
-IntegrationState = Literal["available", "degraded", "disabled"]
+IntegrationState = Literal[
+    "available",
+    "degraded",
+    "unavailable",
+    "intentionally-disabled",
+    "stale",
+    "reauthorization-required",
+]
 
 
 @dataclass(frozen=True)
@@ -38,6 +45,7 @@ class IntegrationClient:
         self.consecutive_failures = 0
         self.opened_at: float | None = None
         self.last_error: str | None = None
+        self.has_succeeded = False
 
     @property
     def enabled(self) -> bool:
@@ -54,9 +62,19 @@ class IntegrationClient:
 
     def status(self) -> IntegrationStatus:
         if not self.enabled:
-            return IntegrationStatus(self.name, "disabled", "Integration is not configured.")
+            return IntegrationStatus(
+                self.name,
+                "intentionally-disabled",
+                "Integration is not configured.",
+            )
         if self.circuit_open or self.last_error:
             return IntegrationStatus(self.name, "degraded", self.last_error)
+        if not self.has_succeeded:
+            return IntegrationStatus(
+                self.name,
+                "unavailable",
+                "Integration has not passed a capability check.",
+            )
         return IntegrationStatus(self.name, "available")
 
     async def request(
@@ -87,6 +105,7 @@ class IntegrationClient:
                 response.raise_for_status()
             self.consecutive_failures = 0
             self.last_error = None
+            self.has_succeeded = True
             return response
         except httpx.HTTPError as exc:
             self.consecutive_failures += 1
@@ -105,6 +124,7 @@ class IntegrationClient:
         json: Any = None,
         params: dict[str, Any] | None = None,
     ) -> Any:
+        failures_before_request = self.consecutive_failures
         response = await self.request(
             method,
             path,
@@ -117,5 +137,8 @@ class IntegrationClient:
         try:
             return response.json()
         except ValueError:
+            self.consecutive_failures = failures_before_request + 1
             self.last_error = "InvalidJSON"
+            if self.consecutive_failures >= self.failure_threshold:
+                self.opened_at = time.monotonic()
             return fallback

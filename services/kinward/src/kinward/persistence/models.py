@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, JSON, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, DateTime, Float, ForeignKey, Index, JSON, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -22,9 +22,13 @@ class Base(DeclarativeBase):
 
 class HouseholdRecord(Base):
     __tablename__ = "households"
+    __table_args__ = (CheckConstraint("singleton_key = 1", name="ck_households_singleton"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     name: Mapped[str] = mapped_column(String(120), nullable=False)
+    singleton_key: Mapped[int] = mapped_column(default=1, nullable=False, unique=True)
+    record_version: Mapped[int] = mapped_column(default=1, nullable=False)
+    classification: Mapped[str] = mapped_column(String(32), default="household-shared", nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
 
     people: Mapped[list[PersonRecord]] = relationship(back_populates="household", cascade="all, delete-orphan")
@@ -41,6 +45,9 @@ class PersonRecord(Base):
     role: Mapped[str] = mapped_column(String(16), nullable=False)
     email: Mapped[str | None] = mapped_column(String(320), nullable=True)
     birth_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    profile_kind: Mapped[str] = mapped_column(String(16), default="adult", nullable=False)
+    record_version: Mapped[int] = mapped_column(default=1, nullable=False)
+    classification: Mapped[str] = mapped_column(String(32), default="private-person", nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
 
     household: Mapped[HouseholdRecord] = relationship(back_populates="people")
@@ -49,7 +56,22 @@ class PersonRecord(Base):
 
 class AssistantRecord(Base):
     __tablename__ = "assistants"
-    __table_args__ = (UniqueConstraint("household_id", "name", name="uq_assistants_household_name"),)
+    __table_args__ = (
+        UniqueConstraint("household_id", "name", name="uq_assistants_household_name"),
+        UniqueConstraint("owner_person_id", name="uq_assistants_personal_owner"),
+        CheckConstraint(
+            "(kind = 'household-fallback' AND owner_person_id IS NULL) OR "
+            "(kind = 'primary' AND owner_person_id IS NOT NULL)",
+            name="ck_assistants_kind_owner",
+        ),
+        Index(
+            "uq_assistants_household_fallback",
+            "household_id",
+            unique=True,
+            sqlite_where=text("kind = 'household-fallback'"),
+            postgresql_where=text("kind = 'household-fallback'"),
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     household_id: Mapped[str] = mapped_column(ForeignKey("households.id", ondelete="CASCADE"), nullable=False)
@@ -59,6 +81,8 @@ class AssistantRecord(Base):
     personality: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
     accent: Mapped[str | None] = mapped_column(String(32), nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    record_version: Mapped[int] = mapped_column(default=1, nullable=False)
+    classification: Mapped[str] = mapped_column(String(32), default="private-person", nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
 
     household: Mapped[HouseholdRecord] = relationship(back_populates="assistants")
@@ -70,25 +94,38 @@ class SurfaceLayoutRecord(Base):
     __table_args__ = (
         UniqueConstraint(
             "household_id",
-            "owner_person_id",
-            "room_id",
+            "scope",
+            "scope_id",
             "surface_class",
-            "name",
             name="uq_surface_layout_scope",
         ),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     household_id: Mapped[str] = mapped_column(ForeignKey("households.id", ondelete="CASCADE"), nullable=False)
-    owner_person_id: Mapped[str | None] = mapped_column(ForeignKey("people.id", ondelete="CASCADE"), nullable=True)
-    room_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    scope: Mapped[str] = mapped_column(String(32), nullable=False)
+    scope_id: Mapped[str] = mapped_column(String(120), default="", nullable=False)
     surface_class: Mapped[str] = mapped_column(String(32), nullable=False)
-    name: Mapped[str] = mapped_column(String(120), nullable=False, default="default")
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
     version: Mapped[int] = mapped_column(default=1, nullable=False)
     configuration: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
     active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    record_version: Mapped[int] = mapped_column(default=1, nullable=False)
+    classification: Mapped[str] = mapped_column(String(32), default="household-shared", nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now, nullable=False)
+
+
+class LayoutActivationAttemptRecord(Base):
+    __tablename__ = "layout_activation_attempts"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    idempotency_key: Mapped[str] = mapped_column(String(120), nullable=False, unique=True)
+    request_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    result: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    record_version: Mapped[int] = mapped_column(default=1, nullable=False)
+    classification: Mapped[str] = mapped_column(String(32), default="system-operational", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
 
 
 class ApprovalRecord(Base):
@@ -115,6 +152,8 @@ class ActivityRecord(Base):
     summary: Mapped[str] = mapped_column(Text, nullable=False)
     outcome: Mapped[str] = mapped_column(String(16), nullable=False)
     detail: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    record_version: Mapped[int] = mapped_column(default=1, nullable=False)
+    classification: Mapped[str] = mapped_column(String(32), default="system-operational", nullable=False)
     undo_token: Mapped[str | None] = mapped_column(String(160), nullable=True)
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
 
@@ -129,4 +168,101 @@ class MemoryIndexRecord(Base):
     privacy: Mapped[str] = mapped_column(String(16), nullable=False)
     source: Mapped[str] = mapped_column(String(80), nullable=False)
     confidence: Mapped[float] = mapped_column(Float, default=1.0, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
+
+
+class OutboxMessageRecord(Base):
+    """Durable hand-off seam; Story 1.1 intentionally defines no delivery semantics."""
+
+    __tablename__ = "outbox_messages"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    topic: Mapped[str] = mapped_column(String(120), nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    state: Mapped[str] = mapped_column(String(16), default="pending", nullable=False)
+    record_version: Mapped[int] = mapped_column(default=1, nullable=False)
+    classification: Mapped[str] = mapped_column(String(32), default="system-operational", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
+
+
+class WorkerHeartbeatRecord(Base):
+    __tablename__ = "worker_heartbeats"
+
+    worker_name: Mapped[str] = mapped_column(String(40), primary_key=True)
+    heartbeat_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class AccountRecord(Base):
+    __tablename__ = "accounts"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    household_id: Mapped[str] = mapped_column(ForeignKey("households.id", ondelete="CASCADE"), nullable=False)
+    person_id: Mapped[str] = mapped_column(ForeignKey("people.id", ondelete="CASCADE"), nullable=False, unique=True)
+    email: Mapped[str] = mapped_column(String(320), nullable=False, unique=True)
+    password_verifier: Mapped[str] = mapped_column(Text, nullable=False)
+    record_version: Mapped[int] = mapped_column(default=1, nullable=False)
+    classification: Mapped[str] = mapped_column(String(32), default="private-person", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
+
+
+class PetRecord(Base):
+    __tablename__ = "pets"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    household_id: Mapped[str] = mapped_column(ForeignKey("households.id", ondelete="CASCADE"), nullable=False)
+    display_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    species: Mapped[str] = mapped_column(String(80), nullable=False)
+    shared_facts: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    record_version: Mapped[int] = mapped_column(default=1, nullable=False)
+    classification: Mapped[str] = mapped_column(String(32), default="household-shared", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
+
+
+class RelationshipRecord(Base):
+    __tablename__ = "relationships"
+    __table_args__ = (
+        UniqueConstraint(
+            "household_id",
+            "subject_kind",
+            "subject_id",
+            "relationship",
+            "object_kind",
+            "object_id",
+            name="uq_relationship_fact",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    household_id: Mapped[str] = mapped_column(ForeignKey("households.id", ondelete="CASCADE"), nullable=False)
+    subject_kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    subject_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    relationship: Mapped[str] = mapped_column(String(80), nullable=False)
+    object_kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    object_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    record_version: Mapped[int] = mapped_column(default=1, nullable=False)
+    classification: Mapped[str] = mapped_column(String(32), default="household-shared", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
+
+
+class SetupCapabilityRecord(Base):
+    __tablename__ = "setup_capabilities"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    verifier_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    record_version: Mapped[int] = mapped_column(default=1, nullable=False)
+    classification: Mapped[str] = mapped_column(String(32), default="system-operational", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
+
+
+class BootstrapAttemptRecord(Base):
+    __tablename__ = "bootstrap_attempts"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    idempotency_key: Mapped[str] = mapped_column(String(120), nullable=False, unique=True)
+    request_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    result: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    record_version: Mapped[int] = mapped_column(default=1, nullable=False)
+    classification: Mapped[str] = mapped_column(String(32), default="system-operational", nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)

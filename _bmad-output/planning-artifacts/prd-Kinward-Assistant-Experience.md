@@ -108,6 +108,10 @@ Before the first live slice, the frontend foundation must render the source-defi
 
 This gate uses synthetic mock data and mock adapters, consistent with the rebuild plan's frontend-foundation phase preceding the household foundation. It must exercise real layout resolution, room and viewing-distance context, density adaptation, and deterministic per-surface privacy-policy resolution, and it must pass automated or inspectable checks. Mock data is acceptable only in this gate; its purpose is to validate the surface, privacy, card, and layout architecture across every authoritative context before live behavior narrows it.
 
+Architectural validity alone does not complete this gate. The foundation must use an enforceable design-token system, reusable semantic UI primitives, thin registered-card renderers, and automated guards against unapproved raw visual values or presentation bypasses. All five default surfaces must pass bounded visual-regression, accessibility, responsive, and state evidence while remaining visibly purpose-built for their interaction and viewing contexts.
+
+The product owner reviews rendered visual output—not source code or implementation reports—through incremental direction, representative-slice, complete-surface, and final-polish gates. The frontend foundation is not accepted, and the first live slice may not begin implementation, until the final rendered foundation receives explicit product-owner visual approval.
+
 #### 4.1.2 First live cross-surface slice
 
 The first live implementation milestone must demonstrate one real assistant capability across:

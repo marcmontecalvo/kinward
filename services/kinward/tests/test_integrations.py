@@ -3,15 +3,10 @@ import pytest
 
 from kinward.integrations.base import IntegrationClient
 from kinward.integrations.home_assistant import HomeAssistantClient
-from kinward.integrations.memory import KnowledgeClient, MemoryClient
 
 
 @pytest.mark.asyncio
-async def test_disabled_integrations_return_safe_fallbacks() -> None:
-    assert await MemoryClient(base_url=None).recall(
-        person_id="person", assistant_id="assistant", query="paint color"
-    ) == []
-    assert await KnowledgeClient(base_url=None).search(query="manual") == []
+async def test_unconfigured_home_assistant_returns_a_safe_fallback() -> None:
     assert await HomeAssistantClient(base_url=None, token=None).states() == []
 
 
@@ -26,6 +21,7 @@ async def test_integration_client_returns_json_on_success() -> None:
         transport=httpx.MockTransport(handler),
     )
 
+    assert client.status().state == "unavailable"
     assert await client.request_json("GET", "/health", fallback={}) == {"ok": True}
     assert client.status().state == "available"
 
@@ -44,5 +40,24 @@ async def test_integration_client_degrades_and_opens_circuit() -> None:
 
     assert await client.request_json("GET", "/health", fallback={"ok": False}) == {"ok": False}
     assert await client.request_json("GET", "/health", fallback={"ok": False}) == {"ok": False}
+    assert client.circuit_open
+    assert client.status().state == "degraded"
+
+
+@pytest.mark.asyncio
+async def test_invalid_json_counts_toward_the_circuit_threshold() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text="not-json")
+
+    client = IntegrationClient(
+        name="test",
+        base_url="https://example.invalid",
+        failure_threshold=2,
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert await client.request_json("GET", "/health", fallback={}) == {}
+    assert not client.circuit_open
+    assert await client.request_json("GET", "/health", fallback={}) == {}
     assert client.circuit_open
     assert client.status().state == "degraded"

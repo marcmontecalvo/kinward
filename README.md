@@ -64,11 +64,100 @@ make api
 make web
 ```
 
-Or start the Docker runtime:
+## Core deployment
+
+A clean checkout needs no `.env` file and no provider credentials. Start the production-built,
+same-origin core exactly as follows:
 
 ```bash
-make up
+docker compose up
 ```
+
+Compose builds four default services:
+
+- `migrate` applies the sole root revision, `001_initial_single_household`, then exits with status 0.
+- `worker` records durable SQL heartbeat readiness and exposes no later-story action semantics.
+- `api` serves the backend only after migration succeeds.
+- `web` serves the built PWA on <http://localhost:8080> and proxies `/api/v1` to the API.
+
+SQLite data is retained in the project-scoped `kinward-data` volume. The API and worker never run
+Alembic during normal startup. Both wait for the one-shot migration service and fail readiness when
+the schema is incompatible. It is normal for `docker compose ps -a` to show `migrate` as exited (0).
+The example environment file uses the same shared `/data/kinward.db` path, so copying it for local
+development does not split migration, API, and worker state across container-local files.
+
+The versioned health contract is available through the same origin:
+
+```text
+http://localhost:8080/api/v1/health
+```
+
+It reports application, database, schema, bootstrap, and worker/outbox health independently.
+Unconfigured model, memory, knowledge, calendar, and Home Assistant capabilities report
+`intentionally-disabled`; this does not make the core unhealthy. A configured provider remains
+`unavailable` until a bounded capability check succeeds. Health output contains only fixed status
+and reason values, never provider payloads, credentials, database URLs, or private host values.
+
+### Establish the household
+
+Household setup is deliberately unavailable unless the operator supplies a random one-time setup
+authorization. Generate it locally, keep it out of shell history and files, and supply it through a
+secret-aware process environment when starting the clean deployment. For example, a POSIX shell can
+hold the value without printing it:
+
+```bash
+read -rsp "One-time setup authorization: " KINWARD_SETUP_AUTHORIZATION
+export KINWARD_SETUP_AUTHORIZATION
+docker compose up
+```
+
+Use a randomly generated value of at least 24 characters; do not use the illustrative values from
+tests. Visit <http://localhost:8080/setup> and enter the same value. The form creates the household,
+administrator account, administrator-owned personal assistant, ownerless household fallback, and
+any selected adult, child, or pet profiles in one transaction. It requires no provider or integration.
+Pets receive no credentials, account, assistant, private memory, approval, delegation, or action
+authority; only explicitly entered household-shared care facts are retained.
+
+Setup uses an explicit CSRF token, Argon2id password verification, and an idempotency identity. The
+authorization is stored only as a hash and becomes terminally unusable after commit. Remove the
+environment variable and restart `api` after setup. `/api/v1/setup/status` reports only whether setup
+is available or complete; it never returns a password verifier or reusable setup authorization.
+
+Restart the long-running processes without rerunning the migration service:
+
+```bash
+docker compose restart api worker web
+```
+
+Stop containers while retaining SQLite data, or explicitly remove the project volumes:
+
+```bash
+docker compose down
+docker compose down --volumes
+```
+
+PostgreSQL 18 is an independent, unadvertised adapter profile. It is absent from the default
+inventory and does not replace SQLite automatically. Set `KINWARD_POSTGRES_PASSWORD` in the
+operator environment or a secret-management wrapper before opting in:
+
+```bash
+docker compose --profile postgres up postgres
+```
+
+No Redis service or dependency exists. Model, memory, knowledge, calendar, Home Assistant,
+observability, and development peers are also absent from the default topology.
+
+Run the reproducible Milestone A deployment gate with `make smoke`. The script owns synthetic,
+project-scoped containers and volumes, validates migration failure gating, idempotency, restart
+safety, health, same-origin reachability, and service inventory, then cleans up. OPS owns the
+startup/restart/inventory evidence, BE owns migration/health/worker evidence, and QA owns evidence
+completeness and public-repository safety.
+
+The retained infrastructure contract is intentionally narrow: one backend image supplies explicit
+migration, API, and worker roles; the versioned setup handler delegates through an application policy
+and one transaction; the single-household SQL model remains authoritative; and optional adapters degrade without blocking
+startup. No legacy tenant, entitlement, control-plane, support-access, or routine behavior is
+carried into this deployment foundation.
 
 ## License
 

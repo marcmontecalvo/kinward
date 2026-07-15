@@ -1,0 +1,44 @@
+{
+  "evidenceContract": "kinward-milestone-a-foundation-v1",
+  "label": "mock-backed foundation",
+  "generatedBy": "pnpm --filter @kinward/web test:e2e",
+  "referenceFixture": {
+    "surface": "shared-living-room",
+    "viewportCssPixels": "1920x1080",
+    "displayReference": "21.5-inch kiosk proxy",
+    "viewingDistanceReferenceMeters": 1.5,
+    "browser": "Chromium 149.0.7827.55",
+    "playwright": "1.61.1",
+    "deviceScaleFactor": 1,
+    "testSourceSha256": "ae9233d5876121769a8792209a654520591158005d57469b4824beb2f8c63348"
+  },
+  "automatedCoverage": [
+    "five-context registry and layout resolution",
+    "surface distinction and provenance",
+    "policy-filtered forbidden-field absence",
+    "candidate exactness and authorization-loss clearing",
+    "provider-absence truthfulness",
+    "responsive reflow and horizontal overflow",
+    "keyboard focus and semantic controls",
+    "WCAG 2.2 A/AA axe rules",
+    "48px targets and 8px inactive spacing",
+    "100% and 200% text scaling",
+    "reduced motion and forced colors",
+    "shared storage, IndexedDB, and cache emptiness"
+  ],
+  "safety": {
+    "fixtures": "obviously fictional",
+    "screenshots": "failure-only and ignored",
+    "reports": "generated locally and ignored",
+    "containsLiveProviderData": false,
+    "containsCredentials": false,
+    "containsPrivateDeploymentIdentifiers": false
+  },
+  "notProven": [
+    "Milestone B live mobile authentication and assistant streaming",
+    "Milestone B live desktop continuity",
+    "Milestone B live shared-surface identity and privacy authority",
+    "Milestone B backend-enforced live provider privacy",
+    "Milestone C physical 1.5m human inspection freeze"
+  ]
+}

@@ -1,47 +1,102 @@
+x-backend: &backend
+  image: kinward-backend:local
+  environment: &backend-environment
+    KINWARD_ENVIRONMENT: ${KINWARD_ENVIRONMENT:-production}
+    KINWARD_DATABASE_URL: ${KINWARD_DATABASE_URL:-sqlite+aiosqlite:////data/kinward.db}
+    KINWARD_MODEL_PROVIDER: ${KINWARD_MODEL_PROVIDER:-none}
+    KINWARD_MEMORY_BACKEND: ${KINWARD_MEMORY_BACKEND:-none}
+    KINWARD_KNOWLEDGE_BACKEND: ${KINWARD_KNOWLEDGE_BACKEND:-none}
+    KINWARD_CALENDAR_PROVIDER: ${KINWARD_CALENDAR_PROVIDER:-none}
+    KINWARD_HONCHO_URL: ${KINWARD_HONCHO_URL:-}
+    KINWARD_LLM_WIKI_URL: ${KINWARD_LLM_WIKI_URL:-}
+    KINWARD_HOME_ASSISTANT_URL: ${KINWARD_HOME_ASSISTANT_URL:-}
+    KINWARD_HOME_ASSISTANT_TOKEN: ${KINWARD_HOME_ASSISTANT_TOKEN:-}
+    KINWARD_SETUP_AUTHORIZATION: ${KINWARD_SETUP_AUTHORIZATION:-}
+  volumes:
+    - kinward-data:/data
+
 services:
-  kinward:
+  migrate:
+    <<: *backend
     build:
       context: ./services/kinward
-    environment:
-      KINWARD_ENVIRONMENT: ${KINWARD_ENVIRONMENT:-development}
-      KINWARD_DATABASE_URL: ${KINWARD_DATABASE_URL:-sqlite+aiosqlite:////data/kinward.db}
-      KINWARD_MEMORY_BACKEND: ${KINWARD_MEMORY_BACKEND:-none}
-      KINWARD_KNOWLEDGE_BACKEND: ${KINWARD_KNOWLEDGE_BACKEND:-none}
-      KINWARD_HONCHO_URL: ${KINWARD_HONCHO_URL:-}
-      KINWARD_LLM_WIKI_URL: ${KINWARD_LLM_WIKI_URL:-}
-      KINWARD_HOME_ASSISTANT_URL: ${KINWARD_HOME_ASSISTANT_URL:-}
-      KINWARD_HOME_ASSISTANT_TOKEN: ${KINWARD_HOME_ASSISTANT_TOKEN:-}
-    volumes:
-      - kinward-data:/data
-    ports:
-      - "${KINWARD_API_PORT:-8000}:8000"
+    command: ["alembic", "-c", "alembic.ini", "upgrade", "head"]
+    restart: "no"
+
+  api:
+    <<: *backend
+    command: ["uvicorn", "kinward.app:app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health')"]
-      interval: 10s
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health', timeout=2)
+      interval: 5s
       timeout: 3s
-      retries: 5
+      retries: 12
+      start_period: 5s
+    restart: unless-stopped
+
+  worker:
+    <<: *backend
+    command: ["python", "-m", "kinward.worker"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-m", "kinward.worker", "--check"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+    restart: unless-stopped
+
+  web:
+    image: kinward-web:local
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "${KINWARD_WEB_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--spider", "http://127.0.0.1:8080/"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
     restart: unless-stopped
 
   postgres:
-    image: postgres:17-alpine
+    image: postgres:18.4-alpine3.23
+    profiles: ["postgres"]
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-kinward}
       POSTGRES_USER: ${POSTGRES_USER:-kinward}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets:
+      - postgres_password
     volumes:
-      - kinward-postgres:/var/lib/postgresql/data
-    profiles: ["data"]
-    restart: unless-stopped
-
-  redis:
-    image: redis:7-alpine
-    command: ["redis-server", "--appendonly", "yes"]
-    volumes:
-      - kinward-redis:/data
-    profiles: ["data"]
+      - kinward-postgres:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     restart: unless-stopped
 
 volumes:
   kinward-data:
   kinward-postgres:
-  kinward-redis:
+
+secrets:
+  postgres_password:
+    environment: KINWARD_POSTGRES_PASSWORD
