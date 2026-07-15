@@ -176,8 +176,9 @@ flowchart LR
 ### AD-22 — Registry-driven policy-filtered frontend [ADOPTED]
 
 - **Binds:** FR-035–FR-044, FR-049, FR-054, FR-068–FR-073, FR-096, NFR-020, NFR-023–NFR-028, NFR-030
-- **Prevents:** Arbitrary generated code, card-level authorization, conflicting layout selection, invalid config replacing a working surface, and administrative density entering everyday UX.
+- **Prevents:** Arbitrary generated code, card-level authorization, conflicting layout selection, invalid config replacing a working surface, presentation drift through raw visual constants, and administrative density entering everyday UX.
 - **Rule:** Registered cards accept only server-produced policy-filtered view models. Layouts are declarative, schema-validated, and versioned. Resolution order is explicit surface → person+surface → room+surface → household profile → product default. Invalid config preserves the last valid version. Generated views use registered cards only. Kinward Control uses a separate route shell and navigation family.
+- **Presentation rule:** Versioned token modules are the only source of visual constants, and reusable semantic primitives are the ordinary application presentation boundary. Surface variants consume explicit `SurfaceContext`, not viewport guesses alone. Feature and card renderers may choose semantic structure and emit typed intents but may not own independent visual values. Data-driven declarative grid placement flows through one audited layout-style adapter; other inline visual styling is prohibited. Automated checks reject raw visual values, unapproved exceptions, and bypasses. Kinward Control may share tokens and primitives but retains its separate shell, navigation family, and density profile.
 
 ### AD-23 — Same-origin profile-based Compose deployment [ADOPTED]
 

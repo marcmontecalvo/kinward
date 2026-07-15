@@ -418,6 +418,30 @@ Each assistant has a signature color field, subtle visual form, voice, motion ca
 
 Motion communicates attention, listening, understanding, acting, waiting, completion, and uncertainty. It must be subtle, functional, interruptible, and reduced when accessibility settings require it.
 
+## Design-system contract
+
+Kinward uses one versioned token system for color, typography, spacing, size, radius, border, elevation, opacity, layering, motion, focus, targets, and supported responsive thresholds. Primitive values are separated from semantic intent and surface-context expression. Application components consume semantic tokens; raw visual values outside the token boundary require an explicit, documented, lint-enforced exception.
+
+Reusable semantic primitives own presentation and accessibility mechanics for surfaces, layout, typography, panels/card frames, actions, status, navigation, composer, lists, assistant presence, privacy cues, and empty or unavailable states. Feature and card renderers own meaning, content structure, and typed intents. They do not create independent visual systems.
+
+Each registered card has one semantic renderer contract with intentional treatments for personal mobile, personal tablet, personal desktop, shared kitchen, and shared living room. These treatments adapt structure, hierarchy, density, interaction, and viewing distance; they are not recolored copies and must not become forty unrelated implementations.
+
+## Surface art direction
+
+- **Personal mobile:** intimate pocket presence, one dominant moment, calm vertical rhythm, persistent input, and minimal bottom navigation; never a compressed dashboard grid.
+- **Personal tablet:** tactile planning canvas with deliberate multi-column composition and touch-and-keyboard affordances.
+- **Personal desktop:** focused workspace with persistent navigation, continuity, adaptive canvas, and input; never enlarged mobile.
+- **Shared kitchen:** active, glanceable, task-proximate, touch/voice compatible, and readable while people move through the room.
+- **Shared living room:** ambient, quiet, distance-first, socially shared, and visually calm rather than a wall-mounted personal dashboard.
+
+All five remain recognizably Kinward through shared typography, assistant presence, state language, interaction principles, and semantic tokens. Difference follows surface purpose rather than arbitrary skins.
+
+## Visual approval
+
+The frontend foundation advances through four rendered-visual gates: a direction gallery; a representative slice on personal mobile, personal desktop, and shared living room; the complete eight-card set across all five surfaces; and final polish covering responsive and non-happy states. The product owner reviews visual output only. Implementation, token compliance, accessibility, and source quality remain the implementation agent's responsibility.
+
+Reject generic glass dashboards, undifferentiated card grids, enlarged-mobile desktop, wall-mounted personal dashboards, novelty motion, decorative status ambiguity, and one-off component styling outside the primitive system.
+
 # Accessibility
 
 Target WCAG 2.2 AA with keyboard access, screen-reader semantics, large touch targets, reduced motion, high contrast, text scaling, captions, non-color status indicators, clear focus, shared-display distance readability, and timeout warnings for private sessions.

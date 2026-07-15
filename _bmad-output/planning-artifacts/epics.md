@@ -881,9 +881,78 @@ So that the product foundation proves privacy, layout, accessibility, and viewin
 
 This story addresses `FR-035`, `FR-036`, `FR-040`, `FR-041`, `NFR-003`, `NFR-023`, `NFR-024`, `NFR-025`, `NFR-026`, `NFR-027`, `NFR-031`, `NFR-032`, `UX-DR1–UX-DR9`, `UX-DR11–UX-DR17`, `UX-DR20`, `UX-DR25–UX-DR29`, and `AD-15`, `AD-21`, and `AD-22`.
 
+### Story 1.6: Establish the Exceptional Kinward Visual Foundation
+
+As a household member,
+I want every Kinward surface to feel beautiful, coherent, personal, and purpose-built,
+So that the interface can sustain trust and delight as the household's daily assistant foundation.
+
+**Acceptance Criteria:**
+
+**Given** the current web presentation layer
+**When** the design-system foundation is inspected
+**Then** one versioned token system owns color, typography, spacing, sizing, radius, border, elevation, opacity, layering, motion, focus, targets, and supported responsive thresholds
+**And** primitive, semantic, and surface-context tokens have explicit ownership
+**And** application presentation contains no unapproved raw visual values.
+
+**Given** a developer adds or modifies UI presentation
+**When** local and CI validation runs
+**Then** lint rejects raw colors, restricted numeric visual values, arbitrary inline presentation, direct primitive-token use where semantic intent is required, and silent suppressions
+**And** only a documented allowlist permits structural necessities such as zero, inheritance, current color, percentages, screen-reader clipping, and data-driven layout coordinates
+**And** declarative grid placement flows through one audited layout-style adapter.
+
+**Given** the assistant surfaces and setup experience
+**When** their component trees are inspected
+**Then** they compose a small reusable semantic primitive layer for surfaces, layout, typography, card frames, actions, status, navigation, composer, lists, assistant presence, privacy cues, and empty or unavailable states
+**And** primitives own presentation and accessibility mechanics while features own meaning and intents.
+
+**Given** Assistant Presence, Now, Briefing, Continue, Schedule, House Status, Approval, and Assistant Input
+**When** they render across the five authoritative contexts
+**Then** each retains one thin semantic registered-card renderer contract
+**And** each receives an intentional personal-mobile, personal-tablet, personal-desktop, shared-kitchen, and shared-living-room treatment
+**And** the treatments adapt structure, hierarchy, density, interaction, privacy, room, and viewing distance rather than acting as recolored copies or forty unrelated implementations.
+
+**Given** the three personal surface contexts
+**When** their default shells render
+**Then** mobile is an intimate pocket presence with one dominant Now item, quiet briefing, Continue, persistent input, and minimal bottom navigation
+**And** tablet is a deliberate touch-and-keyboard multi-column planning canvas
+**And** desktop is a focused workspace with persistent navigation, continuity, adaptive canvas, and persistent input
+**And** none reads as a generic dashboard or enlarged version of another surface.
+
+**Given** the kitchen and living-room shared contexts
+**When** their household-safe shells render
+**Then** kitchen is active, glanceable, task-proximate, touch/voice compatible, and room-readable
+**And** living room is ambient, quiet, distance-first, socially shared, and visually distinct
+**And** both preserve minimal navigation, household-safe defaults, and unmistakable privacy/session cues.
+
+**Given** Kinward's desired emotional response
+**When** the complete foundation is reviewed
+**Then** it feels calm, warm, intelligent, personal, restrained, trustworthy, and quietly magical
+**And** cards remain presentation primitives rather than the product metaphor
+**And** assistant presence avoids a default humanoid avatar
+**And** all availability, progress, approval, uncertainty, completion, failure, cancellation, privacy, and degradation states remain distinguishable without color alone.
+
+**Given** incremental product-owner review
+**When** visual evidence is presented
+**Then** Gate A shows a compact visual-direction gallery
+**And** Gate B shows representative Presence, Now, Briefing, Approval, and Assistant Input experiences on personal mobile, personal desktop, and shared living room
+**And** Gate C shows the complete eight-card set across all five surfaces
+**And** Gate D shows final responsive, interaction, empty/degraded/error, text-scaling, reduced-motion, and forced-color polish
+**And** the product owner reviews rendered visuals only and explicitly approves every gate.
+
+**Given** the final Story 1.6 candidate
+**When** automated and inspectable validation runs
+**Then** token enforcement, primitive boundaries, bounded visual regression, keyboard operation, WCAG 2.2 AA, non-color states, 100% and 200% text scale, touch targets, and shared-display distance requirements pass
+**And** all Story 1.3–1.5 schema, registry, layout, privacy, forbidden-field, fallback, responsive, accessibility, and public-safety evidence remains green
+**And** Epic 2 implementation remains blocked until Gate D receives explicit product-owner approval.
+
+This story strengthens `FR-035`–`FR-041`, `NFR-023`–`NFR-027`, `NFR-031`–`NFR-032`, `UX-DR1`–`UX-DR9`, `UX-DR11`–`UX-DR17`, `UX-DR20`, `UX-DR25`–`UX-DR29`, and `AD-15`, `AD-21`, and `AD-22` without enabling deferred layout editing or new product capability.
+
 ## Epic 2: A Private Assistant That Continues Across Surfaces
 
 A person can authenticate, ask by text, receive truthful incremental progress, persist a topic, continue on desktop, and see only safe shared-display representations.
+
+**Entry gate:** Story 1.6 must receive final rendered-visual approval before Epic 2 implementation begins.
 
 ### Story 2.1: Enter a Private Personal Assistant Session
 

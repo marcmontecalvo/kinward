@@ -1,4 +1,4 @@
-.PHONY: install lock dev api worker web migrate test lint typecheck build check smoke up down
+.PHONY: install lock dev api worker web migrate test browser-test lint typecheck build check smoke up down
 
 install:
 	mise install
@@ -24,6 +24,9 @@ migrate:
 
 test:
 	mise run test
+
+browser-test:
+	mise run browser-test
 
 lint:
 	mise run lint

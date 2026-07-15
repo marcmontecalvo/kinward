@@ -3,7 +3,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -22,6 +22,17 @@ class Settings(BaseSettings):
     home_assistant_token: str | None = Field(default=None, repr=False)
     worker_heartbeat_interval_seconds: float = Field(default=5.0, gt=0, allow_inf_nan=False)
     worker_stale_after_seconds: float = Field(default=30.0, gt=0, allow_inf_nan=False)
+    setup_authorization: str | None = Field(default=None, repr=False)
+    setup_authorization_ttl_seconds: int = Field(default=3600, ge=60, le=86400)
+
+    @field_validator("setup_authorization", mode="before")
+    @classmethod
+    def normalize_setup_authorization(cls, value: object) -> object:
+        if isinstance(value, str) and not value.strip():
+            return None
+        if isinstance(value, str) and len(value) < 24:
+            raise ValueError("setup authorization must contain at least 24 characters")
+        return value
 
     @model_validator(mode="after")
     def validate_worker_timing(self) -> Settings:

@@ -6,10 +6,11 @@ from alembic import command
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 import pytest
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, inspect, text
 
 from kinward.config import get_settings
 from kinward.health import EXPECTED_SCHEMA_REVISION
+from kinward.persistence.models import Base
 
 
 def test_initial_migration_is_the_only_root_and_is_idempotent(
@@ -44,6 +45,14 @@ def test_initial_migration_is_the_only_root_and_is_idempotent(
                 text("SELECT name FROM sqlite_master WHERE type = 'table'")
             )
         }
+        inspector = inspect(connection)
+        migrated_columns = {
+            table: {column["name"] for column in inspector.get_columns(table)} for table in tables
+        }
     assert {"outbox_messages", "worker_heartbeats"} <= tables
+    model_tables = set(Base.metadata.tables)
+    assert model_tables <= tables
+    for table in model_tables:
+        assert migrated_columns[table] == set(Base.metadata.tables[table].columns.keys())
     engine.dispose()
     get_settings.cache_clear()

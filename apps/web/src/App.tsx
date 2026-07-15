@@ -1,86 +1,70 @@
-import { getCard } from "./cards/registry";
+import { useState } from "react";
+import type { SurfaceClass } from "@kinward/schemas";
 
-type CardView = {
-  id: string;
-  type: string;
-  title: string;
-  className?: string;
-  data: Record<string, unknown>;
-};
+import { listCards, resolveCard, SafeCardFallback, type CardIntent } from "./cards/registry";
+import { buildPolicyFilteredPayload, type SharedIdentityState } from "./foundation/policy";
+import { productLayouts } from "./layouts/defaults";
+import { resolveLayout } from "./layouts/resolver";
 
-const cards: CardView[] = [
-  {
-    id: "now",
-    type: "now",
-    title: "Now",
-    className: "now-card",
-    data: {
-      headline: "Your evening is clear until 6:30.",
-      detail: "Dinner shifted later and does not conflict with your calendar.",
-      action: "Review change",
-    },
-  },
-  {
-    id: "briefing",
-    type: "list",
-    title: "Quiet briefing",
-    data: {
-      items: [
-        "The school calendar added an early-release day next Friday.",
-        "The garage door was closed automatically.",
-        "No approvals are waiting.",
-      ],
-    },
-  },
-  {
-    id: "continue",
-    type: "topics",
-    title: "Continue",
-    data: { items: ["Summer trip", "Kitchen project", "Vehicle maintenance"] },
-  },
-  {
-    id: "house",
-    type: "now",
-    title: "House status",
-    data: {
-      headline: "All normal",
-      detail: "3 people home · doors secure · no active alerts",
-    },
-  },
-];
+const surfaces: readonly SurfaceClass[] = ["personal-mobile", "personal-tablet", "personal-desktop", "shared-kitchen", "shared-living-room"];
+const identityStates: readonly SharedIdentityState[] = ["unknown", "candidate", "group", "verified-selected", "expired", "authorization-loss"];
+
+function initialSurface(): SurfaceClass {
+  if (typeof window === "undefined") return "personal-desktop";
+  const candidate = new URLSearchParams(window.location.search).get("surface");
+  return surfaces.find((surface) => surface === candidate) ?? "personal-desktop";
+}
+
+function initialIdentity(): SharedIdentityState {
+  if (typeof window === "undefined") return "unknown";
+  const candidate = new URLSearchParams(window.location.search).get("identity");
+  return identityStates.find((state) => state === candidate) ?? "unknown";
+}
+
+function simulateInvalidLayout(): boolean {
+  return typeof window !== "undefined" && new URLSearchParams(window.location.search).get("invalidLayout") === "1";
+}
+
+const registrySnapshot = listCards().map(({ type, version, supportedSurfaces, sizing }) => ({ type, version, supportedSurfaces, sizing }));
 
 export function App() {
+  const [surface] = useState(initialSurface);
+  const [identityState, setIdentityState] = useState(initialIdentity);
+  const payload = buildPolicyFilteredPayload(surface, identityState);
+  const context = payload.context;
+  const handleIntent = (intent: CardIntent) => {
+    document.dispatchEvent(new CustomEvent("kinward:card-intent", { detail: intent }));
+  };
+  const resolvedLayout = resolveLayout({
+    context,
+    assignments: simulateInvalidLayout() ? [{ id: "synthetic-invalid-assignment", scope: "explicit-surface", scopeId: context.surfaceId, surfaceClass: context.surfaceClass, assignmentVersion: 1, layout: { schemaMajor: 2 } }] : [],
+    registry: registrySnapshot,
+    authorizedViews: payload.views,
+    productDefault: productLayouts[context.surfaceClass],
+  });
+  const shared = context.privacy === "household-shared";
+
   return (
-    <main className="shell">
+    <main className={`shell surface-shell surface-${surface}`} data-surface={surface} data-privacy={context.privacy} data-interaction={`${context.touch ? "touch" : "no-touch"}-${context.keyboard ? "keyboard" : "no-keyboard"}`} data-viewing-distance={context.viewingDistance} data-layout-id={resolvedLayout.layout.id} data-layout-version={resolvedLayout.layoutVersion} data-context-version={resolvedLayout.contextVersion} data-layout-provenance={resolvedLayout.provenance} data-fallback-reason={resolvedLayout.fallbackReason ?? "none"}>
       <header className="assistant-header">
         <div>
-          <p className="eyebrow">Kinward Assistant</p>
-          <h1>Good afternoon.</h1>
-          <p className="muted">Nothing urgent needs your attention.</p>
+          <p className="eyebrow">Kinward Assistant · {payload.mockLabel}</p>
+          <h1>{payload.greeting}</h1>
+          <p className="muted">Synthetic examples only. No provider data is live.</p>
+          <p className="surface-description">{surface === "personal-mobile" ? "Focused mobile view" : surface === "personal-tablet" ? "Touch-and-keyboard tablet workspace" : surface === "personal-desktop" ? "Desktop planning workspace" : surface === "shared-kitchen" ? "Kitchen glance view" : "Living-room distance view"}</p>
         </div>
-        <button className="avatar" aria-label="Open assistant">K</button>
+        <span className="presence-mark header-mark" aria-hidden="true">✦</span>
       </header>
-
-      <section className="grid" aria-label="Your assistant overview">
-        {cards.map((card) => {
-          const definition = getCard(card.type);
-          const Card = definition.render;
-          return (
-            <Card
-              key={card.id}
-              title={card.title}
-              data={card.data}
-              {...(card.className === undefined ? {} : { className: card.className })}
-            />
-          );
+      {!shared ? <nav className="primary-nav" aria-label="Primary assistant navigation"><a href="#now-example">Now</a><a href="#briefing-example">Briefing</a><a href="#continue-example">Continue</a></nav> : null}
+      {shared ? <nav className="identity-controls" aria-label="Synthetic shared identity state"><span>Shared preview: {identityState}</span><button onClick={() => setIdentityState("candidate")}>Simulate candidate</button><button onClick={() => setIdentityState("verified-selected")}>Show selected share</button><button onClick={() => setIdentityState("authorization-loss")}>End private preview</button></nav> : null}
+      <section className="grid resolved-grid" aria-label="Synthetic assistant overview" style={{ gridTemplateColumns: `repeat(${resolvedLayout.layout.grid.columns}, minmax(0, 1fr))`, gap: resolvedLayout.layout.grid.gapPx }}>
+        {resolvedLayout.instances.map((instance) => {
+          const view = resolvedLayout.views.get(instance.id);
+          const resolved = resolveCard(instance.type, instance.version, context.surfaceClass, view);
+          return <div id={instance.id} className="layout-instance" key={instance.id} data-instance-id={instance.id} style={{ gridColumn: `${instance.column} / span ${instance.columns}`, gridRow: `${instance.row} / span ${instance.rows}` }}>{resolved.ok ? (() => { const Renderer = resolved.definition.render; return <Renderer cardId={instance.id} title={instance.title} view={resolved.view} onIntent={handleIntent} />; })() : <SafeCardFallback title={instance.title} reason={resolved.reason} />}</div>;
         })}
       </section>
-
-      <form className="composer" onSubmit={(event) => event.preventDefault()}>
-        <label className="sr-only" htmlFor="assistant-input">Ask Kinward</label>
-        <input id="assistant-input" placeholder="Ask, do, remember, or explain…" />
-        <button type="submit">Send</button>
-      </form>
+      {shared ? <p className="privacy-cue" role="status">{identityState === "authorization-loss" || identityState === "expired" ? "Private preview ended · household-safe view restored." : identityState === "verified-selected" ? "Selected shared preview · end it to clear selected details." : "Shared surface · household-safe information only."}</p> : <p className="privacy-cue" role="status">Private session · visible only in this synthetic personal context.</p>}
     </main>
   );
 }

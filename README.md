@@ -98,6 +98,31 @@ Unconfigured model, memory, knowledge, calendar, and Home Assistant capabilities
 `unavailable` until a bounded capability check succeeds. Health output contains only fixed status
 and reason values, never provider payloads, credentials, database URLs, or private host values.
 
+### Establish the household
+
+Household setup is deliberately unavailable unless the operator supplies a random one-time setup
+authorization. Generate it locally, keep it out of shell history and files, and supply it through a
+secret-aware process environment when starting the clean deployment. For example, a POSIX shell can
+hold the value without printing it:
+
+```bash
+read -rsp "One-time setup authorization: " KINWARD_SETUP_AUTHORIZATION
+export KINWARD_SETUP_AUTHORIZATION
+docker compose up
+```
+
+Use a randomly generated value of at least 24 characters; do not use the illustrative values from
+tests. Visit <http://localhost:8080/setup> and enter the same value. The form creates the household,
+administrator account, administrator-owned personal assistant, ownerless household fallback, and
+any selected adult, child, or pet profiles in one transaction. It requires no provider or integration.
+Pets receive no credentials, account, assistant, private memory, approval, delegation, or action
+authority; only explicitly entered household-shared care facts are retained.
+
+Setup uses an explicit CSRF token, Argon2id password verification, and an idempotency identity. The
+authorization is stored only as a hash and becomes terminally unusable after commit. Remove the
+environment variable and restart `api` after setup. `/api/v1/setup/status` reports only whether setup
+is available or complete; it never returns a password verifier or reusable setup authorization.
+
 Restart the long-running processes without rerunning the migration service:
 
 ```bash
@@ -129,8 +154,8 @@ startup/restart/inventory evidence, BE owns migration/health/worker evidence, an
 completeness and public-repository safety.
 
 The retained infrastructure contract is intentionally narrow: one backend image supplies explicit
-migration, API, and worker roles; the existing Story 1.2 setup endpoints remain unchanged; the
-single-household SQL model remains authoritative; and optional adapters degrade without blocking
+migration, API, and worker roles; the versioned setup handler delegates through an application policy
+and one transaction; the single-household SQL model remains authoritative; and optional adapters degrade without blocking
 startup. No legacy tenant, entitlement, control-plane, support-access, or routine behavior is
 carried into this deployment foundation.
 

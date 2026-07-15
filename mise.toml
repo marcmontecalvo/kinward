@@ -43,6 +43,10 @@ run = [
   "corepack pnpm -r test",
 ]
 
+[tasks.browser-test]
+description = "Run the Chromium five-surface and accessibility evidence suite"
+run = "corepack pnpm --filter @kinward/web test:e2e"
+
 [tasks.lint]
 description = "Run all linters"
 run = [

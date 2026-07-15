@@ -142,8 +142,8 @@ wait_for_healthy web
 curl --fail --silent --show-error "http://127.0.0.1:${WEB_PORT}/" >"${TMP_DIR}/web.html" || fail "web root is unreachable"
 grep -q '<div id="root"></div>' "${TMP_DIR}/web.html" || fail "web root did not serve the built application"
 curl --fail --silent --show-error "http://127.0.0.1:${WEB_PORT}/api/v1/health" >"${TMP_DIR}/health.json" || fail "same-origin API health is unreachable"
-setup_status="$(curl --fail --silent --show-error "http://127.0.0.1:${WEB_PORT}/api/setup/status")" || fail "existing setup status route is unreachable"
-[[ "${setup_status}" == '{"configured":false}' ]] || fail "clean deployment setup status was unexpected"
+setup_status="$(curl --fail --silent --show-error "http://127.0.0.1:${WEB_PORT}/api/v1/setup/status")" || fail "versioned setup status route is unreachable"
+[[ "${setup_status}" == '{"configured":false,"bootstrap_available":false}' ]] || fail "clean deployment setup status was unexpected"
 if ! python3 - "${TMP_DIR}/health.json" <<'PY'
 import json
 import sys
