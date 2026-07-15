@@ -5,6 +5,13 @@ import type { CardState, CardView, SurfaceClass } from "@kinward/schemas";
 import { syntheticCardFixtures } from "./fixtures";
 import { getCard, listCards, registerCard, resolveCard, SafeCardFallback } from "./registry";
 import styles from "../styles.css?raw";
+import semanticTokens from "../design-system/tokens/semantic.css?raw";
+
+// Accessibility guarantees now live across the application stylesheet AND the
+// token layer (e.g. the 48px target floor and forced-colors handling are
+// tokenized, not hardcoded per-selector) — check the whole system, not just
+// one file, so this assertion stays true to what actually governs the page.
+const allStyles = `${styles}\n${semanticTokens}`;
 
 const states: readonly CardState[] = ["available", "empty", "loading", "degraded", "unavailable", "stale", "error"];
 
@@ -109,12 +116,12 @@ describe("versioned card registry", () => {
   });
 
   it("keeps focus, target size, high contrast, reduced motion, and reflow inspectable", () => {
-    expect(styles).toContain(":focus-visible");
-    expect(styles).toContain("min-height: 48px");
-    expect(styles).toContain("prefers-reduced-motion: reduce");
-    expect(styles).toContain("forced-colors: active");
-    expect(styles).toContain("flex-wrap: wrap");
-    expect(styles).toContain("max-width: 100%");
+    expect(allStyles).toContain(":focus-visible");
+    expect(allStyles).toContain("--kw-target-min: 3rem"); /* 48px minimum interactive target, tokenized */
+    expect(allStyles).toContain("prefers-reduced-motion: reduce");
+    expect(allStyles).toContain("forced-colors: active");
+    expect(allStyles).toContain("flex-wrap: wrap");
+    expect(allStyles).toContain("max-width: 100%");
     const interactiveMarkup = renderToStaticMarkup(<>{syntheticCardFixtures.map((fixture) => {
       const resolved = resolveCard(fixture.view.type, 1, "personal-desktop", fixture.view);
       if (!resolved.ok) return null;

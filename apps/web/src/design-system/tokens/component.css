@@ -1,0 +1,34 @@
+/*
+  COMPONENT LAYER — used only where a component's own visual mechanics
+  can't honestly be expressed as a general semantic token (Dev Notes:
+  "component-when-necessary"). Owner: design-system/tokens.
+
+  The presence motif is the clearest case: personal surfaces show an
+  organic "light pool" (an irregular blob, Claude's Gate-A entry) and
+  household-shared surfaces show a "quiet line" (a thin traveling-dot
+  line, Hy3's Gate-A entry). These are two different shapes, not one
+  shape recolored — so the shape geometry itself is a component token,
+  scoped by the same data-privacy attribute the semantic layer uses.
+*/
+:root,
+[data-privacy="personal"] {
+  --kw-c-presence-blob-radius: 62% 38% 55% 45% / 48% 52% 48% 52%;
+  --kw-c-presence-size: 2.125rem;   /* 34px */
+  --kw-c-presence-size-large: 13.75rem; /* 220px, shared-room-scale use */
+  --kw-c-presence-line-height: 0;   /* unused in this theme */
+  --kw-c-presence-dot-size: 0;      /* unused in this theme */
+}
+
+[data-privacy="household-shared"] {
+  --kw-c-presence-blob-radius: 0; /* unused in this theme */
+  --kw-c-presence-size: 2.5rem;      /* 40px, the ember-thread's bounding box */
+  --kw-c-presence-size-large: 2.5rem;
+  --kw-c-presence-line-height: 0.125rem; /* 2px */
+  --kw-c-presence-dot-size: 0.4375rem;   /* 7px */
+}
+
+:root {
+  --kw-c-card-frame-radius: var(--kw-radius-frame);
+  --kw-c-card-frame-shadow: var(--kw-shadow-frame);
+  --kw-c-composer-radius: var(--kw-radius-pill);
+}
