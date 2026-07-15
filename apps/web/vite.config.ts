@@ -6,6 +6,7 @@ export default defineConfig({
   test: { css: true, exclude: ["e2e/**", "node_modules/**"] },
   server: {
     port: 5173,
+    allowedHosts: true,
     proxy: {
       "/api": "http://localhost:8000",
     },
