@@ -14,13 +14,25 @@ for a step-by-step household trial covering everything below end to end.
   briefing/calendar/attention pipeline isn't built yet).
 - `conversation.kinward` resolves whichever Home Assistant user is actually
   talking to an account-bearing Kinward profile (via the integration's Options
-  flow - "Configure" on the integration's device page) and fails closed with a
-  truthful denial if that HA user isn't mapped to anyone. A mapped request gets
+  flow - "Configure" on the integration's device page). A mapped request gets
   a real, persisted, multi-turn topic - but since no model provider is
   configured in this deployment, every reply is still a truthful "no model
-  configured" capability report rather than a generated answer. Cancellation,
-  cross-client topic continuity in the UI, and the household-fallback
-  assistant's own boundary are epics.md Stories 2.3-2.5, not this pass.
+  configured" capability report rather than a generated answer. An unmapped
+  HA user or a shared display is handed off entirely to Home Assistant's own
+  built-in Assist agent instead - never a Kinward-generated reply, and never
+  another person's private context (epics.md Story 2.5).
+- Cancelling a request always reports "already terminal" today - every turn
+  completes synchronously in the same call that creates it, so there's never
+  an in-flight turn for a separate cancel call to actually interrupt
+  (epics.md Story 2.3). The endpoint is the real interface future async/model
+  work will give teeth to.
+- Topics can be listed, renamed, archived/reopened, inspected, and deleted as
+  backend capability (`GET`/`PATCH`/`DELETE /api/v1/integration/topics`) -
+  epics.md Story 2.4. There's no HA entity/service exposing this yet (the
+  story permits backend-only capability with "first HA UI exposes only a
+  subset"). Reclassifying a topic's privacy class (e.g. sharing a private
+  topic to the household) is deliberately not implemented - that's real,
+  unbuilt access-control design, not a label flip.
 - Does not manage Home Assistant `person.*` or `calendar.*` entities - those
   remain fully HA's own, and the dashboard below only references them.
 

@@ -171,7 +171,7 @@ migrate_started_after_rerun="$(docker inspect --format '{{.State.StartedAt}}' "$
 [[ "${migrate_started_after_rerun}" == "${migrate_started_at}" ]] || fail "one-shot migration service was restarted"
 
 revision_before="$("${COMPOSE[@]}" exec -T api python -c "import sqlite3; print(sqlite3.connect('/data/kinward.db').execute('SELECT version_num FROM alembic_version').fetchone()[0])")"
-[[ "${revision_before}" == "004_conversation_topics" ]] || fail "unexpected schema revision before restart"
+[[ "${revision_before}" == "005_topic_titles" ]] || fail "unexpected schema revision before restart"
 "${COMPOSE[@]}" restart api worker
 wait_for_healthy worker
 wait_for_healthy api
@@ -192,6 +192,6 @@ wait_for_healthy api 45 EXAMPLE_COMPOSE
 example_database_url="$("${EXAMPLE_COMPOSE[@]}" exec -T worker python -c "from kinward.config import get_settings; print(get_settings().database_url)")"
 [[ "${example_database_url}" == "sqlite+aiosqlite:////data/kinward.db" ]] || fail "copied .env.example did not select the shared SQLite path"
 example_revision="$("${EXAMPLE_COMPOSE[@]}" exec -T worker python -c "import sqlite3; print(sqlite3.connect('/data/kinward.db').execute('SELECT version_num FROM alembic_version').fetchone()[0])")"
-[[ "${example_revision}" == "004_conversation_topics" ]] || fail "copied .env.example did not expose the migrated shared schema"
+[[ "${example_revision}" == "005_topic_titles" ]] || fail "copied .env.example did not expose the migrated shared schema"
 
 printf 'compose smoke: PASS (migration, health, copied example env, inventory, failure gating, idempotency, restart, cleanup)\n'

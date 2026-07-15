@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,6 +27,22 @@ class Completed:
 
 
 ConversationOutcome = Unmapped | Completed
+
+TERMINAL_OUTCOMES = frozenset({"completed", "failed", "cancelled"})
+
+
+@dataclass(frozen=True)
+class TurnNotFound:
+    """No such turn, or it doesn't belong to the resolved person - fail closed either way."""
+
+
+@dataclass(frozen=True)
+class AlreadyTerminal:
+    turn_id: str
+    outcome: str
+
+
+CancelOutcome = Unmapped | TurnNotFound | AlreadyTerminal
 
 
 async def _find_primary_assistant(session: AsyncSession, person_id: str) -> AssistantRecord | None:
@@ -83,3 +100,103 @@ async def handle_conversation_request(
     )
     await session.flush()
     return Completed(conversation_id=topic.id, response_text=NO_MODEL_RESPONSE)
+
+
+async def cancel_turn(session: AsyncSession, *, turn_id: str, ha_user_id: str) -> CancelOutcome:
+    """Report cancellation state for a turn.
+
+    Every turn is created with a terminal outcome in the same call that creates it - there is
+    no async/model work yet that could ever leave one mid-flight - so this always reports
+    ``AlreadyTerminal`` today. It is the real interface future async/streaming work will give
+    teeth to (an in-flight turn found here would actually transition to "cancelled"), not
+    fabricated behavior: "exactly one terminal outcome is recorded" already holds because turns
+    are append-only and never mutated after creation.
+    """
+    person_id = await resolve_mapping(session, ha_user_id=ha_user_id)
+    if person_id is None:
+        return Unmapped()
+
+    turn = await session.get(TopicTurnRecord, turn_id)
+    if turn is None:
+        return TurnNotFound()
+    topic = await session.get(TopicRecord, turn.topic_id)
+    if topic is None or topic.person_id != person_id:
+        return TurnNotFound()
+
+    assert turn.outcome in TERMINAL_OUTCOMES, "turns are always created with a terminal outcome today"
+    return AlreadyTerminal(turn_id=turn.id, outcome=turn.outcome)
+
+
+@dataclass(frozen=True)
+class TopicNotFound:
+    """No such topic, or it doesn't belong to the resolved person - fail closed either way."""
+
+
+@dataclass(frozen=True)
+class Deleted:
+    topic_id: str
+
+
+TopicState = Literal["open", "archived"]
+
+
+async def list_topics(session: AsyncSession, *, ha_user_id: str) -> list[TopicRecord] | Unmapped:
+    person_id = await resolve_mapping(session, ha_user_id=ha_user_id)
+    if person_id is None:
+        return Unmapped()
+    topics = await session.scalars(
+        select(TopicRecord)
+        .where(TopicRecord.person_id == person_id)
+        .order_by(TopicRecord.updated_at.desc())
+    )
+    return list(topics)
+
+
+async def get_topic(
+    session: AsyncSession, *, ha_user_id: str, topic_id: str
+) -> TopicRecord | TopicNotFound | Unmapped:
+    person_id = await resolve_mapping(session, ha_user_id=ha_user_id)
+    if person_id is None:
+        return Unmapped()
+    topic = await _find_own_topic(session, topic_id=topic_id, person_id=person_id)
+    if topic is None:
+        return TopicNotFound()
+    return topic
+
+
+async def update_topic(
+    session: AsyncSession,
+    *,
+    ha_user_id: str,
+    topic_id: str,
+    title: str | None = None,
+    state: TopicState | None = None,
+) -> TopicRecord | TopicNotFound | Unmapped:
+    """Partial update: only fields explicitly passed are changed (rename and/or archive/reopen)."""
+    person_id = await resolve_mapping(session, ha_user_id=ha_user_id)
+    if person_id is None:
+        return Unmapped()
+    topic = await _find_own_topic(session, topic_id=topic_id, person_id=person_id)
+    if topic is None:
+        return TopicNotFound()
+    if title is not None:
+        topic.title = title
+    if state is not None:
+        topic.state = state
+    topic.record_version += 1
+    await session.flush()
+    return topic
+
+
+async def delete_topic(
+    session: AsyncSession, *, ha_user_id: str, topic_id: str
+) -> Deleted | TopicNotFound | Unmapped:
+    person_id = await resolve_mapping(session, ha_user_id=ha_user_id)
+    if person_id is None:
+        return Unmapped()
+    topic = await _find_own_topic(session, topic_id=topic_id, person_id=person_id)
+    if topic is None:
+        return TopicNotFound()
+    await session.delete(topic)
+    await session.flush()
+    return Deleted(topic_id=topic_id)

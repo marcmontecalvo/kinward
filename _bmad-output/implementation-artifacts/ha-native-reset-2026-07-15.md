@@ -118,12 +118,27 @@ an Options-flow-driven HA-user-to-Kinward-profile mapping (backend-authoritative
 fail-closed on missing/removed-account mappings) and a real `conversation.kinward`
 lifecycle with persisted topics/turns and multi-turn continuity, verified live
 by the household operator against their own bootstrapped data (see the runbook's
-2026-07-16 trial note). Stories 2.3 (cancellation), 2.4 (cross-client topic
-continuity UI), and 2.5 (fallback-assistant boundary) remain open, as does
-`AccountRecord` state modeling (active/disabled/locked) needed for the fuller
-fail-closed behavior Story 2.1 describes.
+2026-07-16 trial note).
 
-Story 2.1 (HA-user-to-Kinward-profile mapping) and Story 2.2 (the real
-`conversation.kinward` lifecycle) are explicitly deferred - `conversation.kinward`
-exists but only returns a truthful "not implemented yet" placeholder, and the
-integration token used above is household-level only, not per-person.
+**2026-07-16 update (continued)**: epics.md Stories 2.3, 2.4, and 2.5 are now
+implemented too, closing out all of Epic 2:
+
+- **2.5**: an unmapped HA user or shared display is handed off entirely to
+  Home Assistant's own built-in Assist agent (`conversation.home_assistant`)
+  rather than getting a Kinward-generated reply - verified live (asked it
+  "what time is it," got a real answer with its own unrelated conversation
+  ID, fully decoupled from Kinward topics).
+- **2.3**: a real exactly-one-terminal-outcome invariant and a cancel
+  endpoint exist, honestly reporting `alreadyTerminal: true` today since
+  nothing is ever in-flight without a model provider - this is the interface
+  future async/model work will give real teeth to, not fabricated behavior.
+- **2.4**: topics can be listed, inspected (with turns), renamed,
+  archived/reopened, and deleted as backend capability - verified live
+  end to end against real household data. "Reclassify" (sharing a private
+  topic to the household) is deliberately not implemented; it's real,
+  unbuilt access-control design, not a label flip.
+
+Still open: `AccountRecord` state modeling (active/disabled/locked) needed
+for the fuller fail-closed behavior Story 2.1 describes, and everything in
+Epic 3 onward (accounts/invitations for more than the bootstrap admin,
+memory/knowledge, briefings, actions, administration, backup/restore).

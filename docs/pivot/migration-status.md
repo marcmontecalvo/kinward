@@ -27,6 +27,9 @@ This document records the final-gate disposition of legacy Homefront subsystems.
 | HA dev profile | `compose.yaml` (`ha` profile), `scripts/ha-dev-smoke.sh` | Pinned HA 2026.7.2, kept out of the default inventory |
 | HA-user-to-profile mapping | `services/kinward/src/kinward/application/ha_user_mappings.py`, `custom_components/kinward/config_flow.py` (Options flow) | epics.md Story 2.1; backend-authoritative, fail-closed on missing/removed-account mappings, audited via `ActivityRecord` |
 | Kinward conversation lifecycle | `services/kinward/src/kinward/application/conversation.py`, `custom_components/kinward/conversation.py` | epics.md Story 2.2; real persisted topics/turns with multi-turn continuity; truthful no-model capability report since no model provider is configured yet |
+| Cancellation/terminal-outcome invariant | `services/kinward/src/kinward/application/conversation.py` (`cancel_turn`), `POST .../conversation/turns/{id}/cancel` | epics.md Story 2.3; turns are append-only so exactly-one-terminal-outcome already holds; honestly reports `alreadyTerminal` since nothing is in-flight without a model provider |
+| Topic management (list/inspect/rename/archive/delete) | `services/kinward/src/kinward/api/integration.py` (`/topics` routes) | epics.md Story 2.4; fail-closed ownership check re-evaluated on every request; "reclassify" deliberately deferred (real access-control design, not built) |
+| Fallback-to-Assist for unmapped/shared requests | `custom_components/kinward/conversation.py` | epics.md Story 2.5; delegates entirely to Home Assistant's built-in Assist agent rather than a Kinward-generated reply, keeping private topics structurally unreachable from that path |
 
 ## Explicitly retired
 

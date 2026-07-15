@@ -1,12 +1,28 @@
 from __future__ import annotations
 
-from typing import Annotated
+from datetime import datetime
+from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from kinward.application.conversation import Completed, Unmapped, handle_conversation_request
+from kinward.application.conversation import (
+    AlreadyTerminal,
+    Completed,
+    Deleted,
+    TopicNotFound,
+    TurnNotFound,
+    Unmapped,
+    cancel_turn,
+    delete_topic,
+    get_topic,
+    handle_conversation_request,
+    list_topics,
+    update_topic,
+)
+from kinward.persistence.models import TopicRecord, TopicTurnRecord
 from kinward.application.ha_user_mappings import (
     MappingError,
     list_mappings,
@@ -199,3 +215,138 @@ async def integration_conversation(
         response_text=result.response_text,
         mapped=True,
     )
+
+
+class CancelTurnRequest(BaseModel):
+    ha_user_id: str = Field(alias="haUserId", min_length=1, max_length=64)
+
+
+class CancelTurnResponse(BaseModel):
+    turn_id: str = Field(serialization_alias="turnId")
+    outcome: str
+    already_terminal: bool = Field(serialization_alias="alreadyTerminal")
+
+
+def _turn_not_found() -> HTTPException:
+    return HTTPException(status_code=404, detail={"code": "turn_not_found"})
+
+
+@router.post("/conversation/turns/{turn_id}/cancel", response_model=CancelTurnResponse)
+async def cancel_conversation_turn(
+    turn_id: str, body: CancelTurnRequest, _token: IntegrationToken, session: Session
+) -> CancelTurnResponse:
+    result = await cancel_turn(session, turn_id=turn_id, ha_user_id=body.ha_user_id)
+    if isinstance(result, (Unmapped, TurnNotFound)):
+        raise _turn_not_found()
+    assert isinstance(result, AlreadyTerminal)
+    return CancelTurnResponse(
+        turn_id=result.turn_id, outcome=result.outcome, already_terminal=True
+    )
+
+
+HaUserIdQuery = Annotated[str, Query(alias="haUserId", min_length=1, max_length=64)]
+
+
+class TopicPayload(BaseModel):
+    id: str
+    title: str | None
+    state: str
+    created_at: datetime = Field(serialization_alias="createdAt")
+    updated_at: datetime = Field(serialization_alias="updatedAt")
+
+    @classmethod
+    def from_record(cls, topic: TopicRecord) -> TopicPayload:
+        return cls(
+            id=topic.id,
+            title=topic.title,
+            state=topic.state,
+            created_at=topic.created_at,
+            updated_at=topic.updated_at,
+        )
+
+
+class TopicTurnPayload(BaseModel):
+    request_text: str = Field(serialization_alias="requestText")
+    response_text: str = Field(serialization_alias="responseText")
+    outcome: str
+    created_at: datetime = Field(serialization_alias="createdAt")
+
+
+class TopicDetailPayload(TopicPayload):
+    turns: list[TopicTurnPayload]
+
+
+class UpdateTopicRequest(BaseModel):
+    ha_user_id: str = Field(alias="haUserId", min_length=1, max_length=64)
+    title: str | None = Field(default=None, max_length=200)
+    state: Literal["open", "archived"] | None = None
+
+
+def _topic_not_found() -> HTTPException:
+    return HTTPException(status_code=404, detail={"code": "topic_not_found"})
+
+
+@router.get("/topics", response_model=list[TopicPayload])
+async def integration_list_topics(
+    ha_user_id: HaUserIdQuery, _token: IntegrationToken, session: Session
+) -> list[TopicPayload]:
+    result = await list_topics(session, ha_user_id=ha_user_id)
+    if isinstance(result, Unmapped):
+        raise _topic_not_found()
+    return [TopicPayload.from_record(topic) for topic in result]
+
+
+@router.get("/topics/{topic_id}", response_model=TopicDetailPayload)
+async def integration_get_topic(
+    topic_id: str, ha_user_id: HaUserIdQuery, _token: IntegrationToken, session: Session
+) -> TopicDetailPayload:
+    result = await get_topic(session, ha_user_id=ha_user_id, topic_id=topic_id)
+    if isinstance(result, (Unmapped, TopicNotFound)):
+        raise _topic_not_found()
+    turns = await session.scalars(
+        select(TopicTurnRecord)
+        .where(TopicTurnRecord.topic_id == topic_id)
+        .order_by(TopicTurnRecord.created_at)
+    )
+    return TopicDetailPayload(
+        **TopicPayload.from_record(result).model_dump(),
+        turns=[
+            TopicTurnPayload(
+                request_text=turn.request_text,
+                response_text=turn.response_text,
+                outcome=turn.outcome,
+                created_at=turn.created_at,
+            )
+            for turn in turns
+        ],
+    )
+
+
+@router.patch("/topics/{topic_id}", response_model=TopicPayload)
+async def integration_update_topic(
+    topic_id: str, body: UpdateTopicRequest, _token: IntegrationToken, session: Session
+) -> TopicPayload:
+    result = await update_topic(
+        session,
+        ha_user_id=body.ha_user_id,
+        topic_id=topic_id,
+        title=body.title,
+        state=body.state,
+    )
+    if isinstance(result, (Unmapped, TopicNotFound)):
+        await session.rollback()
+        raise _topic_not_found()
+    await session.commit()
+    return TopicPayload.from_record(result)
+
+
+@router.delete("/topics/{topic_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def integration_delete_topic(
+    topic_id: str, ha_user_id: HaUserIdQuery, _token: IntegrationToken, session: Session
+) -> None:
+    result = await delete_topic(session, ha_user_id=ha_user_id, topic_id=topic_id)
+    if isinstance(result, (Unmapped, TopicNotFound)):
+        await session.rollback()
+        raise _topic_not_found()
+    assert isinstance(result, Deleted)
+    await session.commit()

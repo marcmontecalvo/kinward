@@ -14,6 +14,7 @@ from kinward.persistence.models import (
     HouseholdRecord,
     IntegrationTokenRecord,
     PersonRecord,
+    TopicTurnRecord,
 )
 from kinward.persistence.session import session_dependency
 
@@ -329,3 +330,223 @@ async def test_conversation_persists_and_continues_a_topic_for_a_mapped_user() -
         )
         assert second.status_code == 200
         assert second.json()["conversationId"] == first_body["conversationId"]
+
+
+async def test_cancel_turn_reports_already_terminal_for_a_real_turn() -> None:
+    client, factory = await _client()
+    async with client:
+        admin_id, _child_id = await _seed_household_with_account(factory)
+        async with factory() as session:
+            admin = await session.get(PersonRecord, admin_id)
+            assert admin is not None
+            session.add(
+                AssistantRecord(
+                    household_id=admin.household_id,
+                    owner_person_id=admin_id,
+                    name="Atlas",
+                    kind="primary",
+                )
+            )
+            await session.commit()
+        token = await _issue_token(factory)
+        headers = {"Authorization": f"Bearer {token}"}
+        await client.put(
+            "/api/v1/integration/ha-user-mappings",
+            headers=headers,
+            json=[{"haUserId": "ha-user-1", "personId": admin_id}],
+        )
+
+        conversation_response = await client.post(
+            "/api/v1/integration/conversation",
+            headers=headers,
+            json={"haUserId": "ha-user-1", "text": "hello"},
+        )
+        topic_id = conversation_response.json()["conversationId"]
+
+        async with factory() as session:
+            turn = (
+                await session.scalars(
+                    select(TopicTurnRecord).where(TopicTurnRecord.topic_id == topic_id)
+                )
+            ).one()
+            turn_id = turn.id
+
+        cancel_response = await client.post(
+            f"/api/v1/integration/conversation/turns/{turn_id}/cancel",
+            headers=headers,
+            json={"haUserId": "ha-user-1"},
+        )
+        assert cancel_response.status_code == 200
+        body = cancel_response.json()
+        assert body == {"turnId": turn_id, "outcome": "completed", "alreadyTerminal": True}
+
+
+async def test_cancel_turn_not_found_is_indistinguishable_from_unmapped() -> None:
+    client, factory = await _client()
+    async with client:
+        await _seed_household_with_account(factory)
+        token = await _issue_token(factory)
+        headers = {"Authorization": f"Bearer {token}"}
+
+        response = await client.post(
+            "/api/v1/integration/conversation/turns/does-not-exist/cancel",
+            headers=headers,
+            json={"haUserId": "unmapped-ha-user"},
+        )
+        assert response.status_code == 404
+        assert response.json()["detail"]["code"] == "turn_not_found"
+
+
+async def _mapped_headers_and_topic(client, factory):  # type: ignore[no-untyped-def]
+    """Seed a mapped account-bearing person, create one topic via /conversation, return
+    (auth headers, topic_id)."""
+    admin_id, _child_id = await _seed_household_with_account(factory)
+    async with factory() as session:
+        admin = await session.get(PersonRecord, admin_id)
+        assert admin is not None
+        session.add(
+            AssistantRecord(
+                household_id=admin.household_id, owner_person_id=admin_id, name="Atlas", kind="primary"
+            )
+        )
+        await session.commit()
+    token = await _issue_token(factory)
+    headers = {"Authorization": f"Bearer {token}"}
+    await client.put(
+        "/api/v1/integration/ha-user-mappings",
+        headers=headers,
+        json=[{"haUserId": "ha-user-1", "personId": admin_id}],
+    )
+    conversation_response = await client.post(
+        "/api/v1/integration/conversation",
+        headers=headers,
+        json={"haUserId": "ha-user-1", "text": "hello"},
+    )
+    return headers, conversation_response.json()["conversationId"]
+
+
+async def test_topics_list_and_detail() -> None:
+    client, factory = await _client()
+    async with client:
+        headers, topic_id = await _mapped_headers_and_topic(client, factory)
+
+        listing = await client.get(
+            "/api/v1/integration/topics?haUserId=ha-user-1", headers=headers
+        )
+        assert listing.status_code == 200
+        assert [topic["id"] for topic in listing.json()] == [topic_id]
+        assert listing.json()[0]["state"] == "open"
+        assert listing.json()[0]["title"] is None
+
+        detail = await client.get(
+            f"/api/v1/integration/topics/{topic_id}?haUserId=ha-user-1", headers=headers
+        )
+        assert detail.status_code == 200
+        detail_body = detail.json()
+        assert detail_body["id"] == topic_id
+        assert len(detail_body["turns"]) == 1
+        assert detail_body["turns"][0]["requestText"] == "hello"
+        assert detail_body["turns"][0]["outcome"] == "completed"
+
+
+async def test_topics_list_fails_closed_for_unmapped_ha_user() -> None:
+    client, factory = await _client()
+    async with client:
+        headers, _topic_id = await _mapped_headers_and_topic(client, factory)
+
+        response = await client.get(
+            "/api/v1/integration/topics?haUserId=unmapped-ha-user", headers=headers
+        )
+        assert response.status_code == 404
+        assert response.json()["detail"]["code"] == "topic_not_found"
+
+
+async def test_rename_archive_reopen_and_delete_a_topic() -> None:
+    client, factory = await _client()
+    async with client:
+        headers, topic_id = await _mapped_headers_and_topic(client, factory)
+
+        rename = await client.patch(
+            f"/api/v1/integration/topics/{topic_id}",
+            headers=headers,
+            json={"haUserId": "ha-user-1", "title": "Weekend plans"},
+        )
+        assert rename.status_code == 200
+        assert rename.json()["title"] == "Weekend plans"
+        assert rename.json()["state"] == "open"
+
+        archive = await client.patch(
+            f"/api/v1/integration/topics/{topic_id}",
+            headers=headers,
+            json={"haUserId": "ha-user-1", "state": "archived"},
+        )
+        assert archive.status_code == 200
+        assert archive.json()["state"] == "archived"
+        assert archive.json()["title"] == "Weekend plans"
+
+        reopen = await client.patch(
+            f"/api/v1/integration/topics/{topic_id}",
+            headers=headers,
+            json={"haUserId": "ha-user-1", "state": "open"},
+        )
+        assert reopen.status_code == 200
+        assert reopen.json()["state"] == "open"
+
+        delete = await client.delete(
+            f"/api/v1/integration/topics/{topic_id}?haUserId=ha-user-1", headers=headers
+        )
+        assert delete.status_code == 204
+
+        after_delete = await client.get(
+            f"/api/v1/integration/topics/{topic_id}?haUserId=ha-user-1", headers=headers
+        )
+        assert after_delete.status_code == 404
+
+
+async def test_topic_endpoints_fail_closed_for_a_different_mapped_person() -> None:
+    client, factory = await _client()
+    async with client:
+        headers, topic_id = await _mapped_headers_and_topic(client, factory)
+
+        async with factory() as session:
+            household = (await session.scalars(select(HouseholdRecord))).one()
+            other_person = PersonRecord(
+                household_id=household.id,
+                display_name="Other Adult",
+                role="member",
+                profile_kind="adult",
+            )
+            session.add(other_person)
+            await session.flush()
+            session.add_all(
+                [
+                    AccountRecord(
+                        household_id=household.id,
+                        person_id=other_person.id,
+                        email="other4@example.invalid",
+                        password_verifier="x",
+                    ),
+                    AssistantRecord(
+                        household_id=household.id,
+                        owner_person_id=other_person.id,
+                        name="Nova",
+                        kind="primary",
+                    ),
+                ]
+            )
+            await session.commit()
+            other_person_id = other_person.id
+
+        await client.put(
+            "/api/v1/integration/ha-user-mappings",
+            headers=headers,
+            json=[{"haUserId": "ha-user-2", "personId": other_person_id}],
+        )
+
+        response = await client.patch(
+            f"/api/v1/integration/topics/{topic_id}",
+            headers=headers,
+            json={"haUserId": "ha-user-2", "title": "not yours"},
+        )
+        assert response.status_code == 404
+        assert response.json()["detail"]["code"] == "topic_not_found"

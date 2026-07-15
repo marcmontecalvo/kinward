@@ -288,6 +288,7 @@ class TopicRecord(Base):
     household_id: Mapped[str] = mapped_column(ForeignKey("households.id", ondelete="CASCADE"), nullable=False)
     person_id: Mapped[str] = mapped_column(ForeignKey("people.id", ondelete="CASCADE"), nullable=False)
     assistant_id: Mapped[str] = mapped_column(ForeignKey("assistants.id", ondelete="CASCADE"), nullable=False)
+    title: Mapped[str | None] = mapped_column(String(200), nullable=True)
     state: Mapped[str] = mapped_column(String(16), default="open", nullable=False)
     record_version: Mapped[int] = mapped_column(default=1, nullable=False)
     classification: Mapped[str] = mapped_column(String(32), default="private-person", nullable=False)

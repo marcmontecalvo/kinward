@@ -71,9 +71,18 @@ do not silently work around a problem to make a checkbox pass.
       the same value in the response (the topic continued rather than a new
       one being created).
 - [ ] Call `conversation.process` again as an **unmapped** HA user (or after
-      removing the mapping in step 5). Confirm the response truthfully says
-      this HA user isn't linked to a Kinward profile, and that no
-      `conversation_id` suggesting a real topic is returned.
+      removing the mapping in step 5). Confirm the response comes from Home
+      Assistant's own built-in Assist agent (e.g. ask it something HA's
+      built-in agent can answer, like the time, or try a device-control
+      phrase) rather than any Kinward-generated text - and that it never
+      continues a mapped person's private topic.
+- [ ] Call `kinward.cli`-issued cancel: `POST
+      /api/v1/integration/conversation/turns/{turnId}/cancel` for a turn
+      created in this step. Confirm it reports `alreadyTerminal: true` with
+      the turn's real outcome (expected - nothing is ever in-flight today).
+- [ ] `GET /api/v1/integration/topics?haUserId=<mapped HA user id>` lists the
+      topic(s) from this step; `PATCH` a rename and an archive/reopen, then
+      `DELETE` it and confirm a follow-up `GET` 404s.
 
 ## 7. Stop Kinward and verify truthful unavailable behavior
 
@@ -127,3 +136,27 @@ first try, no defects found. Step 6's unmapped-denial path was left to the
 operator as optional (already covered by backend unit tests
 `test_conversation.py::test_unmapped_ha_user_fails_closed` and
 `test_integration_api.py::test_conversation_reports_unmapped_users_truthfully`).
+
+**2026-07-16 Story 2.3/2.4/2.5 trial** (REST-driven against the same real
+household stack, using a long-lived access token the operator generated for
+this pass). All verified with no defects:
+
+- **2.5**: temporarily removed the mapping, called `conversation.process`
+  asking "what time is it" - got a real answer ("6:00 PM") from Home
+  Assistant's own built-in Assist agent, with its own unrelated
+  `conversation_id`, confirming the delegation is real (not a Kinward
+  response) and fully decoupled from Kinward topics. Restored the mapping
+  afterward and confirmed the mapped path still worked identically to before
+  (same truthful no-model response, `continue_conversation: true`).
+- **2.3**: created a fresh turn, called its cancel endpoint - got
+  `alreadyTerminal: true` with the turn's real recorded outcome, exactly as
+  designed (nothing is ever in-flight today).
+- **2.4**: full round-trip on a real topic - `GET` detail (including its
+  turns), `PATCH` rename, `PATCH` archive, `PATCH` reopen, then `DELETE` on a
+  different topic followed by a `GET` confirming 404. All worked on the
+  first try against real household data, no synthetic fixtures needed.
+
+`scripts/ha-dev-smoke.sh` and `scripts/compose-smoke.sh`'s first two legs
+also passed post-migration (the `.env.example` leg collides with the live
+household stack's own port 8000, same as the 2.1/2.2 pass - not a
+regression).

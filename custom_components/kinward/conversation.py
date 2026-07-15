@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from homeassistant.components import conversation as ha_conversation
 from homeassistant.components.conversation import (
     ConversationEntity,
     ConversationInput,
@@ -17,6 +18,12 @@ from .entity import KinwardEntity
 
 TRANSPORT_ERROR_MESSAGE = "Kinward could not be reached to process that request."
 
+# Home Assistant's own built-in local agent, targeted explicitly (never "the
+# configured default agent") so an unmapped/shared-display request can never
+# recursively route back into conversation.kinward if a household sets Kinward
+# as its default Assist agent.
+HOME_ASSISTANT_BUILTIN_AGENT = "conversation.home_assistant"
+
 
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
@@ -28,11 +35,14 @@ async def async_setup_entry(
 class KinwardConversationEntity(KinwardEntity, ConversationEntity):
     """conversation.kinward - resolves the caller's HA user to a Kinward profile per request.
 
-    An unmapped HA user (epics.md Story 2.1's fail-closed requirement) gets a
-    truthful denial, never a fallback to household-shared or another person's
-    context. Since no model provider exists in this deployment yet, a mapped
-    request always gets the backend's truthful "no model configured" capability
-    report rather than a real generated reply (epics.md Story 2.2).
+    A mapped HA user (epics.md Story 2.1) gets a real, persisted Kinward topic;
+    since no model provider exists in this deployment yet, the reply is always
+    the backend's truthful "no model configured" capability report rather than
+    a generated one (epics.md Story 2.2). An unmapped HA user or shared display
+    never gets Kinward-generated content or another person's private context -
+    it's handed off entirely to Home Assistant's own built-in Assist agent,
+    which only ever has household-safe physical/device context (epics.md
+    Story 2.5).
     """
 
     _attr_name = None
@@ -65,9 +75,23 @@ class KinwardConversationEntity(KinwardEntity, ConversationEntity):
             )
 
         assert isinstance(result, SendMessageSuccess)
+
+        if not result.mapped:
+            # epics.md Story 2.5: an unmapped/shared-display request gets Home
+            # Assistant's own household-safe local processing, not a Kinward-
+            # generated reply and never another person's private context.
+            return await ha_conversation.async_converse(
+                self.hass,
+                text=user_input.text,
+                conversation_id=user_input.conversation_id,
+                context=user_input.context,
+                language=user_input.language,
+                agent_id=HOME_ASSISTANT_BUILTIN_AGENT,
+            )
+
         response.async_set_speech(result.response_text)
         return ConversationResult(
             response=response,
             conversation_id=result.conversation_id,
-            continue_conversation=result.mapped and result.outcome == "completed",
+            continue_conversation=result.outcome == "completed",
         )
