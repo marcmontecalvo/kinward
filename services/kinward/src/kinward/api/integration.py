@@ -40,6 +40,20 @@ from kinward.application.conversation import (
     list_topics,
     update_topic,
 )
+from kinward.application.pending_actions import (
+    ApprovalNotFound,
+    CapabilityDenied,
+    Denied,
+    Executed,
+    Failed,
+    InvalidTarget,
+    PendingApprovalCreated,
+    get_or_create_tool_policy,
+    list_pending_actions,
+    request_action,
+    resolve_pending_action,
+    update_tool_policy,
+)
 from kinward.application.people import PersonNotFound, list_people, reclassify_person
 from kinward.application.person_deletion import AdminInvariantBlocked
 from kinward.application.person_deletion import Deleted as PersonDeleted
@@ -52,9 +66,12 @@ from kinward.application.provider_settings import (
     update_provider_settings,
 )
 from kinward.config import Settings
+from kinward.domain.pending_action import ApprovalResolutionError
 from kinward.persistence.models import (
+    ApprovalRecord,
     AssistantPolicyRecord,
     AssistantRecord,
+    HomeAssistantToolPolicyRecord,
     PersonRecord,
     ProviderSettingsRecord,
     TopicRecord,
@@ -883,3 +900,227 @@ async def integration_update_provider_settings(
     )
     await session.commit()
     return ProviderSettingsPayload.from_record(settings)
+
+
+class ToolPolicyPayload(BaseModel):
+    permissions: dict[str, str]
+
+    @classmethod
+    def from_record(cls, policy: HomeAssistantToolPolicyRecord) -> ToolPolicyPayload:
+        return cls(permissions=dict(policy.permissions))
+
+
+class UpdateToolPolicyRequest(BaseModel):
+    permissions: dict[str, str]
+
+
+def _invalid_permission_value() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        detail={
+            "code": "invalid_permission_value",
+            "message": "Each permission must be one of: allow, approval_required, deny.",
+        },
+    )
+
+
+@router.get("/settings/home-assistant-tool-policy", response_model=ToolPolicyPayload)
+async def integration_get_tool_policy(_token: IntegrationToken, session: Session) -> ToolPolicyPayload:
+    summary = await fetch_household_summary(session)
+    if summary is None:
+        raise _household_not_configured()
+    policy = await get_or_create_tool_policy(session, household_id=summary.id)
+    await session.commit()
+    return ToolPolicyPayload.from_record(policy)
+
+
+@router.patch("/settings/home-assistant-tool-policy", response_model=ToolPolicyPayload)
+async def integration_update_tool_policy(
+    body: UpdateToolPolicyRequest, _token: IntegrationToken, session: Session
+) -> ToolPolicyPayload:
+    """Gated by the integration bearer token alone, like ``/settings/assistant-policy`` -
+    only the Kinward HA integration's own options flow calls this, and HA already
+    restricts that to admins. Not yet surfaced in the options flow UI itself (Epic 7
+    Story 7.3 v0 note) - callable today via this contract only.
+    """
+    summary = await fetch_household_summary(session)
+    if summary is None:
+        raise _household_not_configured()
+    for value in body.permissions.values():
+        if value not in ("allow", "approval_required", "deny"):
+            raise _invalid_permission_value()
+    policy = await update_tool_policy(session, household_id=summary.id, permissions=body.permissions)
+    await session.commit()
+    return ToolPolicyPayload.from_record(policy)
+
+
+class RequestActionRequest(BaseModel):
+    ha_user_id: str = Field(alias="haUserId", min_length=1, max_length=64)
+    assistant_id: str = Field(alias="assistantId", min_length=1, max_length=36)
+    domain: str = Field(min_length=1, max_length=64)
+    service: str = Field(min_length=1, max_length=64)
+    entity_id: str = Field(alias="entityId", min_length=1, max_length=255)
+    data: dict[str, Any] | None = None
+    explanation: str = Field(min_length=1, max_length=1000)
+
+
+class ActionResultPayload(BaseModel):
+    outcome: str
+    approval_id: str | None = Field(default=None, serialization_alias="approvalId")
+
+
+class PendingActionPayload(BaseModel):
+    id: str
+    requested_by_person_id: str = Field(serialization_alias="requestedByPersonId")
+    action: str
+    explanation: str
+    domain: str
+    service: str
+    entity_id: str = Field(serialization_alias="entityId")
+    created_at: datetime = Field(serialization_alias="createdAt")
+    expires_at: datetime | None = Field(serialization_alias="expiresAt")
+
+    @classmethod
+    def from_record(cls, approval: ApprovalRecord) -> PendingActionPayload:
+        payload = approval.payload
+        return cls(
+            id=approval.id,
+            requested_by_person_id=approval.requested_by_person_id,
+            action=approval.action,
+            explanation=approval.explanation,
+            domain=payload.get("domain", ""),
+            service=payload.get("service", ""),
+            entity_id=payload.get("entity_id", ""),
+            created_at=approval.created_at,
+            expires_at=approval.expires_at,
+        )
+
+
+class ResolveActionRequest(BaseModel):
+    ha_user_id: str = Field(alias="haUserId", min_length=1, max_length=64)
+
+
+def _approval_not_found() -> HTTPException:
+    return HTTPException(status_code=404, detail={"code": "approval_not_found"})
+
+
+def _resolution_blocked(error: ApprovalResolutionError) -> HTTPException:
+    status_code = (
+        status.HTTP_403_FORBIDDEN if error.code == "admin_required" else status.HTTP_409_CONFLICT
+    )
+    return HTTPException(status_code=status_code, detail={"code": error.code, "message": error.message})
+
+
+@router.post("/actions", response_model=ActionResultPayload)
+async def integration_request_action(
+    body: RequestActionRequest, _token: IntegrationToken, session: Session, settings: AppSettings
+) -> ActionResultPayload:
+    summary = await fetch_household_summary(session)
+    if summary is None:
+        raise _household_not_configured()
+    result = await request_action(
+        session,
+        household_id=summary.id,
+        ha_user_id=body.ha_user_id,
+        assistant_id=body.assistant_id,
+        domain=body.domain,
+        service=body.service,
+        entity_id=body.entity_id,
+        data=body.data,
+        explanation=body.explanation,
+        settings=settings,
+    )
+    if isinstance(result, (Unmapped, AddressedAssistantNotFound)):
+        await session.rollback()
+        raise _assistant_not_found()
+    if isinstance(result, AccessDenied):
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "access_denied",
+                "message": f"You don't have access to {result.assistant_name}.",
+            },
+        )
+    if isinstance(result, InvalidTarget):
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={"code": "invalid_target", "message": result.message},
+        )
+    if isinstance(result, CapabilityDenied):
+        await session.commit()
+        return ActionResultPayload(outcome="denied")
+    if isinstance(result, PendingApprovalCreated):
+        await session.commit()
+        return ActionResultPayload(outcome="pending_approval", approval_id=result.approval_id)
+    if isinstance(result, Executed):
+        await session.commit()
+        return ActionResultPayload(outcome="executed")
+    assert isinstance(result, Failed)
+    await session.commit()
+    return ActionResultPayload(outcome="failed")
+
+
+@router.get("/actions", response_model=list[PendingActionPayload])
+async def integration_list_pending_actions(
+    _token: IntegrationToken, session: Session
+) -> list[PendingActionPayload]:
+    summary = await fetch_household_summary(session)
+    if summary is None:
+        raise _household_not_configured()
+    approvals = await list_pending_actions(session, household_id=summary.id)
+    return [PendingActionPayload.from_record(approval) for approval in approvals]
+
+
+async def _resolve_action(
+    approval_id: str,
+    body: ResolveActionRequest,
+    session: AsyncSession,
+    settings: Settings,
+    *,
+    decision: Literal["approve", "deny"],
+) -> ActionResultPayload:
+    summary = await fetch_household_summary(session)
+    if summary is None:
+        raise _household_not_configured()
+    result = await resolve_pending_action(
+        session,
+        household_id=summary.id,
+        approval_id=approval_id,
+        ha_user_id=body.ha_user_id,
+        decision=decision,
+        settings=settings,
+    )
+    if isinstance(result, (Unmapped, NotAdmin)):
+        await session.rollback()
+        raise _admin_required()
+    if isinstance(result, ApprovalNotFound):
+        await session.rollback()
+        raise _approval_not_found()
+    if isinstance(result, ApprovalResolutionError):
+        await session.rollback()
+        raise _resolution_blocked(result)
+    if isinstance(result, Denied):
+        await session.commit()
+        return ActionResultPayload(outcome="denied")
+    if isinstance(result, Executed):
+        await session.commit()
+        return ActionResultPayload(outcome="executed")
+    assert isinstance(result, Failed)
+    await session.commit()
+    return ActionResultPayload(outcome="failed")
+
+
+@router.post("/actions/{approval_id}/approve", response_model=ActionResultPayload)
+async def integration_approve_action(
+    approval_id: str, body: ResolveActionRequest, _token: IntegrationToken, session: Session, settings: AppSettings
+) -> ActionResultPayload:
+    return await _resolve_action(approval_id, body, session, settings, decision="approve")
+
+
+@router.post("/actions/{approval_id}/deny", response_model=ActionResultPayload)
+async def integration_deny_action(
+    approval_id: str, body: ResolveActionRequest, _token: IntegrationToken, session: Session, settings: AppSettings
+) -> ActionResultPayload:
+    return await _resolve_action(approval_id, body, session, settings, decision="deny")

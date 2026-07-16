@@ -23,6 +23,8 @@ def test_every_bootstrap_record_has_explicit_lifecycle_metadata() -> None:
         "layout_activation_attempt",
         "provider_settings",
         "assistant_policy",
+        "approval",
+        "home_assistant_tool_policy",
     }
     for lifecycle in BOOTSTRAP_RECORD_LIFECYCLES.values():
         assert lifecycle.classification
