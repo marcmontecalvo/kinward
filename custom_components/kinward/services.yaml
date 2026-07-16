@@ -5,3 +5,39 @@ refresh:
     update. There is no backend "generate a briefing" capability yet (Epic 5),
     so this simply forces a fresh read of the current household-safe summary.
   fields: {}
+
+create_assistant:
+  name: Create assistant
+  description: >-
+    Create another personal assistant for yourself (the household member
+    calling this action), with its own name and personality - subject to this
+    household's assistant policy (see the integration's Configure options:
+    an optional max-per-person cap, and an optional admin-approval gate).
+  fields:
+    name:
+      name: Name
+      description: The new assistant's name.
+      required: true
+      example: "Business Assistant"
+      selector:
+        text:
+    personality:
+      name: Personality
+      description: Optional personality/interaction preferences.
+      required: false
+      selector:
+        object:
+
+delete_assistant:
+  name: Delete assistant
+  description: >-
+    Delete one of your own assistants by name. Never deletes another
+    person's assistant, and never your last remaining one.
+  fields:
+    name:
+      name: Name
+      description: The assistant's name, exactly as shown.
+      required: true
+      example: "Business Assistant"
+      selector:
+        text:

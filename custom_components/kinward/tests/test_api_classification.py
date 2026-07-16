@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 from kinward.api import (
+    Assistant,
+    AssistantActionFailure,
+    AssistantPolicy,
+    AssistantPolicyFailure,
     AttentionStatus,
     BriefingStatus,
     ContextFailure,
@@ -18,7 +22,11 @@ from kinward.api import (
     SyncedPerson,
     SyncPeopleFailure,
     SyncPeopleSuccess,
+    classify_assistant_action_response,
+    classify_assistant_policy_response,
     classify_context_response,
+    classify_delete_assistant_response,
+    classify_list_assistants_response,
     classify_pets_response,
     classify_provider_settings_response,
     classify_send_message_response,
@@ -317,3 +325,60 @@ def test_classify_provider_settings_response_malformed_is_unknown() -> None:
     assert classify_provider_settings_response(200, {"modelProvider": "openai"}) == (
         ProviderSettingsFailure("unknown")
     )
+
+
+def test_classify_assistant_policy_response_defaults() -> None:
+    payload = {"maxAssistantsPerPerson": None, "requireAdminApprovalForCreation": False}
+    assert classify_assistant_policy_response(200, payload) == AssistantPolicy(
+        max_assistants_per_person=None, require_admin_approval_for_creation=False
+    )
+
+
+def test_classify_assistant_policy_response_configured() -> None:
+    payload = {"maxAssistantsPerPerson": 3, "requireAdminApprovalForCreation": True}
+    assert classify_assistant_policy_response(200, payload) == AssistantPolicy(
+        max_assistants_per_person=3, require_admin_approval_for_creation=True
+    )
+
+
+def test_classify_assistant_policy_response_invalid_auth() -> None:
+    assert classify_assistant_policy_response(401, {}) == AssistantPolicyFailure("invalid_auth")
+
+
+def _assistant_payload(**overrides: object) -> dict[str, object]:
+    payload: dict[str, object] = {"id": "assistant-1", "name": "Calopex", "personality": {}}
+    payload.update(overrides)
+    return payload
+
+
+def test_classify_list_assistants_response_success() -> None:
+    result = classify_list_assistants_response(200, [_assistant_payload()])
+    assert result == [Assistant(id="assistant-1", name="Calopex", personality={})]
+
+
+def test_classify_list_assistants_response_malformed_is_a_failure() -> None:
+    result = classify_list_assistants_response(200, {"not": "a list"})
+    assert isinstance(result, AssistantActionFailure)
+
+
+def test_classify_assistant_action_response_success() -> None:
+    result = classify_assistant_action_response(201, _assistant_payload())
+    assert result == Assistant(id="assistant-1", name="Calopex", personality={})
+
+
+def test_classify_assistant_action_response_policy_blocked_carries_the_message() -> None:
+    payload = {"detail": {"code": "max_assistants_reached", "message": "This person already has the maximum of 1 assistants."}}
+    result = classify_assistant_action_response(409, payload)
+    assert result == AssistantActionFailure(
+        reason="This person already has the maximum of 1 assistants."
+    )
+
+
+def test_classify_delete_assistant_response_success_is_no_content() -> None:
+    assert classify_delete_assistant_response(204, None) is None
+
+
+def test_classify_delete_assistant_response_failure_carries_the_code() -> None:
+    payload = {"detail": {"code": "last_assistant"}}
+    result = classify_delete_assistant_response(409, payload)
+    assert result == AssistantActionFailure(reason="last_assistant")

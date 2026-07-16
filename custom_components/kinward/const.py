@@ -20,6 +20,12 @@ MODEL_PROVIDERS = ["none", "openai", "openai-compatible", "anthropic"]
 MEMORY_BACKENDS = ["none", "honcho"]
 KNOWLEDGE_BACKENDS = ["none", "llm_wiki"]
 
+CONF_MAX_ASSISTANTS_PER_PERSON = "max_assistants_per_person"
+CONF_REQUIRE_ADMIN_APPROVAL_FOR_ASSISTANT_CREATION = "require_admin_approval_for_assistant_creation"
+
+# 0 in the options-flow number selector means "no cap" - stored as `None` server-side.
+NO_ASSISTANT_CAP = 0
+
 DEFAULT_UPDATE_INTERVAL = timedelta(seconds=60)
 REQUEST_TIMEOUT_SECONDS = 10
 

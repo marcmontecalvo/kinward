@@ -9,6 +9,8 @@ from homeassistant.helpers import selector
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import (
+    AssistantPolicy,
+    AssistantPolicyFailure,
     ContextFailure,
     ContextSuccess,
     KinwardApiClient,
@@ -20,16 +22,19 @@ from .const import (
     CONF_HONCHO_URL,
     CONF_KNOWLEDGE_BACKEND,
     CONF_LLM_WIKI_URL,
+    CONF_MAX_ASSISTANTS_PER_PERSON,
     CONF_MEMORY_BACKEND,
     CONF_MODEL_API_KEY,
     CONF_MODEL_BASE_URL,
     CONF_MODEL_NAME,
     CONF_MODEL_PROVIDER,
+    CONF_REQUIRE_ADMIN_APPROVAL_FOR_ASSISTANT_CREATION,
     CONF_TOKEN,
     DOMAIN,
     KNOWLEDGE_BACKENDS,
     MEMORY_BACKENDS,
     MODEL_PROVIDERS,
+    NO_ASSISTANT_CAP,
 )
 
 STEP_USER_SCHEMA = vol.Schema(
@@ -90,9 +95,10 @@ class KinwardConfigFlow(ConfigFlow, domain=DOMAIN):
 
 class KinwardOptionsFlowHandler(OptionsFlow):
     """Lets an admin change what LLM provider and which of the two memory systems
-    (Honcho, llm_wiki) this Kinward household talks to, without touching backend
-    deployment config - settings live server-side and this flow only reads/writes
-    them through the backend's admin API.
+    (Honcho, llm_wiki) this Kinward household talks to, and the household's policy
+    for creating additional personal assistants - without touching backend
+    deployment config. All of it lives server-side; this flow only reads/writes it
+    through the backend's admin API.
     """
 
     async def async_step_init(
@@ -106,7 +112,7 @@ class KinwardOptionsFlowHandler(OptionsFlow):
         )
 
         if user_input is not None:
-            result = await client.async_update_provider_settings(
+            provider_result = await client.async_update_provider_settings(
                 model_provider=user_input[CONF_MODEL_PROVIDER],
                 model_base_url=user_input.get(CONF_MODEL_BASE_URL, ""),
                 model_name=user_input.get(CONF_MODEL_NAME, ""),
@@ -116,13 +122,26 @@ class KinwardOptionsFlowHandler(OptionsFlow):
                 knowledge_backend=user_input[CONF_KNOWLEDGE_BACKEND],
                 llm_wiki_url=user_input.get(CONF_LLM_WIKI_URL, ""),
             )
-            if isinstance(result, ProviderSettingsFailure):
-                errors["base"] = result.error
+            max_assistants = user_input[CONF_MAX_ASSISTANTS_PER_PERSON]
+            policy_result = await client.async_update_assistant_policy(
+                max_assistants_per_person=(
+                    None if max_assistants == NO_ASSISTANT_CAP else max_assistants
+                ),
+                require_admin_approval_for_creation=user_input[
+                    CONF_REQUIRE_ADMIN_APPROVAL_FOR_ASSISTANT_CREATION
+                ],
+            )
+            if isinstance(provider_result, ProviderSettingsFailure):
+                errors["base"] = provider_result.error
+            elif isinstance(policy_result, AssistantPolicyFailure):
+                errors["base"] = policy_result.error
             else:
                 return self.async_create_entry(title="", data={})
 
         current = await client.async_fetch_provider_settings()
         defaults = current if isinstance(current, ProviderSettings) else None
+        current_policy = await client.async_fetch_assistant_policy()
+        policy_defaults = current_policy if isinstance(current_policy, AssistantPolicy) else None
 
         schema = vol.Schema(
             {
@@ -166,6 +185,26 @@ class KinwardOptionsFlowHandler(OptionsFlow):
                 ): selector.TextSelector(
                     selector.TextSelectorConfig(type=selector.TextSelectorType.URL)
                 ),
+                vol.Required(
+                    CONF_MAX_ASSISTANTS_PER_PERSON,
+                    default=(
+                        (policy_defaults.max_assistants_per_person or NO_ASSISTANT_CAP)
+                        if policy_defaults
+                        else NO_ASSISTANT_CAP
+                    ),
+                ): selector.NumberSelector(
+                    selector.NumberSelectorConfig(
+                        min=0, step=1, mode=selector.NumberSelectorMode.BOX
+                    )
+                ),
+                vol.Required(
+                    CONF_REQUIRE_ADMIN_APPROVAL_FOR_ASSISTANT_CREATION,
+                    default=(
+                        policy_defaults.require_admin_approval_for_creation
+                        if policy_defaults
+                        else False
+                    ),
+                ): selector.BooleanSelector(),
             }
         )
         return self.async_show_form(step_id="init", data_schema=schema, errors=errors)

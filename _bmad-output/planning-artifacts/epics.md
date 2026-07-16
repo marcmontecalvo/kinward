@@ -321,6 +321,36 @@ Safely manage household people and assistant ownership while keeping initial HA-
 > `PATCH /api/v1/integration/assistants/primary`. It only ever touches the `AssistantRecord`, never the
 > owning `PersonRecord`, so preferences structurally cannot alter authority/privacy/action policy.
 > Tests in `tests/test_assistants.py` and `tests/test_integration_api.py`.
+>
+> **Superseded (2026-07-16, multiple assistants per person):** "exactly one primary personal assistant"
+> is no longer the rule. A person may have zero, one, or several personal assistants with distinct
+> names/personalities - there is no product-enforced ceiling by default. A household may optionally cap
+> it (`max_assistants_per_person`) and/or require admin approval to create additional ones
+> (`require_admin_approval_for_creation`), both changed from the Kinward integration's options flow in
+> Home Assistant (server-stored in `AssistantPolicyRecord`, mirroring `ProviderSettingsRecord`'s
+> pattern) - never a locally-stored HA-side file, per cross-cutting rule 2 (the integration is an
+> adapter and must not own household policy). The auto-created-on-sync assistant is unaffected by
+> policy and always succeeds. Deleting a person's last remaining assistant is blocked (mirrors
+> `domain/admin_invariant.py`'s "last admin" protection) - `conversation.kinward` always has something
+> to resolve to.
+>
+> **Implemented (2026-07-16):** migration `008_multiple_assistants_per_person` drops
+> `uq_assistants_personal_owner` and adds `assistant_policy`. `application/assistant_policy.py` and the
+> expanded `application/assistants.py` (`list_own_assistants`, `create_additional_assistant`,
+> `delete_own_assistant`, generalized `update_own_assistant`) implement the policy engine. API:
+> `GET/POST /assistants`, `PATCH/DELETE /assistants/{id}` (replacing the old `/assistants/primary`),
+> `GET/PATCH /settings/assistant-policy`. HA integration: the two policy knobs join the existing
+> options-flow screen; `kinward.create_assistant`/`kinward.delete_assistant` services let a person use
+> the new capability today without bespoke dashboard UI (deferred per cross-cutting rule 12). Choosing
+> *which* of a person's several assistants a given spoken/typed request addresses (e.g. wake-word/name
+> routing - "hey Calopex") is explicitly out of scope here; `conversation.kinward` still resolves to a
+> single assistant per person today. Addressing *another* person's assistant, and what it may then
+> disclose, is ADR-002 (proposed, not yet decided) - not implemented pending that decision.
+>
+> **Deferred (2026-07-16, until/with Epic 6):** assistant-to-assistant delegation (one assistant asking
+> another assistant something on its owner's behalf, e.g. "check with Lisa's AI about Monday") is a
+> meaningful action that can affect another person's data - it needs Epic 6's approval/quorum machinery
+> before it exists, not a standalone feature built around that safety net. See Epic 6 note below.
 
 # Epic 4: Topics, Memory, Knowledge, and Corrections
 
@@ -413,6 +443,16 @@ Every meaningful external action is authorized, approved where required, submitt
 - Coordination uses minimum-necessary context and complete delegation metadata.
 - Accept, decline, counter, revoke, expire, cancel, complete, fail, and unknown outcomes close consistently for authorized participants.
 - Specialist assistants remain disabled until delegation prerequisites pass.
+
+> **Scoping note (2026-07-16):** this is where assistant-to-assistant delegation belongs - e.g. one
+> person's assistant asking another person's assistant something on its owner's behalf ("check with
+> Lisa's AI about Monday"), possibly proposing a change to the other person's data. That's a meaningful
+> action affecting someone else, so it's explicitly deferred until this story's approval/quorum
+> machinery exists rather than built as a standalone messaging feature first - see epics.md Story 3.4's
+> note on multiple assistants per person, where the capability was raised and intentionally not built.
+> Memory for such an exchange, if/when built, should reuse the same peer-pair session pattern already
+> used for person-assistant memory (see ADR-002) rather than a new memory concept - each
+> (assistant, assistant) pair gets its own session, auto-created lazily like everything else.
 
 ### Story 6.4: Expose safe HA actions
 

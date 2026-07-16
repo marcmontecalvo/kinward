@@ -658,8 +658,14 @@ async def test_owner_can_customize_their_own_assistant_via_api() -> None:
         )
         assert synced.status_code == 200
 
+        listed = await client.get(
+            "/api/v1/integration/assistants?haUserId=ha-user-marc", headers=headers
+        )
+        assert listed.status_code == 200
+        assistant_id = listed.json()[0]["id"]
+
         response = await client.patch(
-            "/api/v1/integration/assistants/primary",
+            f"/api/v1/integration/assistants/{assistant_id}",
             headers=headers,
             json={"haUserId": "ha-user-marc", "name": "Jarvis", "personality": {"tone": "warm"}},
         )
@@ -669,12 +675,130 @@ async def test_owner_can_customize_their_own_assistant_via_api() -> None:
         assert body["personality"] == {"tone": "warm"}
 
         unmapped = await client.patch(
-            "/api/v1/integration/assistants/primary",
+            f"/api/v1/integration/assistants/{assistant_id}",
             headers=headers,
             json={"haUserId": "not-mapped", "name": "Nope"},
         )
         assert unmapped.status_code == 404
         assert unmapped.json()["detail"]["code"] == "assistant_not_found"
+
+
+async def test_a_person_can_have_more_than_one_assistant_create_list_and_delete() -> None:
+    client, factory = await _client()
+    async with client:
+        await _seed_household(factory)
+        token = await _issue_token(factory)
+        headers = {"Authorization": f"Bearer {token}"}
+        await client.put(
+            "/api/v1/integration/people/sync",
+            headers=headers,
+            json=[{"haPersonId": "ha-person-marc", "haUserId": "ha-user-marc", "displayName": "Marc"}],
+        )
+
+        created = await client.post(
+            "/api/v1/integration/assistants",
+            headers=headers,
+            json={"haUserId": "ha-user-marc", "name": "Business Assistant"},
+        )
+        assert created.status_code == 201
+        second_id = created.json()["id"]
+
+        listed = await client.get(
+            "/api/v1/integration/assistants?haUserId=ha-user-marc", headers=headers
+        )
+        assert {a["id"] for a in listed.json()} >= {second_id}
+        assert len(listed.json()) == 2
+
+        deleted = await client.request(
+            "DELETE",
+            f"/api/v1/integration/assistants/{second_id}?haUserId=ha-user-marc",
+            headers=headers,
+        )
+        assert deleted.status_code == 204
+
+        after = await client.get(
+            "/api/v1/integration/assistants?haUserId=ha-user-marc", headers=headers
+        )
+        assert len(after.json()) == 1
+
+
+async def test_cannot_delete_the_last_assistant_via_api() -> None:
+    client, factory = await _client()
+    async with client:
+        await _seed_household(factory)
+        token = await _issue_token(factory)
+        headers = {"Authorization": f"Bearer {token}"}
+        await client.put(
+            "/api/v1/integration/people/sync",
+            headers=headers,
+            json=[{"haPersonId": "ha-person-marc", "haUserId": "ha-user-marc", "displayName": "Marc"}],
+        )
+        listed = await client.get(
+            "/api/v1/integration/assistants?haUserId=ha-user-marc", headers=headers
+        )
+        assistant_id = listed.json()[0]["id"]
+
+        response = await client.request(
+            "DELETE",
+            f"/api/v1/integration/assistants/{assistant_id}?haUserId=ha-user-marc",
+            headers=headers,
+        )
+        assert response.status_code == 409
+        assert response.json()["detail"]["code"] == "last_assistant"
+
+
+async def test_assistant_policy_defaults_and_round_trips_via_patch() -> None:
+    client, factory = await _client()
+    async with client:
+        await _seed_household(factory)
+        token = await _issue_token(factory)
+        headers = {"Authorization": f"Bearer {token}"}
+
+        defaults = await client.get(
+            "/api/v1/integration/settings/assistant-policy", headers=headers
+        )
+        assert defaults.status_code == 200
+        assert defaults.json() == {
+            "maxAssistantsPerPerson": None,
+            "requireAdminApprovalForCreation": False,
+        }
+
+        updated = await client.patch(
+            "/api/v1/integration/settings/assistant-policy",
+            headers=headers,
+            json={"maxAssistantsPerPerson": 3, "requireAdminApprovalForCreation": True},
+        )
+        assert updated.status_code == 200
+        assert updated.json() == {
+            "maxAssistantsPerPerson": 3,
+            "requireAdminApprovalForCreation": True,
+        }
+
+
+async def test_assistant_creation_is_blocked_by_policy_via_api() -> None:
+    client, factory = await _client()
+    async with client:
+        await _seed_household(factory)
+        token = await _issue_token(factory)
+        headers = {"Authorization": f"Bearer {token}"}
+        await client.put(
+            "/api/v1/integration/people/sync",
+            headers=headers,
+            json=[{"haPersonId": "ha-person-marc", "haUserId": "ha-user-marc", "displayName": "Marc"}],
+        )
+        await client.patch(
+            "/api/v1/integration/settings/assistant-policy",
+            headers=headers,
+            json={"maxAssistantsPerPerson": 1, "requireAdminApprovalForCreation": False},
+        )
+
+        blocked = await client.post(
+            "/api/v1/integration/assistants",
+            headers=headers,
+            json={"haUserId": "ha-user-marc", "name": "Should not be created"},
+        )
+        assert blocked.status_code == 409
+        assert blocked.json()["detail"]["code"] == "max_assistants_reached"
 
 
 async def test_provider_settings_defaults_to_none_and_round_trips_via_patch() -> None:

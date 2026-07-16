@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from typing import Any, Literal
+from urllib.parse import quote
 
 import aiohttp
 
@@ -180,6 +181,110 @@ class ProviderSettingsFailure:
 
 
 ProviderSettingsResult = ProviderSettings | ProviderSettingsFailure
+
+
+@dataclass(frozen=True)
+class AssistantPolicy:
+    max_assistants_per_person: int | None
+    require_admin_approval_for_creation: bool
+
+
+@dataclass(frozen=True)
+class AssistantPolicyFailure:
+    error: ConfigFlowErrorCode
+
+
+AssistantPolicyResult = AssistantPolicy | AssistantPolicyFailure
+
+
+@dataclass(frozen=True)
+class Assistant:
+    id: str
+    name: str
+    personality: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class AssistantActionFailure:
+    """A named, human-readable reason a create/list/delete action didn't happen -
+
+    a policy rejection (e.g. "max_assistants_reached"), a not-found, or a transport
+    failure ("cannot_connect"). There's no form to route this into like the config/
+    options flow errors - the create/delete services just log it.
+    """
+
+    reason: str
+
+
+def _assistant_from(payload: Any) -> Assistant | None:
+    if not isinstance(payload, dict):
+        return None
+    assistant_id = payload.get("id")
+    name = payload.get("name")
+    personality = payload.get("personality")
+    if not isinstance(assistant_id, str) or not isinstance(name, str) or not isinstance(personality, dict):
+        return None
+    return Assistant(id=assistant_id, name=name, personality=personality)
+
+
+def _error_reason(status_code: int, payload: Any) -> str:
+    if isinstance(payload, dict):
+        detail = payload.get("detail")
+        if isinstance(detail, dict):
+            message = detail.get("message")
+            if isinstance(message, str):
+                return message
+            code = detail.get("code")
+            if isinstance(code, str):
+                return code
+    return f"unexpected status {status_code}"
+
+
+def classify_assistant_policy_response(status_code: int, payload: Any) -> AssistantPolicyResult:
+    if status_code == 401:
+        return AssistantPolicyFailure("invalid_auth")
+    if status_code == 409:
+        return AssistantPolicyFailure("household_not_configured")
+    if status_code != 200:
+        return AssistantPolicyFailure("unknown")
+    if not isinstance(payload, dict):
+        return AssistantPolicyFailure("unknown")
+    max_assistants = payload.get("maxAssistantsPerPerson")
+    require_approval = payload.get("requireAdminApprovalForCreation")
+    if max_assistants is not None and not isinstance(max_assistants, int):
+        return AssistantPolicyFailure("unknown")
+    if not isinstance(require_approval, bool):
+        return AssistantPolicyFailure("unknown")
+    return AssistantPolicy(
+        max_assistants_per_person=max_assistants,
+        require_admin_approval_for_creation=require_approval,
+    )
+
+
+def classify_list_assistants_response(
+    status_code: int, payload: Any
+) -> list[Assistant] | AssistantActionFailure:
+    if status_code != 200 or not isinstance(payload, list):
+        return AssistantActionFailure(reason=_error_reason(status_code, payload))
+    assistants = [assistant for item in payload if (assistant := _assistant_from(item)) is not None]
+    return assistants
+
+
+def classify_assistant_action_response(
+    status_code: int, payload: Any
+) -> Assistant | AssistantActionFailure:
+    if status_code not in (200, 201):
+        return AssistantActionFailure(reason=_error_reason(status_code, payload))
+    assistant = _assistant_from(payload)
+    if assistant is None:
+        return AssistantActionFailure(reason="malformed response")
+    return assistant
+
+
+def classify_delete_assistant_response(status_code: int, payload: Any) -> AssistantActionFailure | None:
+    if status_code == 204:
+        return None
+    return AssistantActionFailure(reason=_error_reason(status_code, payload))
 
 
 def classify_context_response(status_code: int, payload: Any) -> ContextResult:
@@ -512,3 +617,60 @@ class KinwardApiClient:
         except (TimeoutError, aiohttp.ClientError):
             return ProviderSettingsFailure("cannot_connect")
         return classify_provider_settings_response(status, payload)
+
+    async def async_fetch_assistant_policy(self) -> AssistantPolicyResult:
+        try:
+            status, payload = await self._request("GET", "/api/v1/integration/settings/assistant-policy")
+        except (TimeoutError, aiohttp.ClientError):
+            return AssistantPolicyFailure("cannot_connect")
+        return classify_assistant_policy_response(status, payload)
+
+    async def async_update_assistant_policy(
+        self, *, max_assistants_per_person: int | None, require_admin_approval_for_creation: bool
+    ) -> AssistantPolicyResult:
+        body = {
+            "maxAssistantsPerPerson": max_assistants_per_person,
+            "requireAdminApprovalForCreation": require_admin_approval_for_creation,
+        }
+        try:
+            status, payload = await self._request(
+                "PATCH", "/api/v1/integration/settings/assistant-policy", json_body=body
+            )
+        except (TimeoutError, aiohttp.ClientError):
+            return AssistantPolicyFailure("cannot_connect")
+        return classify_assistant_policy_response(status, payload)
+
+    async def async_list_assistants(self, *, ha_user_id: str) -> list[Assistant] | AssistantActionFailure:
+        try:
+            status, payload = await self._request(
+                "GET", f"/api/v1/integration/assistants?haUserId={quote(ha_user_id)}"
+            )
+        except (TimeoutError, aiohttp.ClientError):
+            return AssistantActionFailure(reason="cannot_connect")
+        return classify_list_assistants_response(status, payload)
+
+    async def async_create_assistant(
+        self, *, ha_user_id: str, name: str, personality: dict[str, Any] | None = None
+    ) -> Assistant | AssistantActionFailure:
+        body: dict[str, Any] = {"haUserId": ha_user_id, "name": name}
+        if personality is not None:
+            body["personality"] = personality
+        try:
+            status, payload = await self._request(
+                "POST", "/api/v1/integration/assistants", json_body=body
+            )
+        except (TimeoutError, aiohttp.ClientError):
+            return AssistantActionFailure(reason="cannot_connect")
+        return classify_assistant_action_response(status, payload)
+
+    async def async_delete_assistant(
+        self, *, ha_user_id: str, assistant_id: str
+    ) -> AssistantActionFailure | None:
+        try:
+            status, payload = await self._request(
+                "DELETE",
+                f"/api/v1/integration/assistants/{quote(assistant_id)}?haUserId={quote(ha_user_id)}",
+            )
+        except (TimeoutError, aiohttp.ClientError):
+            return AssistantActionFailure(reason="cannot_connect")
+        return classify_delete_assistant_response(status, payload)
