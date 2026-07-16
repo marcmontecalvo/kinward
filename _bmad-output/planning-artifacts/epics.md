@@ -266,6 +266,11 @@ Safely manage household people and assistant ownership while keeping initial HA-
 > entity with no `user_id`, which already *is* the "pre-account person" concept this story wanted -
 > nothing separate to build. Only the pet half remains genuinely new work: pet CRUD after bootstrap
 > (create/list/update/remove), since bootstrap already accepts initial pets but has no later add path.
+>
+> **Implemented (2026-07-16):** pet CRUD lives in `application/pets.py`, exposed as
+> `GET/POST /api/v1/integration/pets` and `PATCH`/`DELETE /api/v1/integration/pets/{id}`, admin-only
+> for mutation (see Story 8.2's admin-plural note). Tests in `tests/test_pets.py` and the API round
+> trip in `tests/test_integration_api.py`.
 
 ### Story 3.2: Bind invitations without duplicate profiles
 
@@ -291,6 +296,12 @@ Safely manage household people and assistant ownership while keeping initial HA-
 > supported - see cross-cutting rule 4). This story's still-real, still-unbuilt remainder is
 > `profile_kind` reclassification (adult/teen/child) and privacy-class management for a synced person -
 > that's a genuine admin-facing action this story still owns; admin/member role is not.
+>
+> **Implemented (2026-07-16):** `application/people.reclassify_person` sets `profile_kind` and keeps
+> the person's `classification` (privacy class) in lockstep - `child` -> `private-child`, `adult`/`teen`
+> -> `private-person` - never touching `role`. Exposed admin-only as
+> `PATCH /api/v1/integration/people/{id}/reclassify`. Tests in `tests/test_people_admin.py` and
+> `tests/test_integration_api.py`.
 
 ### Story 3.4: Configure the primary assistant
 
@@ -304,6 +315,12 @@ Safely manage household people and assistant ownership while keeping initial HA-
 > sync pass that creates their profile, with a default name. What's left of this story is letting the
 > owner rename/customize their own assistant's personality after the fact; auto-creation is no longer
 > new scope.
+>
+> **Implemented (2026-07-16):** `application/assistants.update_own_primary_assistant` lets the resolved
+> owner (by `ha_user_id`) rename their primary assistant and/or set its `personality` dict, exposed as
+> `PATCH /api/v1/integration/assistants/primary`. It only ever touches the `AssistantRecord`, never the
+> owning `PersonRecord`, so preferences structurally cannot alter authority/privacy/action policy.
+> Tests in `tests/test_assistants.py` and `tests/test_integration_api.py`.
 
 # Epic 4: Topics, Memory, Knowledge, and Corrections
 
@@ -518,6 +535,16 @@ Preserve the whole household authority graph and all unresolved safety obligatio
 > Also note: Kinward never deletes a `PersonRecord` on its own when a `person` entity disappears from
 > HA sync (see Story 3.1's note) - actual deletion is this story's explicit, auditable action, not a
 > side effect of sync.
+>
+> **Partially implemented (2026-07-16):** the redesigned invariant itself is built -
+> `domain/admin_invariant.validate_admin_removal` blocks exactly the "would leave zero admins" case,
+> not "isn't the one designated admin" - and `application/person_deletion.delete_person` wires it into
+> an explicit, auditable deletion action (`DELETE /api/v1/integration/people/{id}`, admin-only,
+> transactional, records an `ActivityRecord`). Tests in `tests/test_admin_invariant.py` and
+> `tests/test_person_deletion.py`. Still open, and out of this pass's scope: documented per-class
+> retention enforcement, the deletion-pending/reconciliation-only access overlay, and blocker
+> preservation - this only covers the admin-invariant redesign the previous pass flagged, not the rest
+> of the story.
 
 ### Story 9.5: Recover the same administrator profile safely
 

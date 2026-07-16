@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from kinward.application.assistants import (
+    AssistantNotFound,
+    update_own_primary_assistant,
+)
+from kinward.application.authorization import NotAdmin, resolve_admin
 from kinward.application.conversation import (
     AlreadyTerminal,
     Completed,
@@ -22,9 +27,15 @@ from kinward.application.conversation import (
     list_topics,
     update_topic,
 )
-from kinward.persistence.models import PersonRecord, TopicRecord, TopicTurnRecord
+from kinward.application.people import PersonNotFound, list_people, reclassify_person
+from kinward.application.person_deletion import AdminInvariantBlocked
+from kinward.application.person_deletion import Deleted as PersonDeleted
+from kinward.application.person_deletion import delete_person
+from kinward.application.pets import PetNotFound
+from kinward.application.pets import Deleted as PetDeleted
+from kinward.application.pets import create_pet, delete_pet, list_pets, update_pet
+from kinward.persistence.models import AssistantRecord, PersonRecord, TopicRecord, TopicTurnRecord
 from kinward.application.household_summary import fetch_household_summary
-from kinward.application.people import list_people
 from kinward.application.people_sync import SyncedPerson, sync_people
 from kinward.health import CapabilityState
 from kinward.persistence.models import IntegrationTokenRecord
@@ -81,6 +92,23 @@ def _household_not_configured() -> HTTPException:
         status_code=status.HTTP_409_CONFLICT,
         detail={"code": "household_not_configured", "message": "No household has been set up yet."},
     )
+
+
+def _admin_required() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail={
+            "code": "admin_required",
+            "message": "Household administrator authorization is required for this operation.",
+        },
+    )
+
+
+async def _require_admin(session: AsyncSession, *, ha_user_id: str) -> PersonRecord:
+    result = await resolve_admin(session, ha_user_id=ha_user_id)
+    if isinstance(result, (Unmapped, NotAdmin)):
+        raise _admin_required()
+    return result
 
 
 @router.get("/context", response_model=IntegrationContextResponse)
@@ -168,6 +196,215 @@ async def integration_sync_people(
     )
     await session.commit()
     return [SyncedPersonPayload.from_record(person) for person in synced]
+
+
+AdminHaUserIdQuery = Annotated[str, Query(alias="haUserId", min_length=1, max_length=64)]
+
+
+class PersonProfilePayload(BaseModel):
+    id: str
+    display_name: str = Field(serialization_alias="displayName")
+    role: str
+    profile_kind: str = Field(serialization_alias="profileKind")
+    classification: str
+
+    @classmethod
+    def from_record(cls, person: PersonRecord) -> PersonProfilePayload:
+        return cls(
+            id=person.id,
+            display_name=person.display_name,
+            role=person.role,
+            profile_kind=person.profile_kind,
+            classification=person.classification,
+        )
+
+
+class ReclassifyPersonRequest(BaseModel):
+    ha_user_id: str = Field(alias="haUserId", min_length=1, max_length=64)
+    profile_kind: Literal["adult", "teen", "child"] = Field(alias="profileKind")
+
+
+def _person_not_found() -> HTTPException:
+    return HTTPException(status_code=404, detail={"code": "person_not_found"})
+
+
+@router.patch("/people/{person_id}/reclassify", response_model=PersonProfilePayload)
+async def integration_reclassify_person(
+    person_id: str, body: ReclassifyPersonRequest, _token: IntegrationToken, session: Session
+) -> PersonProfilePayload:
+    summary = await fetch_household_summary(session)
+    if summary is None:
+        raise _household_not_configured()
+    await _require_admin(session, ha_user_id=body.ha_user_id)
+    result = await reclassify_person(
+        session, household_id=summary.id, person_id=person_id, profile_kind=body.profile_kind
+    )
+    if isinstance(result, PersonNotFound):
+        await session.rollback()
+        raise _person_not_found()
+    await session.commit()
+    return PersonProfilePayload.from_record(result)
+
+
+def _admin_invariant_blocked(violation: AdminInvariantBlocked) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={"code": violation.code, "message": violation.message},
+    )
+
+
+@router.delete("/people/{person_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def integration_delete_person(
+    person_id: str, ha_user_id: AdminHaUserIdQuery, _token: IntegrationToken, session: Session
+) -> None:
+    summary = await fetch_household_summary(session)
+    if summary is None:
+        raise _household_not_configured()
+    await _require_admin(session, ha_user_id=ha_user_id)
+    result = await delete_person(session, household_id=summary.id, person_id=person_id)
+    if isinstance(result, PersonNotFound):
+        await session.rollback()
+        raise _person_not_found()
+    if isinstance(result, AdminInvariantBlocked):
+        await session.rollback()
+        raise _admin_invariant_blocked(result)
+    assert isinstance(result, PersonDeleted)
+    await session.commit()
+
+
+class PetPayload(BaseModel):
+    id: str
+    display_name: str = Field(serialization_alias="displayName")
+    species: str
+    shared_facts: list[str] = Field(serialization_alias="sharedFacts")
+
+    @classmethod
+    def from_record(cls, pet: Any) -> PetPayload:
+        return cls(
+            id=pet.id,
+            display_name=pet.display_name,
+            species=pet.species,
+            shared_facts=list(pet.shared_facts),
+        )
+
+
+class CreatePetRequest(BaseModel):
+    ha_user_id: str = Field(alias="haUserId", min_length=1, max_length=64)
+    display_name: str = Field(alias="displayName", min_length=1, max_length=120)
+    species: str = Field(min_length=1, max_length=80)
+    shared_facts: list[str] = Field(default_factory=list, alias="sharedFacts")
+
+
+class UpdatePetRequest(BaseModel):
+    ha_user_id: str = Field(alias="haUserId", min_length=1, max_length=64)
+    display_name: str | None = Field(default=None, alias="displayName", max_length=120)
+    species: str | None = Field(default=None, max_length=80)
+    shared_facts: list[str] | None = Field(default=None, alias="sharedFacts")
+
+
+def _pet_not_found() -> HTTPException:
+    return HTTPException(status_code=404, detail={"code": "pet_not_found"})
+
+
+@router.get("/pets", response_model=list[PetPayload])
+async def integration_list_pets(_token: IntegrationToken, session: Session) -> list[PetPayload]:
+    summary = await fetch_household_summary(session)
+    if summary is None:
+        raise _household_not_configured()
+    pets = await list_pets(session, household_id=summary.id)
+    return [PetPayload.from_record(pet) for pet in pets]
+
+
+@router.post("/pets", response_model=PetPayload, status_code=status.HTTP_201_CREATED)
+async def integration_create_pet(
+    body: CreatePetRequest, _token: IntegrationToken, session: Session
+) -> PetPayload:
+    summary = await fetch_household_summary(session)
+    if summary is None:
+        raise _household_not_configured()
+    await _require_admin(session, ha_user_id=body.ha_user_id)
+    pet = await create_pet(
+        session,
+        household_id=summary.id,
+        display_name=body.display_name,
+        species=body.species,
+        shared_facts=body.shared_facts,
+    )
+    await session.commit()
+    return PetPayload.from_record(pet)
+
+
+@router.patch("/pets/{pet_id}", response_model=PetPayload)
+async def integration_update_pet(
+    pet_id: str, body: UpdatePetRequest, _token: IntegrationToken, session: Session
+) -> PetPayload:
+    summary = await fetch_household_summary(session)
+    if summary is None:
+        raise _household_not_configured()
+    await _require_admin(session, ha_user_id=body.ha_user_id)
+    result = await update_pet(
+        session,
+        household_id=summary.id,
+        pet_id=pet_id,
+        display_name=body.display_name,
+        species=body.species,
+        shared_facts=body.shared_facts,
+    )
+    if isinstance(result, PetNotFound):
+        await session.rollback()
+        raise _pet_not_found()
+    await session.commit()
+    return PetPayload.from_record(result)
+
+
+@router.delete("/pets/{pet_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def integration_delete_pet(
+    pet_id: str, ha_user_id: AdminHaUserIdQuery, _token: IntegrationToken, session: Session
+) -> None:
+    summary = await fetch_household_summary(session)
+    if summary is None:
+        raise _household_not_configured()
+    await _require_admin(session, ha_user_id=ha_user_id)
+    result = await delete_pet(session, household_id=summary.id, pet_id=pet_id)
+    if isinstance(result, PetNotFound):
+        await session.rollback()
+        raise _pet_not_found()
+    assert isinstance(result, PetDeleted)
+    await session.commit()
+
+
+class AssistantPayload(BaseModel):
+    id: str
+    name: str
+    personality: dict[str, Any]
+
+    @classmethod
+    def from_record(cls, assistant: AssistantRecord) -> AssistantPayload:
+        return cls(id=assistant.id, name=assistant.name, personality=dict(assistant.personality))
+
+
+class UpdateOwnAssistantRequest(BaseModel):
+    ha_user_id: str = Field(alias="haUserId", min_length=1, max_length=64)
+    name: str | None = Field(default=None, max_length=120)
+    personality: dict[str, Any] | None = None
+
+
+def _assistant_not_found() -> HTTPException:
+    return HTTPException(status_code=404, detail={"code": "assistant_not_found"})
+
+
+@router.patch("/assistants/primary", response_model=AssistantPayload)
+async def integration_update_own_assistant(
+    body: UpdateOwnAssistantRequest, _token: IntegrationToken, session: Session
+) -> AssistantPayload:
+    result = await update_own_primary_assistant(
+        session, ha_user_id=body.ha_user_id, name=body.name, personality=body.personality
+    )
+    if isinstance(result, (Unmapped, AssistantNotFound)):
+        await session.rollback()
+        raise _assistant_not_found()
+    await session.commit()
+    return AssistantPayload.from_record(result)
 
 
 class ConversationRequest(BaseModel):

@@ -532,3 +532,146 @@ async def test_topic_endpoints_fail_closed_for_a_different_mapped_person() -> No
         )
         assert response.status_code == 404
         assert response.json()["detail"]["code"] == "topic_not_found"
+
+
+async def test_pet_crud_requires_admin_and_round_trips() -> None:
+    client, factory = await _client()
+    async with client:
+        admin_id, child_id = await _seed_household_with_synced_admin(factory)
+        token = await _issue_token(factory)
+        headers = {"Authorization": f"Bearer {token}"}
+
+        forbidden = await client.post(
+            "/api/v1/integration/pets",
+            headers=headers,
+            json={"haUserId": "not-mapped", "displayName": "Biscuit", "species": "Dog"},
+        )
+        assert forbidden.status_code == 403
+        assert forbidden.json()["detail"]["code"] == "admin_required"
+
+        created = await client.post(
+            "/api/v1/integration/pets",
+            headers=headers,
+            json={
+                "haUserId": "ha-user-1",
+                "displayName": "Biscuit",
+                "species": "Dog",
+                "sharedFacts": ["Needs a walk every morning"],
+            },
+        )
+        assert created.status_code == 201
+        pet_id = created.json()["id"]
+        assert created.json()["sharedFacts"] == ["Needs a walk every morning"]
+
+        listed = await client.get("/api/v1/integration/pets", headers=headers)
+        assert listed.status_code == 200
+        assert [pet["displayName"] for pet in listed.json()] == ["Biscuit"]
+
+        updated = await client.patch(
+            f"/api/v1/integration/pets/{pet_id}",
+            headers=headers,
+            json={"haUserId": "ha-user-1", "species": "Golden Retriever"},
+        )
+        assert updated.status_code == 200
+        assert updated.json()["species"] == "Golden Retriever"
+
+        deleted = await client.delete(
+            f"/api/v1/integration/pets/{pet_id}?haUserId=ha-user-1", headers=headers
+        )
+        assert deleted.status_code == 204
+
+        after_delete = await client.get("/api/v1/integration/pets", headers=headers)
+        assert after_delete.json() == []
+
+        _ = child_id, admin_id
+
+
+async def test_reclassify_person_requires_admin_and_updates_profile_kind() -> None:
+    client, factory = await _client()
+    async with client:
+        admin_id, child_id = await _seed_household_with_synced_admin(factory)
+        token = await _issue_token(factory)
+        headers = {"Authorization": f"Bearer {token}"}
+
+        forbidden = await client.patch(
+            f"/api/v1/integration/people/{child_id}/reclassify",
+            headers=headers,
+            json={"haUserId": "not-mapped", "profileKind": "teen"},
+        )
+        assert forbidden.status_code == 403
+
+        response = await client.patch(
+            f"/api/v1/integration/people/{child_id}/reclassify",
+            headers=headers,
+            json={"haUserId": "ha-user-1", "profileKind": "teen"},
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["profileKind"] == "teen"
+        assert body["classification"] == "private-person"
+
+        missing = await client.patch(
+            "/api/v1/integration/people/does-not-exist/reclassify",
+            headers=headers,
+            json={"haUserId": "ha-user-1", "profileKind": "adult"},
+        )
+        assert missing.status_code == 404
+        assert missing.json()["detail"]["code"] == "person_not_found"
+
+        _ = admin_id
+
+
+async def test_delete_person_blocks_removing_the_sole_admin() -> None:
+    client, factory = await _client()
+    async with client:
+        admin_id, child_id = await _seed_household_with_synced_admin(factory)
+        token = await _issue_token(factory)
+        headers = {"Authorization": f"Bearer {token}"}
+
+        blocked = await client.delete(
+            f"/api/v1/integration/people/{admin_id}?haUserId=ha-user-1", headers=headers
+        )
+        assert blocked.status_code == 409
+        assert blocked.json()["detail"]["code"] == "household_requires_an_admin"
+
+        allowed = await client.delete(
+            f"/api/v1/integration/people/{child_id}?haUserId=ha-user-1", headers=headers
+        )
+        assert allowed.status_code == 204
+
+        async with factory() as session:
+            assert await session.get(PersonRecord, child_id) is None
+            assert await session.get(PersonRecord, admin_id) is not None
+
+
+async def test_owner_can_customize_their_own_assistant_via_api() -> None:
+    client, factory = await _client()
+    async with client:
+        await _seed_household(factory)
+        token = await _issue_token(factory)
+        headers = {"Authorization": f"Bearer {token}"}
+
+        synced = await client.put(
+            "/api/v1/integration/people/sync",
+            headers=headers,
+            json=[{"haPersonId": "ha-person-marc", "haUserId": "ha-user-marc", "displayName": "Marc"}],
+        )
+        assert synced.status_code == 200
+
+        response = await client.patch(
+            "/api/v1/integration/assistants/primary",
+            headers=headers,
+            json={"haUserId": "ha-user-marc", "name": "Jarvis", "personality": {"tone": "warm"}},
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["name"] == "Jarvis"
+        assert body["personality"] == {"tone": "warm"}
+
+        unmapped = await client.patch(
+            "/api/v1/integration/assistants/primary",
+            headers=headers,
+            json={"haUserId": "not-mapped", "name": "Nope"},
+        )
+        assert unmapped.status_code == 404
+        assert unmapped.json()["detail"]["code"] == "assistant_not_found"
