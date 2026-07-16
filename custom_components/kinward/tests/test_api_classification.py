@@ -9,6 +9,8 @@ from kinward.api import (
     Pet,
     PetsFailure,
     PetsSuccess,
+    ProviderSettings,
+    ProviderSettingsFailure,
     SendMessageFailure,
     SendMessageSuccess,
     SummaryFailure,
@@ -18,6 +20,7 @@ from kinward.api import (
     SyncPeopleSuccess,
     classify_context_response,
     classify_pets_response,
+    classify_provider_settings_response,
     classify_send_message_response,
     classify_summary_response,
     classify_sync_people_response,
@@ -250,4 +253,67 @@ def test_classify_send_message_response_invalid_auth() -> None:
 def test_classify_send_message_response_malformed_is_unknown() -> None:
     assert classify_send_message_response(200, {"outcome": "completed"}) == SendMessageFailure(
         "unknown"
+    )
+
+
+def _provider_settings_payload(**overrides: object) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "modelProvider": "none",
+        "modelBaseUrl": None,
+        "modelName": None,
+        "hasModelApiKey": False,
+        "memoryBackend": "none",
+        "honchoUrl": None,
+        "knowledgeBackend": "none",
+        "llmWikiUrl": None,
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_classify_provider_settings_response_defaults() -> None:
+    result = classify_provider_settings_response(200, _provider_settings_payload())
+    assert result == ProviderSettings(
+        model_provider="none",
+        model_base_url=None,
+        model_name=None,
+        has_model_api_key=False,
+        memory_backend="none",
+        honcho_url=None,
+        knowledge_backend="none",
+        llm_wiki_url=None,
+    )
+
+
+def test_classify_provider_settings_response_configured() -> None:
+    payload = _provider_settings_payload(
+        modelProvider="openai",
+        modelBaseUrl="https://api.openai.com/v1",
+        modelName="gpt-5",
+        hasModelApiKey=True,
+        memoryBackend="honcho",
+        honchoUrl="http://honcho.local:8000",
+    )
+    result = classify_provider_settings_response(200, payload)
+    assert isinstance(result, ProviderSettings)
+    assert result.model_provider == "openai"
+    assert result.model_base_url == "https://api.openai.com/v1"
+    assert result.has_model_api_key is True
+    assert result.memory_backend == "honcho"
+    assert result.honcho_url == "http://honcho.local:8000"
+
+
+def test_classify_provider_settings_response_invalid_auth() -> None:
+    assert classify_provider_settings_response(401, {}) == ProviderSettingsFailure("invalid_auth")
+
+
+def test_classify_provider_settings_response_household_not_configured() -> None:
+    assert classify_provider_settings_response(409, {}) == ProviderSettingsFailure(
+        "household_not_configured"
+    )
+
+
+def test_classify_provider_settings_response_malformed_is_unknown() -> None:
+    assert classify_provider_settings_response(200, {"modelProvider": "openai"}) == (
+        ProviderSettingsFailure("unknown")
     )

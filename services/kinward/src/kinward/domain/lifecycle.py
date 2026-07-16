@@ -27,6 +27,9 @@ BOOTSTRAP_RECORD_LIFECYCLES: dict[str, RecordLifecycle] = {
     "outbox": RecordLifecycle("system-operational", True, False, "restore", "delete after delivery retention"),
     "surface_layout": RecordLifecycle("household-shared", True, True, "quarantine", "delete with surface assignment"),
     "layout_activation_attempt": RecordLifecycle("system-operational", True, False, "restore", "retain with layout audit history"),
+    "provider_settings": RecordLifecycle(
+        "household-shared", True, False, "quarantine", "delete with household"
+    ),
 }
 
 # Maps each persisted SQLAlchemy table (kinward.persistence.models) to the
@@ -46,6 +49,7 @@ TABLE_LIFECYCLE_KEYS: dict[str, tuple[str, ...]] = {
     "outbox_messages": ("outbox",),
     "surface_layouts": ("surface_layout",),
     "layout_activation_attempts": ("layout_activation_attempt",),
+    "provider_settings": ("provider_settings",),
 }
 
 # Persisted tables with no lifecycle entry yet. A table lands here only with an

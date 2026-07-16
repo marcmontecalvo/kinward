@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import httpx
 
-from kinward.config import Settings
 from kinward.memory.contracts import ConversationMessage
 from kinward.memory.factory import conversational_memory_provider, knowledge_store_provider
 from kinward.memory.honcho import HonchoMemoryProvider
@@ -10,9 +9,13 @@ from kinward.memory.llm_wiki import LlmWikiKnowledgeProvider
 
 
 async def test_provider_factory_supports_none() -> None:
-    settings = Settings(memory_backend="none", knowledge_backend="none")
-    assert conversational_memory_provider(settings).name == "none"
-    assert knowledge_store_provider(settings).name == "none"
+    assert conversational_memory_provider(backend="none", url=None).name == "none"
+    assert knowledge_store_provider(backend="none", url=None).name == "none"
+
+
+async def test_provider_factory_requires_a_url_even_when_a_backend_is_named() -> None:
+    assert conversational_memory_provider(backend="honcho", url=None).name == "none"
+    assert knowledge_store_provider(backend="llm_wiki", url=None).name == "none"
 
 
 async def test_honcho_provider_appends_and_recalls() -> None:

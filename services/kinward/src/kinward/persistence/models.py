@@ -288,6 +288,34 @@ class TopicTurnRecord(Base):
     topic: Mapped[TopicRecord] = relationship(back_populates="turns")
 
 
+class ProviderSettingsRecord(Base):
+    """Admin-editable connection settings for the model/memory/knowledge providers.
+
+    One row per household (created lazily on first read), so household
+    operators can change what Kinward talks to from the Kinward integration's
+    options flow in Home Assistant without touching backend deployment config.
+    """
+
+    __tablename__ = "provider_settings"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    household_id: Mapped[str] = mapped_column(
+        ForeignKey("households.id", ondelete="CASCADE"), nullable=False, unique=True
+    )
+    model_provider: Mapped[str] = mapped_column(String(32), default="none", nullable=False)
+    model_base_url: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    model_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    model_api_key: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    memory_backend: Mapped[str] = mapped_column(String(32), default="none", nullable=False)
+    honcho_url: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    knowledge_backend: Mapped[str] = mapped_column(String(32), default="none", nullable=False)
+    llm_wiki_url: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    record_version: Mapped[int] = mapped_column(default=1, nullable=False)
+    classification: Mapped[str] = mapped_column(String(32), default="household-shared", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now, nullable=False)
+
+
 class BootstrapAttemptRecord(Base):
     __tablename__ = "bootstrap_attempts"
 

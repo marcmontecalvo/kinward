@@ -29,6 +29,7 @@ lifecycle decision fails the test suite rather than shipping unclassified.
 | outbox | `outbox_messages` | system-operational | yes | no | restore | delete after delivery retention |
 | surface_layout | `surface_layouts` | household-shared | yes | yes | quarantine | delete with surface assignment |
 | layout_activation_attempt | `layout_activation_attempts` | system-operational | yes | no | restore | retain with layout audit history |
+| provider_settings | `provider_settings` | household-shared | yes | no | quarantine | delete with household |
 
 Field meanings:
 

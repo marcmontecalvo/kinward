@@ -81,9 +81,15 @@ do not silently work around a problem to make a checkbox pass.
 
 - [ ] **Developer Tools -> Actions**, call `conversation.process` targeting
       `conversation.kinward` as the **synced** HA user (one with a linked
-      `person.*` entity, per step 5) with a short text request. It returns the
-      truthful "no model configured" capability report and a
-      `conversation_id`.
+      `person.*` entity, per step 5) with a short text request. With no model
+      configured (the default) it returns the truthful "no model configured"
+      capability report and a `conversation_id`.
+- [ ] Optional: from the integration's **Configure** options flow, set a
+      model provider/base URL/model name (and an API key if the provider
+      needs one), then repeat the request above. Confirm it now returns a
+      real generated reply instead of the "no model configured" message, and
+      that a follow-up request reusing the same `conversation_id` sees the
+      first turn as prior context.
 - [ ] Send a second request reusing that same `conversation_id`; confirm it's
       the same value in the response (the topic continued rather than a new
       one being created).

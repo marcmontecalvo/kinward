@@ -44,17 +44,16 @@ llm_wiki is canonical for structured fact values, versions, confidence, status, 
 
 ## Provider selection
 
-Environment configuration:
+Which backend each capability uses is an admin-editable, per-household setting stored in
+`ProviderSettingsRecord` (`persistence/models.py`), not a deployment-time env var - an
+administrator changes it from the Kinward integration's options flow in Home Assistant, and
+it takes effect on the next conversation turn without a backend restart. The equivalent
+`KINWARD_MEMORY_BACKEND`/`KINWARD_HONCHO_URL`/`KINWARD_KNOWLEDGE_BACKEND`/`KINWARD_LLM_WIKI_URL`
+env vars on `Settings` (`config.py`) only seed the health check's fallback view before a
+household exists; `application/conversation.py` always reads the DB row.
 
-```text
-KINWARD_MEMORY_BACKEND=honcho|none
-KINWARD_HONCHO_URL=http://honcho:8000
-
-KINWARD_KNOWLEDGE_BACKEND=llm_wiki|none
-KINWARD_LLM_WIKI_URL=http://llm-wiki:3050
-```
-
-Both capabilities default to `none`. Kinward must boot and provide core household functionality without either service.
+Both capabilities default to `none`. Kinward must boot and provide core household functionality
+without either service.
 
 ## Replacement boundary
 

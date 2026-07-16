@@ -156,6 +156,32 @@ class PetsFailure:
 PetsResult = PetsSuccess | PetsFailure
 
 
+@dataclass(frozen=True)
+class ProviderSettings:
+    """The household's model/memory/knowledge connection settings.
+
+    ``has_model_api_key`` reports whether a key is set without ever echoing the
+    secret itself back - the options flow can only set or replace it, never see it.
+    """
+
+    model_provider: str
+    model_base_url: str | None
+    model_name: str | None
+    has_model_api_key: bool
+    memory_backend: str
+    honcho_url: str | None
+    knowledge_backend: str
+    llm_wiki_url: str | None
+
+
+@dataclass(frozen=True)
+class ProviderSettingsFailure:
+    error: ConfigFlowErrorCode
+
+
+ProviderSettingsResult = ProviderSettings | ProviderSettingsFailure
+
+
 def classify_context_response(status_code: int, payload: Any) -> ContextResult:
     if status_code == 200 and isinstance(payload, dict):
         household_id = payload.get("householdId")
@@ -322,6 +348,52 @@ def classify_send_message_response(status_code: int, payload: Any) -> SendMessag
     )
 
 
+def _provider_settings_from(payload: Any) -> ProviderSettings | None:
+    if not isinstance(payload, dict):
+        return None
+    model_provider = payload.get("modelProvider")
+    memory_backend = payload.get("memoryBackend")
+    knowledge_backend = payload.get("knowledgeBackend")
+    has_model_api_key = payload.get("hasModelApiKey")
+    if (
+        not isinstance(model_provider, str)
+        or not isinstance(memory_backend, str)
+        or not isinstance(knowledge_backend, str)
+        or not isinstance(has_model_api_key, bool)
+    ):
+        return None
+    model_base_url = payload.get("modelBaseUrl")
+    model_name = payload.get("modelName")
+    honcho_url = payload.get("honchoUrl")
+    llm_wiki_url = payload.get("llmWikiUrl")
+    for value in (model_base_url, model_name, honcho_url, llm_wiki_url):
+        if value is not None and not isinstance(value, str):
+            return None
+    return ProviderSettings(
+        model_provider=model_provider,
+        model_base_url=model_base_url,
+        model_name=model_name,
+        has_model_api_key=has_model_api_key,
+        memory_backend=memory_backend,
+        honcho_url=honcho_url,
+        knowledge_backend=knowledge_backend,
+        llm_wiki_url=llm_wiki_url,
+    )
+
+
+def classify_provider_settings_response(status_code: int, payload: Any) -> ProviderSettingsResult:
+    if status_code == 401:
+        return ProviderSettingsFailure("invalid_auth")
+    if status_code == 409:
+        return ProviderSettingsFailure("household_not_configured")
+    if status_code != 200:
+        return ProviderSettingsFailure("unknown")
+    settings = _provider_settings_from(payload)
+    if settings is None:
+        return ProviderSettingsFailure("unknown")
+    return settings
+
+
 class KinwardApiClient:
     """Thin async wrapper; all response interpretation lives in the pure classify_* functions."""
 
@@ -398,3 +470,45 @@ class KinwardApiClient:
         except (TimeoutError, aiohttp.ClientError):
             return SendMessageFailure("cannot_connect")
         return classify_send_message_response(status, payload)
+
+    async def async_fetch_provider_settings(self) -> ProviderSettingsResult:
+        try:
+            status, payload = await self._request("GET", "/api/v1/integration/settings/providers")
+        except (TimeoutError, aiohttp.ClientError):
+            return ProviderSettingsFailure("cannot_connect")
+        return classify_provider_settings_response(status, payload)
+
+    async def async_update_provider_settings(
+        self,
+        *,
+        model_provider: str,
+        model_base_url: str,
+        model_name: str,
+        model_api_key: str | None,
+        memory_backend: str,
+        honcho_url: str,
+        knowledge_backend: str,
+        llm_wiki_url: str,
+    ) -> ProviderSettingsResult:
+        """``model_api_key`` is omitted from the request entirely when blank - the settings
+        screen can never show the current key back to prefill it, so a blank submission
+        must mean "leave it as-is", never "clear it".
+        """
+        body: dict[str, Any] = {
+            "modelProvider": model_provider,
+            "modelBaseUrl": model_base_url,
+            "modelName": model_name,
+            "memoryBackend": memory_backend,
+            "honchoUrl": honcho_url,
+            "knowledgeBackend": knowledge_backend,
+            "llmWikiUrl": llm_wiki_url,
+        }
+        if model_api_key:
+            body["modelApiKey"] = model_api_key
+        try:
+            status, payload = await self._request(
+                "PATCH", "/api/v1/integration/settings/providers", json_body=body
+            )
+        except (TimeoutError, aiohttp.ClientError):
+            return ProviderSettingsFailure("cannot_connect")
+        return classify_provider_settings_response(status, payload)

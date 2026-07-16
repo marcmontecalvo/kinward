@@ -16,12 +16,15 @@ for a step-by-step household trial covering everything below end to end.
   talking to the Kinward person synced from that user's linked `person.*`
   entity - Kinward has no identity system of its own; see "Sync people from
   Home Assistant" below. A synced request gets a real, persisted, multi-turn
-  topic - but since no model provider is configured in this deployment, every
-  reply is still a truthful "no model configured" capability report rather
-  than a generated answer. An unsynced HA user (no `person.*` entity links to
-  them) or a shared display is handed off entirely to Home Assistant's own
-  built-in Assist agent instead - never a Kinward-generated reply, and never
-  another person's private context (epics.md Story 2.5).
+  topic. If a model provider is configured (see "Configure model and memory"
+  below) the reply is a real generated answer, grounded in recent Home
+  Assistant entity state and this household's configured memory/knowledge
+  backends; with no model configured, the reply is still a truthful "no model
+  configured" capability report rather than a fabricated answer. An unsynced
+  HA user (no `person.*` entity links to them) or a shared display is handed
+  off entirely to Home Assistant's own built-in Assist agent instead - never
+  a Kinward-generated reply, and never another person's private context
+  (epics.md Story 2.5).
 - Cancelling a request always reports "already terminal" today - every turn
   completes synchronously in the same call that creates it, so there's never
   an in-flight turn for a separate cancel call to actually interrupt
@@ -62,6 +65,26 @@ The config flow distinguishes an unreachable backend, a rejected token, an
 incompatible API contract version, and a backend with no household set up
 yet. Nothing further is asked - there's no separate admin-designation step
 (see below).
+
+## Configure model and memory
+
+From the integration's card on **Settings -> Devices & Services**, choose
+**Configure** to change what this household's assistants talk to:
+
+- **Model provider** - `none`, `openai`, `openai-compatible` (any self-hosted
+  server speaking the OpenAI chat-completions API - Ollama, vLLM, llama.cpp
+  server, LM Studio, ...), or `anthropic`.
+- **Model API base URL** and **model name** - e.g.
+  `https://api.openai.com/v1` / `gpt-5`, or `http://ollama.local:11434/v1` /
+  `llama3`.
+- **Model API key** - leave blank to keep the current one; this screen never
+  displays a previously-set key back, so a blank submission never clears it.
+- **Conversational memory backend** (`none`/`honcho`) and **Honcho URL**.
+- **Household knowledge backend** (`none`/`llm_wiki`) and **llm_wiki URL**.
+
+These are household settings stored in the Kinward backend, not this
+integration's own config - changing them here just calls the backend's admin
+API and takes effect on the next conversation turn, no restart needed.
 
 ## Sync people from Home Assistant
 
