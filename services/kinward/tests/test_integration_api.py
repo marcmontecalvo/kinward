@@ -675,3 +675,64 @@ async def test_owner_can_customize_their_own_assistant_via_api() -> None:
         )
         assert unmapped.status_code == 404
         assert unmapped.json()["detail"]["code"] == "assistant_not_found"
+
+
+async def test_provider_settings_defaults_to_none_and_round_trips_via_patch() -> None:
+    client, factory = await _client()
+    async with client:
+        await _seed_household(factory)
+        token = await _issue_token(factory)
+        headers = {"Authorization": f"Bearer {token}"}
+
+        defaults = await client.get("/api/v1/integration/settings/providers", headers=headers)
+        assert defaults.status_code == 200
+        body = defaults.json()
+        assert body["modelProvider"] == "none"
+        assert body["modelBaseUrl"] is None
+        assert body["hasModelApiKey"] is False
+        assert body["memoryBackend"] == "none"
+        assert body["knowledgeBackend"] == "none"
+
+        updated = await client.patch(
+            "/api/v1/integration/settings/providers",
+            headers=headers,
+            json={
+                "modelProvider": "openai",
+                "modelBaseUrl": "https://api.openai.com/v1",
+                "modelName": "gpt-5",
+                "modelApiKey": "sk-example-fictional",
+                "memoryBackend": "honcho",
+                "honchoUrl": "http://honcho.local:8000",
+            },
+        )
+        assert updated.status_code == 200
+        updated_body = updated.json()
+        assert updated_body["modelProvider"] == "openai"
+        assert updated_body["modelBaseUrl"] == "https://api.openai.com/v1"
+        assert updated_body["modelName"] == "gpt-5"
+        assert updated_body["hasModelApiKey"] is True
+        assert "sk-example-fictional" not in updated.text
+        assert updated_body["memoryBackend"] == "honcho"
+        assert updated_body["honchoUrl"] == "http://honcho.local:8000"
+        # a field left out of the request body is unchanged
+        assert updated_body["knowledgeBackend"] == "none"
+
+        partial = await client.patch(
+            "/api/v1/integration/settings/providers",
+            headers=headers,
+            json={"knowledgeBackend": "llm_wiki", "llmWikiUrl": "http://llm-wiki.local:3050"},
+        )
+        assert partial.status_code == 200
+        partial_body = partial.json()
+        assert partial_body["knowledgeBackend"] == "llm_wiki"
+        assert partial_body["llmWikiUrl"] == "http://llm-wiki.local:3050"
+        # still unchanged from the earlier PATCH
+        assert partial_body["modelProvider"] == "openai"
+        assert partial_body["hasModelApiKey"] is True
+
+
+async def test_provider_settings_requires_a_bearer_token() -> None:
+    client, _factory = await _client()
+    async with client:
+        response = await client.get("/api/v1/integration/settings/providers")
+        assert response.status_code == 401

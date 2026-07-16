@@ -29,6 +29,7 @@ lifecycle decision fails the test suite rather than shipping unclassified.
 | outbox | `outbox_messages` | system-operational | yes | no | restore | delete after delivery retention |
 | surface_layout | `surface_layouts` | household-shared | yes | yes | quarantine | delete with surface assignment |
 | layout_activation_attempt | `layout_activation_attempts` | system-operational | yes | no | restore | retain with layout audit history |
+| provider_settings | `provider_settings` | household-shared | yes | no | quarantine | delete with household |
 
 Field meanings:
 
@@ -64,8 +65,9 @@ reasoned, not silent drift - see `UNCLASSIFIED_TABLES` in `lifecycle.py`:
 | `topic_turns` | Pivot-era addition; retention not yet decided. |
 
 See `_bmad-output/planning-artifacts/epics.md` Story 9.4 for the broader
-context: blocker-preservation checks and backup/restore-survival verification
-for this taxonomy are blocked on Epic 6's approval machinery and Stories
-9.1-9.3 (backup/restore/import), neither of which has call sites yet. This
+context: blocker-preservation checks for this taxonomy are blocked on Epic 6's
+approval machinery, which has no call sites yet. Backup/restore-survival
+verification is deferred to v2 alongside Stories 9.1-9.3 (backup/restore/import)
+themselves, which have no implementation and are out of v1 scope. This
 document and its enforcement test are the piece of Story 9.4 that doesn't
 depend on either.

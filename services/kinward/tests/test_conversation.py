@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, field
+from typing import Sequence
+
+import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -17,6 +21,10 @@ from kinward.application.conversation import (
     list_topics,
     update_topic,
 )
+from kinward.integrations.home_assistant import HomeAssistantClient
+from kinward.llm.contracts import ModelMessage, ModelReply
+from kinward.llm.providers import NO_MODEL_RESPONSE
+from kinward.memory.honcho import HonchoMemoryProvider
 from kinward.persistence.models import (
     AssistantRecord,
     Base,
@@ -25,6 +33,19 @@ from kinward.persistence.models import (
     TopicRecord,
     TopicTurnRecord,
 )
+
+
+@dataclass
+class RecordingModelProvider:
+    """Fake model that echoes a canned reply and records every call it received."""
+
+    name: str = "fake"
+    reply_text: str = "This is a real generated reply."
+    calls: list[tuple[str, tuple[ModelMessage, ...]]] = field(default_factory=list)
+
+    async def generate_reply(self, *, system_prompt: str, messages: Sequence[ModelMessage]) -> ModelReply:
+        self.calls.append((system_prompt, tuple(messages)))
+        return ModelReply(content=self.reply_text)
 
 
 async def _factory():  # type: ignore[no-untyped-def]
@@ -329,3 +350,166 @@ async def test_delete_topic_removes_it_and_its_turns() -> None:
             await session.scalars(select(TopicTurnRecord).where(TopicTurnRecord.topic_id == topic_id))
         ).all()
         assert remaining_turns == []
+
+
+async def test_default_none_model_still_reports_the_truthful_capability_message() -> None:
+    factory = await _factory()
+    async with factory() as session:
+        await _seed_mapped_person(session)
+        result = await handle_conversation_request(
+            session, ha_user_id="ha-user-1", text="hello", conversation_id=None, language="en"
+        )
+        await session.commit()
+        assert isinstance(result, Completed)
+        assert result.response_text == NO_MODEL_RESPONSE
+
+
+async def test_a_configured_model_generates_a_real_reply_and_sees_prior_turns_as_history() -> None:
+    factory = await _factory()
+    async with factory() as session:
+        await _seed_mapped_person(session)
+        model = RecordingModelProvider()
+
+        first = await handle_conversation_request(
+            session,
+            ha_user_id="ha-user-1",
+            text="hello",
+            conversation_id=None,
+            language="en",
+            model=model,
+        )
+        await session.commit()
+        assert isinstance(first, Completed)
+        assert first.response_text == model.reply_text
+
+        second = await handle_conversation_request(
+            session,
+            ha_user_id="ha-user-1",
+            text="second message",
+            conversation_id=first.conversation_id,
+            language="en",
+            model=model,
+        )
+        await session.commit()
+        assert isinstance(second, Completed)
+
+        assert len(model.calls) == 2
+        _first_prompt, first_messages = model.calls[0]
+        assert first_messages[-1] == ModelMessage(role="user", content="hello")
+
+        _second_prompt, second_messages = model.calls[1]
+        assert second_messages[0] == ModelMessage(role="user", content="hello")
+        assert second_messages[1] == ModelMessage(role="assistant", content=model.reply_text)
+        assert second_messages[-1] == ModelMessage(role="user", content="second message")
+
+
+async def test_home_assistant_state_is_folded_into_the_system_prompt_when_enabled() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[{"entity_id": "light.kitchen", "state": "on"}])
+
+    ha_client = HomeAssistantClient(
+        base_url="http://ha.invalid", token="fake-token", transport=httpx.MockTransport(handler)
+    )
+
+    factory = await _factory()
+    async with factory() as session:
+        await _seed_mapped_person(session)
+        model = RecordingModelProvider()
+        result = await handle_conversation_request(
+            session,
+            ha_user_id="ha-user-1",
+            text="is the kitchen light on?",
+            conversation_id=None,
+            language="en",
+            model=model,
+            ha_client=ha_client,
+        )
+        await session.commit()
+        assert isinstance(result, Completed)
+        system_prompt, _messages = model.calls[0]
+        assert "light.kitchen: on" in system_prompt
+
+
+async def test_home_assistant_state_is_absent_from_the_prompt_when_not_configured() -> None:
+    ha_client = HomeAssistantClient(base_url=None, token=None)
+
+    factory = await _factory()
+    async with factory() as session:
+        await _seed_mapped_person(session)
+        model = RecordingModelProvider()
+        await handle_conversation_request(
+            session,
+            ha_user_id="ha-user-1",
+            text="hello",
+            conversation_id=None,
+            language="en",
+            model=model,
+            ha_client=ha_client,
+        )
+        await session.commit()
+        system_prompt, _messages = model.calls[0]
+        assert "home state" not in system_prompt.lower()
+
+
+async def test_memory_recall_grounds_the_system_prompt_and_a_configured_model_appends_the_turn() -> None:
+    seen_paths: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_paths.append(request.url.path)
+        if request.url.path.endswith("/search"):
+            return httpx.Response(
+                200, json={"items": [{"id": "m1", "content": "Likes tea", "score": 0.9}]}
+            )
+        if request.url.path.endswith("/messages"):
+            return httpx.Response(201, json={"items": [{"id": "m2"}]})
+        return httpx.Response(201, json={})
+
+    memory = HonchoMemoryProvider(base_url="http://honcho.invalid", transport=httpx.MockTransport(handler))
+
+    factory = await _factory()
+    async with factory() as session:
+        await _seed_mapped_person(session)
+        model = RecordingModelProvider()
+        result = await handle_conversation_request(
+            session,
+            ha_user_id="ha-user-1",
+            text="what do I like to drink?",
+            conversation_id=None,
+            language="en",
+            model=model,
+            memory_provider=memory,
+        )
+        await session.commit()
+
+        assert isinstance(result, Completed)
+        system_prompt, _messages = model.calls[0]
+        assert "Likes tea" in system_prompt
+        assert any(path.endswith("/messages") for path in seen_paths), "the new turn should be appended to memory"
+
+
+async def test_memory_is_not_appended_when_no_model_is_configured() -> None:
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        if request.url.path.endswith("/search"):
+            return httpx.Response(200, json={"items": []})
+        return httpx.Response(201, json={})
+
+    memory = HonchoMemoryProvider(base_url="http://honcho.invalid", transport=httpx.MockTransport(handler))
+
+    factory = await _factory()
+    async with factory() as session:
+        await _seed_mapped_person(session)
+        result = await handle_conversation_request(
+            session,
+            ha_user_id="ha-user-1",
+            text="hello",
+            conversation_id=None,
+            language="en",
+            memory_provider=memory,
+        )
+        await session.commit()
+        assert isinstance(result, Completed)
+        assert result.response_text == NO_MODEL_RESPONSE
+        assert not any(path.endswith("/messages") for path in calls)

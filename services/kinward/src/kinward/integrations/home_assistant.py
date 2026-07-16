@@ -6,9 +6,9 @@ from kinward.integrations.base import IntegrationClient
 
 
 class HomeAssistantClient:
-    def __init__(self, *, base_url: str | None, token: str | None) -> None:
+    def __init__(self, *, base_url: str | None, token: str | None, transport: Any = None) -> None:
         self.token = token
-        self.client = IntegrationClient(name="home-assistant", base_url=base_url)
+        self.client = IntegrationClient(name="home-assistant", base_url=base_url, transport=transport)
 
     @property
     def enabled(self) -> bool:

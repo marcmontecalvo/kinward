@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, cast
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -34,7 +34,18 @@ from kinward.application.person_deletion import delete_person
 from kinward.application.pets import PetNotFound
 from kinward.application.pets import Deleted as PetDeleted
 from kinward.application.pets import create_pet, delete_pet, list_pets, update_pet
-from kinward.persistence.models import AssistantRecord, PersonRecord, TopicRecord, TopicTurnRecord
+from kinward.application.provider_settings import (
+    get_or_create_provider_settings,
+    update_provider_settings,
+)
+from kinward.config import Settings
+from kinward.persistence.models import (
+    AssistantRecord,
+    PersonRecord,
+    ProviderSettingsRecord,
+    TopicRecord,
+    TopicTurnRecord,
+)
 from kinward.application.household_summary import fetch_household_summary
 from kinward.application.people_sync import SyncedPerson, sync_people
 from kinward.health import CapabilityState
@@ -46,6 +57,13 @@ router = APIRouter(prefix="/api/v1/integration", tags=["integration"])
 
 IntegrationToken = Annotated[IntegrationTokenRecord, Depends(require_integration_token)]
 Session = Annotated[AsyncSession, Depends(session_dependency)]
+
+
+def _settings_dependency(request: Request) -> Settings:
+    return cast(Settings, request.app.state.settings)
+
+
+AppSettings = Annotated[Settings, Depends(_settings_dependency)]
 
 
 class IntegrationContextResponse(BaseModel):
@@ -426,7 +444,7 @@ UNMAPPED_RESPONSE_TEXT = "This Home Assistant user isn't linked to a Kinward pro
 
 @router.post("/conversation", response_model=ConversationResponse)
 async def integration_conversation(
-    body: ConversationRequest, _token: IntegrationToken, session: Session
+    body: ConversationRequest, _token: IntegrationToken, session: Session, settings: AppSettings
 ) -> ConversationResponse:
     result = await handle_conversation_request(
         session,
@@ -434,6 +452,7 @@ async def integration_conversation(
         text=body.text,
         conversation_id=body.conversation_id,
         language=body.language,
+        settings=settings,
     )
     await session.commit()
     if isinstance(result, Unmapped):
@@ -585,3 +604,78 @@ async def integration_delete_topic(
         raise _topic_not_found()
     assert isinstance(result, Deleted)
     await session.commit()
+
+
+class ProviderSettingsPayload(BaseModel):
+    model_provider: str = Field(serialization_alias="modelProvider")
+    model_base_url: str | None = Field(serialization_alias="modelBaseUrl")
+    model_name: str | None = Field(serialization_alias="modelName")
+    has_model_api_key: bool = Field(serialization_alias="hasModelApiKey")
+    memory_backend: str = Field(serialization_alias="memoryBackend")
+    honcho_url: str | None = Field(serialization_alias="honchoUrl")
+    knowledge_backend: str = Field(serialization_alias="knowledgeBackend")
+    llm_wiki_url: str | None = Field(serialization_alias="llmWikiUrl")
+
+    @classmethod
+    def from_record(cls, settings: ProviderSettingsRecord) -> ProviderSettingsPayload:
+        return cls(
+            model_provider=settings.model_provider,
+            model_base_url=settings.model_base_url,
+            model_name=settings.model_name,
+            has_model_api_key=bool(settings.model_api_key),
+            memory_backend=settings.memory_backend,
+            honcho_url=settings.honcho_url,
+            knowledge_backend=settings.knowledge_backend,
+            llm_wiki_url=settings.llm_wiki_url,
+        )
+
+
+class UpdateProviderSettingsRequest(BaseModel):
+    model_provider: Literal["none", "openai", "openai-compatible", "anthropic"] | None = Field(
+        default=None, alias="modelProvider"
+    )
+    model_base_url: str | None = Field(default=None, alias="modelBaseUrl")
+    model_name: str | None = Field(default=None, alias="modelName")
+    model_api_key: str | None = Field(default=None, alias="modelApiKey")
+    memory_backend: Literal["none", "honcho"] | None = Field(default=None, alias="memoryBackend")
+    honcho_url: str | None = Field(default=None, alias="honchoUrl")
+    knowledge_backend: Literal["none", "llm_wiki"] | None = Field(default=None, alias="knowledgeBackend")
+    llm_wiki_url: str | None = Field(default=None, alias="llmWikiUrl")
+
+
+@router.get("/settings/providers", response_model=ProviderSettingsPayload)
+async def integration_get_provider_settings(
+    _token: IntegrationToken, session: Session
+) -> ProviderSettingsPayload:
+    summary = await fetch_household_summary(session)
+    if summary is None:
+        raise _household_not_configured()
+    settings = await get_or_create_provider_settings(session, household_id=summary.id)
+    await session.commit()
+    return ProviderSettingsPayload.from_record(settings)
+
+
+@router.patch("/settings/providers", response_model=ProviderSettingsPayload)
+async def integration_update_provider_settings(
+    body: UpdateProviderSettingsRequest, _token: IntegrationToken, session: Session
+) -> ProviderSettingsPayload:
+    """Gated by the integration bearer token alone, like ``/people/sync`` - only the Kinward
+    HA integration's own options flow calls this, and HA already restricts that to admins.
+    """
+    summary = await fetch_household_summary(session)
+    if summary is None:
+        raise _household_not_configured()
+    settings = await update_provider_settings(
+        session,
+        household_id=summary.id,
+        model_provider=body.model_provider,
+        model_base_url=body.model_base_url,
+        model_name=body.model_name,
+        model_api_key=body.model_api_key,
+        memory_backend=body.memory_backend,
+        honcho_url=body.honcho_url,
+        knowledge_backend=body.knowledge_backend,
+        llm_wiki_url=body.llm_wiki_url,
+    )
+    await session.commit()
+    return ProviderSettingsPayload.from_record(settings)

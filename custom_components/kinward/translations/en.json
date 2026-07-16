@@ -21,6 +21,30 @@
       "already_configured": "This household is already configured."
     }
   },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Model and memory connections",
+        "description": "Choose what LLM this household's assistants use, and which of the two memory systems (Honcho for conversation memory, llm_wiki for household facts) they connect to. Leave a backend set to \"none\" to keep it truthfully disabled.",
+        "data": {
+          "model_provider": "Model provider",
+          "model_base_url": "Model API base URL",
+          "model_name": "Model name",
+          "model_api_key": "Model API key (leave blank to keep the current one)",
+          "memory_backend": "Conversational memory backend",
+          "honcho_url": "Honcho URL",
+          "knowledge_backend": "Household knowledge backend",
+          "llm_wiki_url": "llm_wiki URL"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Could not reach the Kinward backend at that URL.",
+      "invalid_auth": "The integration token was rejected. Check the token and try again.",
+      "household_not_configured": "This Kinward backend has no household set up yet.",
+      "unknown": "An unexpected error occurred."
+    }
+  },
   "entity": {
     "binary_sensor": {
       "backend": { "name": "Backend" }

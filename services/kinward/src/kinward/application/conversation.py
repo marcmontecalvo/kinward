@@ -6,12 +6,22 @@ from typing import Literal
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from kinward.application.provider_settings import get_or_create_provider_settings
+from kinward.config import Settings, get_settings
+from kinward.integrations.home_assistant import HomeAssistantClient
+from kinward.llm.contracts import ModelMessage, ModelProvider
+from kinward.llm.factory import model_provider as build_model_provider
+from kinward.memory.contracts import (
+    ConversationMessage,
+    ConversationalMemoryProvider,
+    KnowledgeStoreProvider,
+)
+from kinward.memory.factory import conversational_memory_provider, knowledge_store_provider
 from kinward.persistence.models import AssistantRecord, PersonRecord, TopicRecord, TopicTurnRecord
 
-NO_MODEL_RESPONSE = (
-    "No model provider is configured for this Kinward deployment yet, so I can't "
-    "generate a real reply. This is a truthful capability report, not an error."
-)
+MAX_HOME_STATE_ENTITIES = 300
+MEMORY_RECALL_LIMIT = 5
+KNOWLEDGE_SEARCH_LIMIT = 5
 
 
 @dataclass(frozen=True)
@@ -71,6 +81,51 @@ async def _find_own_topic(
     return topic
 
 
+async def _prior_turns(session: AsyncSession, *, topic_id: str) -> list[TopicTurnRecord]:
+    turns = await session.scalars(
+        select(TopicTurnRecord)
+        .where(TopicTurnRecord.topic_id == topic_id)
+        .order_by(TopicTurnRecord.created_at)
+    )
+    return list(turns)
+
+
+def _home_state_summary(states: list[dict[str, object]]) -> str | None:
+    lines: list[str] = []
+    for entity in states:
+        entity_id = entity.get("entity_id")
+        state = entity.get("state")
+        if not isinstance(entity_id, str) or not isinstance(state, str):
+            continue
+        lines.append(f"{entity_id}: {state}")
+    if not lines:
+        return None
+    lines.sort()
+    return "\n".join(lines[:MAX_HOME_STATE_ENTITIES])
+
+
+def _build_system_prompt(
+    *,
+    assistant: AssistantRecord,
+    person: PersonRecord,
+    home_state: str | None,
+    memory_lines: list[str],
+    knowledge_lines: list[str],
+) -> str:
+    sections = [
+        f"You are {assistant.name}, {person.display_name}'s private Kinward household assistant."
+    ]
+    if assistant.personality:
+        sections.append(f"Personality preferences: {assistant.personality}")
+    if home_state:
+        sections.append("Current home state (entity: state):\n" + home_state)
+    if memory_lines:
+        sections.append("Relevant things you remember about this person:\n" + "\n".join(memory_lines))
+    if knowledge_lines:
+        sections.append("Known household facts:\n" + "\n".join(knowledge_lines))
+    return "\n\n".join(sections)
+
+
 async def handle_conversation_request(
     session: AsyncSession,
     *,
@@ -78,7 +133,17 @@ async def handle_conversation_request(
     text: str,
     conversation_id: str | None,
     language: str,
+    settings: Settings | None = None,
+    model: ModelProvider | None = None,
+    memory_provider: ConversationalMemoryProvider | None = None,
+    knowledge_provider: KnowledgeStoreProvider | None = None,
+    ha_client: HomeAssistantClient | None = None,
 ) -> ConversationOutcome:
+    """``model``/``memory_provider``/``knowledge_provider``/``ha_client`` are injectable seams
+    for tests; production callers leave them unset and this builds them from the household's
+    ``ProviderSettingsRecord`` and the deployment's ``Settings``.
+    """
+    runtime_settings = settings or get_settings()
     person_id = await _resolve_person_id(session, ha_user_id=ha_user_id)
     if person_id is None:
         return Unmapped()
@@ -86,27 +151,93 @@ async def handle_conversation_request(
     topic: TopicRecord | None = None
     if conversation_id:
         topic = await _find_own_topic(session, topic_id=conversation_id, person_id=person_id)
+    person = await session.get(PersonRecord, person_id)
+    assert person is not None
+    assistant = await _find_primary_assistant(session, person_id)
+    assert assistant is not None, "sync creates a primary assistant atomically with every person"
     if topic is None:
-        assistant = await _find_primary_assistant(session, person_id)
-        assert assistant is not None, "sync creates a primary assistant atomically with every person"
-        person = await session.get(PersonRecord, person_id)
-        assert person is not None
         topic = TopicRecord(
             household_id=person.household_id, person_id=person_id, assistant_id=assistant.id
         )
         session.add(topic)
         await session.flush()
 
+    prior_turns = await _prior_turns(session, topic_id=topic.id)
+
+    provider_settings = await get_or_create_provider_settings(session, household_id=person.household_id)
+    memory = memory_provider or conversational_memory_provider(
+        backend=provider_settings.memory_backend, url=provider_settings.honcho_url
+    )
+    knowledge = knowledge_provider or knowledge_store_provider(
+        backend=provider_settings.knowledge_backend, url=provider_settings.llm_wiki_url
+    )
+    resolved_model = model or build_model_provider(
+        provider=provider_settings.model_provider,
+        base_url=provider_settings.model_base_url,
+        model_name=provider_settings.model_name,
+        api_key=provider_settings.model_api_key,
+    )
+    resolved_ha_client = ha_client or HomeAssistantClient(
+        base_url=runtime_settings.home_assistant_url, token=runtime_settings.home_assistant_token
+    )
+
+    home_state: str | None = None
+    if resolved_ha_client.enabled:
+        home_state = _home_state_summary(await resolved_ha_client.states())
+
+    memory_hits = await memory.recall(
+        household_id=person.household_id,
+        person_id=person_id,
+        assistant_id=assistant.id,
+        query=text,
+        limit=MEMORY_RECALL_LIMIT,
+    )
+    knowledge_facts = await knowledge.search_facts(
+        household_id=person.household_id,
+        person_id=person_id,
+        assistant_id=assistant.id,
+        query=text,
+        limit=KNOWLEDGE_SEARCH_LIMIT,
+    )
+
+    system_prompt = _build_system_prompt(
+        assistant=assistant,
+        person=person,
+        home_state=home_state,
+        memory_lines=[hit.content for hit in memory_hits],
+        knowledge_lines=[f"{fact.subject} {fact.predicate}: {fact.value}" for fact in knowledge_facts],
+    )
+    # Interleave each stored turn's request/response as two messages, oldest first.
+    history: list[ModelMessage] = []
+    for turn in prior_turns:
+        history.append(ModelMessage(role="user", content=turn.request_text))
+        history.append(ModelMessage(role="assistant", content=turn.response_text))
+    history.append(ModelMessage(role="user", content=text))
+
+    reply = await resolved_model.generate_reply(system_prompt=system_prompt, messages=history)
+
     session.add(
         TopicTurnRecord(
             topic_id=topic.id,
             request_text=text,
-            response_text=NO_MODEL_RESPONSE,
+            response_text=reply.content,
             outcome="completed",
         )
     )
     await session.flush()
-    return Completed(conversation_id=topic.id, response_text=NO_MODEL_RESPONSE)
+
+    if resolved_model.name != "none":
+        await memory.append_messages(
+            household_id=person.household_id,
+            person_id=person_id,
+            assistant_id=assistant.id,
+            messages=[
+                ConversationMessage(role="user", content=text),
+                ConversationMessage(role="assistant", content=reply.content),
+            ],
+        )
+
+    return Completed(conversation_id=topic.id, response_text=reply.content)
 
 
 async def cancel_turn(session: AsyncSession, *, turn_id: str, ha_user_id: str) -> CancelOutcome:
