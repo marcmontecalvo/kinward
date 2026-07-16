@@ -41,3 +41,37 @@ delete_assistant:
       example: "Business Assistant"
       selector:
         text:
+
+set_assistant_access:
+  name: Set assistant access
+  description: >-
+    Set who besides you may address one of your own assistants. Never
+    affects which conversational memory is used, and grants no tool
+    permission - a separate, still-unbuilt concern.
+  fields:
+    name:
+      name: Name
+      description: The assistant's name, exactly as shown.
+      required: true
+      example: "Bob"
+      selector:
+        text:
+    mode:
+      name: Mode
+      description: >-
+        owner_only: only you. household: any household member. allowlist:
+        you plus the people named in "Allowed people".
+      required: true
+      selector:
+        select:
+          options:
+            - owner_only
+            - household
+            - allowlist
+    allowed_names:
+      name: Allowed people
+      description: Display names of household members to allow (allowlist mode only).
+      required: false
+      example: ["Lisa"]
+      selector:
+        object:

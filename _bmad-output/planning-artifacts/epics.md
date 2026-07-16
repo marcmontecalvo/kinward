@@ -354,8 +354,36 @@ Safely manage household people and assistant ownership while keeping initial HA-
 > the new capability today without bespoke dashboard UI (deferred per cross-cutting rule 12). Choosing
 > *which* of a person's several assistants a given spoken/typed request addresses (e.g. wake-word/name
 > routing - "hey Calopex") is explicitly out of scope here; `conversation.kinward` still resolves to a
-> single assistant per person today. Addressing *another* person's assistant, and what it may then
-> disclose, is ADR-002 (proposed, not yet decided) - not implemented pending that decision.
+> single assistant per person today (deterministically the oldest, if several - see the next note).
+>
+> **Implemented (2026-07-16, ADR-002 assistant access modes):** a non-owner may now address another
+> person's assistant under a deterministic, owner-controlled rule. `AssistantRecord` gained
+> `access_mode` (`owner_only` default / `household` / `allowlist`) and `allowed_person_ids`; the
+> household-fallback assistant is backfilled to `household` (migration `009_assistant_access_modes`).
+> `domain/assistant_access.can_address_assistant` is the single, pure, testable boundary check - owner
+> always allowed; `household` allows any resolved person (a single-household deployment has no further
+> boundary to check); `allowlist` allows exactly the listed person ids. It governs access to the
+> assistant only - never which conversational-memory peer is used (that invariant, `(person, assistant)`
+> session keying, already existed and needed no change) and never a tool permission (still unbuilt,
+> Epic 7 Story 7.3). `handle_conversation_request` gained an optional `assistant_id` param: unset,
+> behavior is unchanged (caller's own, deterministically the oldest if several - fixed a real latent bug
+> along the way, since `_find_primary_assistant`'s old query would have raised `MultipleResultsFound`
+> the first time a person owned more than one); set, the addressed assistant is looked up and the access
+> check enforced, returning a new truthful `AccessDenied`/`AssistantNotFound` outcome rather than
+> silently falling back to the caller's own or fabricating a reply. `application/assistants.py` gained
+> `list_accessible_assistants` (every assistant a person may address - own plus others' under
+> household/allowlist mode) and `update_own_assistant` gained `access_mode`/`allowed_person_ids`. API:
+> `GET /assistants/accessible`, extended `PATCH /assistants/{id}`, and `POST /conversation` accepts an
+> optional `assistantId`. HA integration: a new `kinward.set_assistant_access` service (resolves
+> `allowed_names` display names to person ids via the existing `/people` endpoint) - still no wake-word
+> routing, so today this is exercised via explicit `assistantId`/the service, not by speaking a name.
+> Tests in `tests/test_assistant_access.py`, `tests/test_assistants.py`, `tests/test_conversation.py`,
+> `tests/test_integration_api.py`.
+>
+> **Not yet built (ADR-002):** tool permissions (allow/approval_required/deny), the operational
+> household context layer (recent actions/timers for cross-voice-node continuity), and the approval
+> workflow for actions affecting another person's existing resources - all separate, larger pieces of
+> ADR-002 not touched by this pass.
 >
 > **Deferred (2026-07-16, until/with Epic 6):** assistant-to-assistant delegation (one assistant asking
 > another assistant something on its owner's behalf, e.g. "check with Lisa's AI about Monday") is a

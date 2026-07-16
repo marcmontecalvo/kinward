@@ -6,9 +6,11 @@ from kinward.application.assistant_policy import update_assistant_policy
 from kinward.application.assistants import (
     AssistantNotFound,
     Deleted,
+    InvalidAccessMode,
     PolicyBlocked,
     create_additional_assistant,
     delete_own_assistant,
+    list_accessible_assistants,
     list_own_assistants,
     update_own_assistant,
 )
@@ -296,3 +298,113 @@ async def test_person_without_any_assistant_fails_closed() -> None:
             session, ha_user_id="ha-user-marc", assistant_id="does-not-exist", name="Jarvis"
         )
         assert isinstance(result, AssistantNotFound)
+
+
+async def _seed_two_people(session):  # type: ignore[no-untyped-def]
+    household, marc, bob = await _seed_owner_with_assistant(session)
+    lisa = PersonRecord(
+        household_id=household.id,
+        display_name="Lisa",
+        role="member",
+        profile_kind="adult",
+        ha_person_id="ha-person-lisa",
+        ha_user_id="ha-user-lisa",
+    )
+    session.add(lisa)
+    await session.flush()
+    return household, marc, bob, lisa
+
+
+async def test_owner_can_set_access_mode_and_allowlist() -> None:
+    """``allowed_person_ids`` holds internal PersonRecord ids, like every other
+
+    cross-reference in this codebase (owner_person_id, requested_by_person_id, ...)
+    - never ha_person_id, which is a different identifier space entirely.
+    """
+    factory = await _factory()
+    async with factory() as session:
+        _household, _marc, bob, lisa = await _seed_two_people(session)
+
+        result = await update_own_assistant(
+            session,
+            ha_user_id="ha-user-marc",
+            assistant_id=bob.id,
+            access_mode="allowlist",
+            allowed_person_ids=[lisa.id],
+        )
+        await session.commit()
+
+        assert not isinstance(result, (Unmapped, AssistantNotFound, InvalidAccessMode))
+        assert result.access_mode == "allowlist"
+        assert result.allowed_person_ids == [lisa.id]
+
+
+async def test_invalid_access_mode_is_rejected() -> None:
+    factory = await _factory()
+    async with factory() as session:
+        _household, _marc, bob, _lisa = await _seed_two_people(session)
+
+        result = await update_own_assistant(
+            session, ha_user_id="ha-user-marc", assistant_id=bob.id, access_mode="anyone-with-a-key"
+        )
+
+        assert isinstance(result, InvalidAccessMode)
+
+
+async def test_list_accessible_assistants_owner_only_excludes_non_owner() -> None:
+    factory = await _factory()
+    async with factory() as session:
+        household, _marc, bob, _lisa = await _seed_two_people(session)
+        await session.commit()
+
+        result = await list_accessible_assistants(
+            session, household_id=household.id, ha_user_id="ha-user-lisa"
+        )
+        assert not isinstance(result, Unmapped)
+        assert bob.id not in [a.id for a in result]
+
+
+async def test_list_accessible_assistants_household_mode_includes_non_owner() -> None:
+    factory = await _factory()
+    async with factory() as session:
+        household, _marc, bob, _lisa = await _seed_two_people(session)
+        bob.access_mode = "household"
+        await session.commit()
+
+        result = await list_accessible_assistants(
+            session, household_id=household.id, ha_user_id="ha-user-lisa"
+        )
+        assert not isinstance(result, Unmapped)
+        assert bob.id in [a.id for a in result]
+
+
+async def test_list_accessible_assistants_allowlist_mode_is_selective() -> None:
+    factory = await _factory()
+    async with factory() as session:
+        household, _marc, bob, lisa = await _seed_two_people(session)
+        bob.access_mode = "allowlist"
+        bob.allowed_person_ids = [lisa.id]
+        await session.commit()
+
+        accessible_to_lisa = await list_accessible_assistants(
+            session, household_id=household.id, ha_user_id="ha-user-lisa"
+        )
+        assert not isinstance(accessible_to_lisa, Unmapped)
+        assert bob.id in [a.id for a in accessible_to_lisa]
+
+        third = PersonRecord(
+            household_id=household.id,
+            display_name="Nia",
+            role="member",
+            profile_kind="adult",
+            ha_person_id="ha-person-nia",
+            ha_user_id="ha-user-nia",
+        )
+        session.add(third)
+        await session.commit()
+
+        accessible_to_nia = await list_accessible_assistants(
+            session, household_id=household.id, ha_user_id="ha-user-nia"
+        )
+        assert not isinstance(accessible_to_nia, Unmapped)
+        assert bob.id not in [a.id for a in accessible_to_nia]

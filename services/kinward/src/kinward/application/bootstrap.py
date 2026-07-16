@@ -151,6 +151,7 @@ async def execute_bootstrap(
         name=command.fallback_assistant_name.strip(),
         kind="household-fallback",
         classification="household-shared",
+        access_mode="household",
     )
     session.add(fallback)
     for pet in command.pets:

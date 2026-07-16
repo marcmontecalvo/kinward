@@ -9,7 +9,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from kinward.application.assistant_policy import get_or_create_assistant_policy
 from kinward.application.authorization import resolve_person
 from kinward.application.conversation import Unmapped
+from kinward.domain.assistant_access import can_address_assistant
 from kinward.persistence.models import AssistantRecord
+
+ACCESS_MODES = frozenset({"owner_only", "household", "allowlist"})
 
 
 @dataclass(frozen=True)
@@ -26,6 +29,11 @@ class PolicyBlocked:
 @dataclass(frozen=True)
 class Deleted:
     assistant_id: str
+
+
+@dataclass(frozen=True)
+class InvalidAccessMode:
+    """``access_mode`` wasn't one of the three ADR-002 modes - fail closed."""
 
 
 async def _count_owned_assistants(session: AsyncSession, *, person_id: str) -> int:
@@ -49,6 +57,36 @@ async def list_own_assistants(
         .order_by(AssistantRecord.created_at)
     )
     return list(assistants)
+
+
+async def list_accessible_assistants(
+    session: AsyncSession, *, household_id: str, ha_user_id: str
+) -> list[AssistantRecord] | Unmapped:
+    """Every assistant the resolved person may address - their own, plus anyone
+
+    else's under ``household``/``allowlist`` mode (ADR-002). A single household
+    has no household boundary left to check beyond "did this person resolve at
+    all", so this filters in Python rather than needing a JSON-containment query
+    that would behave differently on SQLite vs. PostgreSQL.
+    """
+    person = await resolve_person(session, ha_user_id=ha_user_id)
+    if isinstance(person, Unmapped):
+        return person
+    assistants = await session.scalars(
+        select(AssistantRecord)
+        .where(AssistantRecord.household_id == household_id)
+        .order_by(AssistantRecord.created_at)
+    )
+    return [
+        assistant
+        for assistant in assistants
+        if can_address_assistant(
+            owner_person_id=assistant.owner_person_id,
+            access_mode=assistant.access_mode,
+            allowed_person_ids=assistant.allowed_person_ids,
+            caller_person_id=person.id,
+        )
+    ]
 
 
 async def create_additional_assistant(
@@ -143,13 +181,18 @@ async def update_own_assistant(
     assistant_id: str,
     name: str | None = None,
     personality: dict[str, Any] | None = None,
-) -> AssistantRecord | AssistantNotFound | Unmapped:
-    """Let an owner rename or set personality/interaction preferences on one of their
-    own assistants.
+    access_mode: str | None = None,
+    allowed_person_ids: list[str] | None = None,
+) -> AssistantRecord | AssistantNotFound | Unmapped | InvalidAccessMode:
+    """Let an owner rename, set personality/interaction preferences, or change the
 
-    Preferences never alter authority, privacy, or action policy: this only ever
-    touches the assistant's own ``name``/``personality`` fields, never anything on
-    the owning ``PersonRecord``, and never another person's assistant.
+    ADR-002 access mode on one of their own assistants.
+
+    Preferences and access mode never alter authority, privacy, or action policy:
+    this only ever touches the assistant's own fields, never anything on the
+    owning ``PersonRecord``, and never another person's assistant. Access mode
+    controls who may *address* this assistant at all - it never affects which
+    conversational-memory peer is used, and it grants no tool permission.
     """
     person = await resolve_person(session, ha_user_id=ha_user_id)
     if isinstance(person, Unmapped):
@@ -157,10 +200,16 @@ async def update_own_assistant(
     assistant = await session.get(AssistantRecord, assistant_id)
     if assistant is None or assistant.owner_person_id != person.id:
         return AssistantNotFound()
+    if access_mode is not None and access_mode not in ACCESS_MODES:
+        return InvalidAccessMode()
     if name is not None:
         assistant.name = name.strip()
     if personality is not None:
         assistant.personality = personality
+    if access_mode is not None:
+        assistant.access_mode = access_mode
+    if allowed_person_ids is not None:
+        assistant.allowed_person_ids = allowed_person_ids
     assistant.record_version += 1
     await session.flush()
     return assistant

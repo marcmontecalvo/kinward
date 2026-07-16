@@ -70,6 +70,10 @@ class AssistantRecord(Base):
             sqlite_where=text("kind = 'household-fallback'"),
             postgresql_where=text("kind = 'household-fallback'"),
         ),
+        CheckConstraint(
+            "access_mode IN ('owner_only', 'household', 'allowlist')",
+            name="ck_assistants_access_mode",
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
@@ -80,6 +84,12 @@ class AssistantRecord(Base):
     personality: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
     accent: Mapped[str | None] = mapped_column(String(32), nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    # ADR-002 "V0 assistant access configuration": who besides the owner may address
+    # this assistant at all. Never affects which conversational-memory peer is used
+    # (that's the unconditional (person, assistant) session keying) or tool
+    # permissions - a separate, still-unbuilt concern.
+    access_mode: Mapped[str] = mapped_column(String(16), default="owner_only", nullable=False)
+    allowed_person_ids: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
     record_version: Mapped[int] = mapped_column(default=1, nullable=False)
     classification: Mapped[str] = mapped_column(String(32), default="private-person", nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
