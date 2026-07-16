@@ -21,7 +21,7 @@ jobs:
       - run: uv run --project services/kinward ruff check services/kinward
       - run: cd services/kinward && uv run mypy src
       - run: uv run --project services/kinward pytest services/kinward/tests
-      - run: uv run --project services/kinward alembic -c services/kinward/alembic.ini upgrade head
+      - run: cd services/kinward && uv run alembic upgrade head
 
   ha-integration:
     runs-on: ubuntu-latest
