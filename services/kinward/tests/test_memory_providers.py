@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import httpx
 
 from kinward.memory.contracts import ConversationMessage
@@ -19,11 +21,17 @@ async def test_provider_factory_requires_a_url_even_when_a_backend_is_named() ->
 
 
 async def test_honcho_provider_appends_and_recalls() -> None:
+    """Honcho's real message-create and search routes return a bare ``list[Message]``,
+
+    not ``{"items": [...]}`` (confirmed against a real Honcho instance) - the mocked
+    responses here match that actual wire shape, not a guess.
+    """
+
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path.endswith("/messages"):
-            return httpx.Response(201, json={"items": [{"id": "m1"}]})
+            return httpx.Response(201, json=[{"id": "m1"}])
         if request.url.path.endswith("/search"):
-            return httpx.Response(200, json={"items": [{"id": "m1", "content": "Likes tea", "score": 0.9}]})
+            return httpx.Response(200, json=[{"id": "m1", "content": "Likes tea", "score": 0.9}])
         return httpx.Response(201, json={})
 
     provider = HonchoMemoryProvider(
@@ -45,6 +53,59 @@ async def test_honcho_provider_appends_and_recalls() -> None:
         query="tea",
     )
     assert hits[0].content == "Likes tea"
+
+
+async def test_honcho_provider_also_accepts_a_paginated_items_wrapper() -> None:
+    """Defensive: the export path's ``/messages/list`` route is genuinely paginated
+
+    (``Page[Message]``, wrapped in ``{"items": [...]}``); recall/append tolerate the
+    same shape too in case a future Honcho version wraps them the same way.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/search"):
+            return httpx.Response(200, json={"items": [{"id": "m1", "content": "Likes tea"}]})
+        return httpx.Response(201, json={})
+
+    provider = HonchoMemoryProvider(
+        base_url="http://honcho.invalid",
+        transport=httpx.MockTransport(handler),
+    )
+    hits = await provider.recall(
+        household_id="house", person_id="person", assistant_id="assistant", query="tea"
+    )
+    assert hits[0].content == "Likes tea"
+
+
+async def test_honcho_session_creation_sends_peers_as_a_mapping_not_a_list() -> None:
+    """Honcho's SessionCreate schema requires `peers: dict[str, SessionPeerConfig]` -
+
+    a list 422s on every call. Session auto-creation on first message masked this in
+    production (nothing user-visible broke), but the explicit session-creation request
+    itself silently failed every time.
+    """
+    seen_bodies: list[dict[str, object]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/sessions"):
+            seen_bodies.append(json.loads(request.content))
+        return httpx.Response(201, json={})
+
+    provider = HonchoMemoryProvider(
+        base_url="http://honcho.invalid",
+        transport=httpx.MockTransport(handler),
+    )
+    await provider.append_messages(
+        household_id="house",
+        person_id="person",
+        assistant_id="assistant",
+        messages=[ConversationMessage(role="user", content="hi")],
+    )
+
+    assert len(seen_bodies) == 1
+    peers = seen_bodies[0]["peers"]
+    assert isinstance(peers, dict)
+    assert set(peers) == {"person_person", "assistant_assistant"}
 
 
 async def test_llm_wiki_provider_proposes_fact() -> None:
