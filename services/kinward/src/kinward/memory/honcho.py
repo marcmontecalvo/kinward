@@ -14,6 +14,19 @@ def _safe_id(value: str) -> str:
     return _ID_RE.sub("_", value).strip("_")
 
 
+def _items(data: Any) -> list[Any]:
+    """Honcho's message create/search routes return a bare ``list[Message]`` - only
+    the paginated ``/messages/list`` route wraps results in ``{"items": [...]}``.
+    Accept either shape rather than assuming one.
+    """
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict):
+        items = data.get("items", [])
+        return items if isinstance(items, list) else []
+    return []
+
+
 class HonchoMemoryProvider:
     """Native adapter for a locally hosted Honcho v3 API.
 
@@ -63,7 +76,7 @@ class HonchoMemoryProvider:
         await self.client.request(
             "POST",
             f"/v3/workspaces/{workspace_id}/sessions",
-            json={"id": session_id, "peers": [person_peer, assistant_peer]},
+            json={"id": session_id, "peers": {person_peer: {}, assistant_peer: {}}},
         )
 
     async def append_messages(
@@ -92,10 +105,10 @@ class HonchoMemoryProvider:
         data = await self.client.request_json(
             "POST",
             f"/v3/workspaces/{workspace_id}/sessions/{session_id}/messages",
-            fallback={"items": []},
+            fallback=[],
             json=payload,
         )
-        items = data.get("items", []) if isinstance(data, dict) else []
+        items = _items(data)
         return [str(item["id"]) for item in items if isinstance(item, dict) and item.get("id")]
 
     async def recall(
@@ -113,10 +126,10 @@ class HonchoMemoryProvider:
         data = await self.client.request_json(
             "POST",
             f"/v3/workspaces/{workspace_id}/sessions/{session_id}/search",
-            fallback={"items": []},
+            fallback=[],
             json={"query": query, "limit": limit},
         )
-        items = data.get("items", []) if isinstance(data, dict) else []
+        items = _items(data)
         return [self._memory_hit(item) for item in items if isinstance(item, dict)]
 
     async def revise(
@@ -168,7 +181,7 @@ class HonchoMemoryProvider:
             fallback={"items": []},
             json={},
         )
-        items = data.get("items", []) if isinstance(data, dict) else []
+        items = _items(data)
         return [self._memory_hit(item) for item in items if isinstance(item, dict)]
 
     @staticmethod
