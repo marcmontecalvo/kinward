@@ -500,14 +500,24 @@ Operate Kinward through HA-hosted configuration and backend administration witho
 
 Preserve the whole household authority graph and all unresolved safety obligations across lifecycle operations.
 
-### Story 9.1: Create versioned protected backups
+> **Deferred to v2 (2026-07-16):** Stories 9.1-9.3 (backup, restore, import) are pushed out of the v1
+> push-to-real-usage path. The v1 goal is a household member actually using the assistant day-to-day
+> as soon as possible; backup/restore protects against loss of a household that's already running, but
+> building it now doesn't get anyone closer to a usable day-one assistant, and it's substantial,
+> security-sensitive scope (envelope encryption, staged/quarantined restore, atomic activation - see
+> AD-12/AD-13 in `ARCHITECTURE-SPINE.md`) that a single household can safely live without for a first
+> release. The architecture decisions (AD-12, AD-13, AD-19, AD-20) remain the adopted design for
+> whenever this gets built - this defers scheduling, not the design. Story 9.4's own remainder already
+> depended on 9.1-9.3 existing (see below) and stays deferred alongside them.
+
+### Story 9.1: Create versioned protected backups (deferred to v2)
 
 - Backups contain a versioned manifest with included, excluded, protected, external, rebuildable, pending-observation, deletion, and unresolved-action metadata.
 - Export requires confidentiality and integrity protection.
 - Credentials excluded under policy are listed as reauthorization tasks.
 - Backup archives are stored outside the live database volume.
 
-### Story 9.2: Restore atomically and quarantine before activation
+### Story 9.2: Restore atomically and quarantine before activation (deferred to v2)
 
 - Restore targets a clean same/compatible deployment.
 - A point-in-time warning is shown before restore.
@@ -515,7 +525,7 @@ Preserve the whole household authority graph and all unresolved safety obligatio
 - Failure leaves the existing valid household unchanged.
 - Ownership, account binding, pending observations, deletions, unresolved actions, provider references, and quarantine are verified.
 
-### Story 9.3: Import the documented minimum household data set
+### Story 9.3: Import the documented minimum household data set (deferred to v2)
 
 - Import uses a versioned allowlist for the documented five classes.
 - Graph validation, duplicate handling, quarantine, disallowed-state rejection, safe reporting, and rollback are atomic.
@@ -613,8 +623,9 @@ Preserve the whole household authority graph and all unresolved safety obligatio
 > table must be classified or a tracked gap (fails on new unclassified tables), every
 > `TABLE_LIFECYCLE_KEYS` entry must resolve to a real taxonomy key, and single-class tables' ORM
 > `classification` column defaults are checked against the taxonomy's declared classification to catch
-> drift. Blocker-preservation checks and backup/restore-survival verification remain blocked on Epic 6
-> and Stories 9.1-9.3 as scoped above.
+> drift. Blocker-preservation checks remain blocked on Epic 6. Backup/restore-survival verification is
+> now deferred to v2 alongside Stories 9.1-9.3 themselves (see the Epic 9 goal note above) rather than
+> merely pending - there is nothing to verify restoring against until that work is scheduled.
 
 > **Deferred to v2 (2026-07-16, non-committed horizon):** cross-instance Home Assistant re-binding.
 > Scenario: the household's HA instance is lost or rebuilt from scratch (corruption, hardware
