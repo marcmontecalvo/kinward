@@ -22,15 +22,10 @@ from kinward.application.conversation import (
     list_topics,
     update_topic,
 )
-from kinward.persistence.models import TopicRecord, TopicTurnRecord
-from kinward.application.ha_user_mappings import (
-    MappingError,
-    list_mappings,
-    remove_mapping,
-    upsert_mapping,
-)
+from kinward.persistence.models import PersonRecord, TopicRecord, TopicTurnRecord
 from kinward.application.household_summary import fetch_household_summary
-from kinward.application.people import list_account_bearing_people
+from kinward.application.people import list_people
+from kinward.application.people_sync import SyncedPerson, sync_people
 from kinward.health import CapabilityState
 from kinward.persistence.models import IntegrationTokenRecord
 from kinward.persistence.session import session_dependency
@@ -119,57 +114,60 @@ class PersonPayload(BaseModel):
 
 @router.get("/people", response_model=list[PersonPayload])
 async def integration_people(_token: IntegrationToken, session: Session) -> list[PersonPayload]:
-    people = await list_account_bearing_people(session)
+    people = await list_people(session)
     return [PersonPayload(id=person.id, display_name=person.display_name) for person in people]
 
 
-class HaUserMappingPayload(BaseModel):
-    ha_user_id: str = Field(serialization_alias="haUserId")
-    person_id: str = Field(serialization_alias="personId")
+class PersonSyncItem(BaseModel):
+    ha_person_id: str = Field(alias="haPersonId", min_length=1, max_length=64)
+    ha_user_id: str | None = Field(default=None, alias="haUserId", min_length=1, max_length=64)
+    display_name: str = Field(alias="displayName", min_length=1, max_length=120)
+    is_admin: bool = Field(default=False, alias="isAdmin")
 
 
-class HaUserMappingRequest(BaseModel):
-    ha_user_id: str = Field(alias="haUserId", min_length=1, max_length=64)
-    person_id: str = Field(alias="personId", min_length=1, max_length=36)
+class SyncedPersonPayload(BaseModel):
+    id: str
+    ha_person_id: str = Field(serialization_alias="haPersonId")
+    ha_user_id: str | None = Field(serialization_alias="haUserId")
+    display_name: str = Field(serialization_alias="displayName")
+    role: str
+
+    @classmethod
+    def from_record(cls, person: PersonRecord) -> SyncedPersonPayload:
+        assert person.ha_person_id is not None, "sync always sets ha_person_id"
+        return cls(
+            id=person.id,
+            ha_person_id=person.ha_person_id,
+            ha_user_id=person.ha_user_id,
+            display_name=person.display_name,
+            role=person.role,
+        )
 
 
-@router.get("/ha-user-mappings", response_model=list[HaUserMappingPayload])
-async def get_ha_user_mappings(
-    _token: IntegrationToken, session: Session
-) -> list[HaUserMappingPayload]:
-    records = await list_mappings(session)
-    return [
-        HaUserMappingPayload(ha_user_id=record.ha_user_id, person_id=record.person_id)
-        for record in records
-    ]
-
-
-@router.put("/ha-user-mappings", response_model=list[HaUserMappingPayload])
-async def put_ha_user_mappings(
-    body: list[HaUserMappingRequest],
+@router.put("/people/sync", response_model=list[SyncedPersonPayload])
+async def integration_sync_people(
+    body: list[PersonSyncItem],
     _token: IntegrationToken,
     session: Session,
-) -> list[HaUserMappingPayload]:
-    try:
-        for item in body:
-            await upsert_mapping(session, ha_user_id=item.ha_user_id, person_id=item.person_id)
-    except MappingError as error:
-        await session.rollback()
-        raise HTTPException(
-            status_code=422, detail={"code": error.code, "message": error.message}
-        ) from None
+) -> list[SyncedPersonPayload]:
+    summary = await fetch_household_summary(session)
+    if summary is None:
+        raise _household_not_configured()
+    synced = await sync_people(
+        session,
+        household_id=summary.id,
+        people=[
+            SyncedPerson(
+                ha_person_id=item.ha_person_id,
+                ha_user_id=item.ha_user_id,
+                display_name=item.display_name,
+                is_admin=item.is_admin,
+            )
+            for item in body
+        ],
+    )
     await session.commit()
-    records = await list_mappings(session)
-    return [
-        HaUserMappingPayload(ha_user_id=record.ha_user_id, person_id=record.person_id)
-        for record in records
-    ]
-
-
-@router.delete("/ha-user-mappings/{ha_user_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_ha_user_mapping(ha_user_id: str, _token: IntegrationToken, session: Session) -> None:
-    await remove_mapping(session, ha_user_id=ha_user_id)
-    await session.commit()
+    return [SyncedPersonPayload.from_record(person) for person in synced]
 
 
 class ConversationRequest(BaseModel):

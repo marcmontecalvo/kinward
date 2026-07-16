@@ -34,7 +34,7 @@ do not silently work around a problem to make a checkbox pass.
 ## 2. Configure a Kinward backend entry
 
 - [ ] Enter `http://api:8000` and the token from step 0. The entry completes
-      and is titled with the real household name.
+      and is titled with the real household name - nothing else is asked.
 - [ ] Repeating the same entry is rejected as already configured (duplicate
       protection).
 
@@ -51,36 +51,47 @@ do not silently work around a problem to make a checkbox pass.
       without error and `sensor.kinward_household_status`'s `last_changed`
       (or `sensor.kinward_last_refresh`'s state) updates.
 
-## 5. Map a Home Assistant user to a Kinward profile
+## 5. Confirm people sync automatically from Home Assistant
 
-- [ ] On the integration's device page, click **Configure** to open the
-      Options flow. Confirm it steps through each active HA user one at a
-      time, showing their real name.
-- [ ] Map the admin HA user to the household's admin Kinward profile; leave
-      any other HA user "Not mapped".
-- [ ] Re-opening **Configure** shows the mapping was saved (defaults reflect
-      the previous choice).
+- [ ] Within one polling interval of adding the integration (step 2), every
+      existing `person.*` entity appears as a synced Kinward person on the
+      backend (`GET /api/v1/integration/people`).
+- [ ] Add a second `person.*` entity in HA (with or without a linked login).
+      Within one polling interval it also appears as a synced person, with no
+      further configuration.
+- [ ] Rename that person in HA. Confirm the synced Kinward profile's display
+      name updates and no duplicate profile is created.
+- [ ] Confirm the person linked to an HA admin user synced with Kinward
+      `role: "admin"`, and any person linked to a non-admin (or no) user
+      synced with `role: "member"` - there is no separate Kinward admin
+      designation step. If more than one HA user is an admin, confirm more
+      than one Kinward person shows `role: "admin"`.
+- [ ] In HA, toggle that user's admin flag off (**Settings -> People ->
+      Users**), then re-poll. Confirm the synced person's Kinward role flips
+      to `"member"` automatically, and back to `"admin"` if you toggle it on
+      again.
 
 ## 6. Submit text requests through `conversation.kinward`
 
 - [ ] **Developer Tools -> Actions**, call `conversation.process` targeting
-      `conversation.kinward` as the **mapped** HA user with a short text
-      request. It returns the truthful "no model configured" capability
-      report and a `conversation_id`.
+      `conversation.kinward` as the **synced** HA user (one with a linked
+      `person.*` entity, per step 5) with a short text request. It returns the
+      truthful "no model configured" capability report and a
+      `conversation_id`.
 - [ ] Send a second request reusing that same `conversation_id`; confirm it's
       the same value in the response (the topic continued rather than a new
       one being created).
-- [ ] Call `conversation.process` again as an **unmapped** HA user (or after
-      removing the mapping in step 5). Confirm the response comes from Home
-      Assistant's own built-in Assist agent (e.g. ask it something HA's
-      built-in agent can answer, like the time, or try a device-control
-      phrase) rather than any Kinward-generated text - and that it never
-      continues a mapped person's private topic.
+- [ ] Call `conversation.process` again as an HA user id with no synced
+      `person.*` entity. Confirm the response comes from Home Assistant's own
+      built-in Assist agent (e.g. ask it something HA's built-in agent can
+      answer, like the time, or try a device-control phrase) rather than any
+      Kinward-generated text - and that it never continues a synced person's
+      private topic.
 - [ ] Call `kinward.cli`-issued cancel: `POST
       /api/v1/integration/conversation/turns/{turnId}/cancel` for a turn
       created in this step. Confirm it reports `alreadyTerminal: true` with
       the turn's real outcome (expected - nothing is ever in-flight today).
-- [ ] `GET /api/v1/integration/topics?haUserId=<mapped HA user id>` lists the
+- [ ] `GET /api/v1/integration/topics?haUserId=<synced HA user id>` lists the
       topic(s) from this step; `PATCH` a rename and an archive/reopen, then
       `DELETE` it and confirm a follow-up `GET` 404s.
 

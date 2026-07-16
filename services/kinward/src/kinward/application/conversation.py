@@ -6,7 +6,6 @@ from typing import Literal
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from kinward.application.ha_user_mappings import resolve_mapping
 from kinward.persistence.models import AssistantRecord, PersonRecord, TopicRecord, TopicTurnRecord
 
 NO_MODEL_RESPONSE = (
@@ -17,7 +16,7 @@ NO_MODEL_RESPONSE = (
 
 @dataclass(frozen=True)
 class Unmapped:
-    """The caller's HA user has no account-bearing Kinward profile mapped - fail closed."""
+    """The caller's HA user id isn't linked to any synced Kinward person - fail closed."""
 
 
 @dataclass(frozen=True)
@@ -43,6 +42,14 @@ class AlreadyTerminal:
 
 
 CancelOutcome = Unmapped | TurnNotFound | AlreadyTerminal
+
+
+async def _resolve_person_id(session: AsyncSession, *, ha_user_id: str) -> str | None:
+    """Fail-closed resolver: None for an HA user not linked to any synced person."""
+    person_id: str | None = await session.scalar(
+        select(PersonRecord.id).where(PersonRecord.ha_user_id == ha_user_id)
+    )
+    return person_id
 
 
 async def _find_primary_assistant(session: AsyncSession, person_id: str) -> AssistantRecord | None:
@@ -72,7 +79,7 @@ async def handle_conversation_request(
     conversation_id: str | None,
     language: str,
 ) -> ConversationOutcome:
-    person_id = await resolve_mapping(session, ha_user_id=ha_user_id)
+    person_id = await _resolve_person_id(session, ha_user_id=ha_user_id)
     if person_id is None:
         return Unmapped()
 
@@ -81,7 +88,7 @@ async def handle_conversation_request(
         topic = await _find_own_topic(session, topic_id=conversation_id, person_id=person_id)
     if topic is None:
         assistant = await _find_primary_assistant(session, person_id)
-        assert assistant is not None, "bootstrap guarantees every account-bearing person has one"
+        assert assistant is not None, "sync creates a primary assistant atomically with every person"
         person = await session.get(PersonRecord, person_id)
         assert person is not None
         topic = TopicRecord(
@@ -112,7 +119,7 @@ async def cancel_turn(session: AsyncSession, *, turn_id: str, ha_user_id: str) -
     fabricated behavior: "exactly one terminal outcome is recorded" already holds because turns
     are append-only and never mutated after creation.
     """
-    person_id = await resolve_mapping(session, ha_user_id=ha_user_id)
+    person_id = await _resolve_person_id(session, ha_user_id=ha_user_id)
     if person_id is None:
         return Unmapped()
 
@@ -141,7 +148,7 @@ TopicState = Literal["open", "archived"]
 
 
 async def list_topics(session: AsyncSession, *, ha_user_id: str) -> list[TopicRecord] | Unmapped:
-    person_id = await resolve_mapping(session, ha_user_id=ha_user_id)
+    person_id = await _resolve_person_id(session, ha_user_id=ha_user_id)
     if person_id is None:
         return Unmapped()
     topics = await session.scalars(
@@ -155,7 +162,7 @@ async def list_topics(session: AsyncSession, *, ha_user_id: str) -> list[TopicRe
 async def get_topic(
     session: AsyncSession, *, ha_user_id: str, topic_id: str
 ) -> TopicRecord | TopicNotFound | Unmapped:
-    person_id = await resolve_mapping(session, ha_user_id=ha_user_id)
+    person_id = await _resolve_person_id(session, ha_user_id=ha_user_id)
     if person_id is None:
         return Unmapped()
     topic = await _find_own_topic(session, topic_id=topic_id, person_id=person_id)
@@ -173,7 +180,7 @@ async def update_topic(
     state: TopicState | None = None,
 ) -> TopicRecord | TopicNotFound | Unmapped:
     """Partial update: only fields explicitly passed are changed (rename and/or archive/reopen)."""
-    person_id = await resolve_mapping(session, ha_user_id=ha_user_id)
+    person_id = await _resolve_person_id(session, ha_user_id=ha_user_id)
     if person_id is None:
         return Unmapped()
     topic = await _find_own_topic(session, topic_id=topic_id, person_id=person_id)
@@ -191,7 +198,7 @@ async def update_topic(
 async def delete_topic(
     session: AsyncSession, *, ha_user_id: str, topic_id: str
 ) -> Deleted | TopicNotFound | Unmapped:
-    person_id = await resolve_mapping(session, ha_user_id=ha_user_id)
+    person_id = await _resolve_person_id(session, ha_user_id=ha_user_id)
     if person_id is None:
         return Unmapped()
     topic = await _find_own_topic(session, topic_id=topic_id, person_id=person_id)

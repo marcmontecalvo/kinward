@@ -8,7 +8,6 @@ from kinward.app import create_app
 from kinward.application.integration_tokens import create_token, revoke_token
 from kinward.config import Settings
 from kinward.persistence.models import (
-    AccountRecord,
     AssistantRecord,
     Base,
     HouseholdRecord,
@@ -47,6 +46,7 @@ async def _seed_household(factory) -> None:  # type: ignore[no-untyped-def]
                     display_name="Example Adult",
                     role="admin",
                     profile_kind="adult",
+                    ha_person_id="ha-person-admin",
                 ),
                 PersonRecord(
                     household_id=household.id,
@@ -60,7 +60,8 @@ async def _seed_household(factory) -> None:  # type: ignore[no-untyped-def]
         await session.commit()
 
 
-async def _seed_household_with_account(factory):  # type: ignore[no-untyped-def]
+async def _seed_household_with_synced_admin(factory):  # type: ignore[no-untyped-def]
+    """Seed a household with an admin whose HA login is synced, plus one child (no login)."""
     async with factory() as session:
         household = HouseholdRecord(name="Example House")
         session.add(household)
@@ -70,6 +71,8 @@ async def _seed_household_with_account(factory):  # type: ignore[no-untyped-def]
             display_name="Example Adult",
             role="admin",
             profile_kind="adult",
+            ha_person_id="ha-person-admin",
+            ha_user_id="ha-user-1",
         )
         child = PersonRecord(
             household_id=household.id,
@@ -79,15 +82,6 @@ async def _seed_household_with_account(factory):  # type: ignore[no-untyped-def]
             classification="private-child",
         )
         session.add_all([admin, child])
-        await session.flush()
-        session.add(
-            AccountRecord(
-                household_id=household.id,
-                person_id=admin.id,
-                email="adult@example.invalid",
-                password_verifier="x",
-            )
-        )
         await session.commit()
         return admin.id, child.id
 
@@ -184,81 +178,100 @@ async def test_no_household_reports_a_distinct_conflict() -> None:
         assert response.json()["detail"]["code"] == "household_not_configured"
 
 
-async def test_people_lists_only_account_bearing_people() -> None:
+async def test_people_lists_every_synced_person() -> None:
     client, factory = await _client()
     async with client:
-        admin_id, _child_id = await _seed_household_with_account(factory)
+        admin_id, child_id = await _seed_household_with_synced_admin(factory)
         token = await _issue_token(factory)
 
         response = await client.get(
             "/api/v1/integration/people", headers={"Authorization": f"Bearer {token}"}
         )
         assert response.status_code == 200
-        assert response.json() == [{"id": admin_id, "displayName": "Example Adult"}]
+        assert response.json() == sorted(
+            [
+                {"id": admin_id, "displayName": "Example Adult"},
+                {"id": child_id, "displayName": "Example Child"},
+            ],
+            key=lambda item: item["displayName"],
+        )
 
 
-async def test_ha_user_mappings_round_trip() -> None:
+async def test_sync_people_creates_and_updates_by_ha_person_id() -> None:
     client, factory = await _client()
     async with client:
-        admin_id, _child_id = await _seed_household_with_account(factory)
+        await _seed_household(factory)
         token = await _issue_token(factory)
         headers = {"Authorization": f"Bearer {token}"}
 
-        empty = await client.get("/api/v1/integration/ha-user-mappings", headers=headers)
-        assert empty.json() == []
-
-        put_response = await client.put(
-            "/api/v1/integration/ha-user-mappings",
+        created = await client.put(
+            "/api/v1/integration/people/sync",
             headers=headers,
-            json=[{"haUserId": "ha-user-1", "personId": admin_id}],
+            json=[{"haPersonId": "ha-person-lisa", "displayName": "Lisa"}],
         )
-        assert put_response.status_code == 200
-        assert put_response.json() == [{"haUserId": "ha-user-1", "personId": admin_id}]
+        assert created.status_code == 200
+        body = created.json()
+        assert len(body) == 1
+        assert body[0]["haPersonId"] == "ha-person-lisa"
+        assert body[0]["haUserId"] is None
+        assert body[0]["role"] == "member"
+        person_id = body[0]["id"]
 
-        listed = await client.get("/api/v1/integration/ha-user-mappings", headers=headers)
-        assert listed.json() == [{"haUserId": "ha-user-1", "personId": admin_id}]
-
-        delete_response = await client.delete(
-            "/api/v1/integration/ha-user-mappings/ha-user-1", headers=headers
+        renamed = await client.put(
+            "/api/v1/integration/people/sync",
+            headers=headers,
+            json=[{"haPersonId": "ha-person-lisa", "haUserId": "ha-user-lisa", "displayName": "Elisabeth"}],
         )
-        assert delete_response.status_code == 204
+        assert renamed.status_code == 200
+        renamed_body = renamed.json()
+        assert renamed_body[0]["id"] == person_id
+        assert renamed_body[0]["displayName"] == "Elisabeth"
+        assert renamed_body[0]["haUserId"] == "ha-user-lisa"
 
-        after_delete = await client.get("/api/v1/integration/ha-user-mappings", headers=headers)
-        assert after_delete.json() == []
+        async with factory() as session:
+            assistant = await session.scalar(
+                select(AssistantRecord).where(AssistantRecord.owner_person_id == person_id)
+            )
+            assert assistant is not None and assistant.kind == "primary"
 
 
-async def test_ha_user_mappings_rejects_a_non_account_bearing_person() -> None:
+async def test_sync_derives_admin_role_from_is_admin_and_allows_multiple_admins() -> None:
+    """Kinward has no admin designation of its own - HA's own admin flag is the whole rule."""
     client, factory = await _client()
     async with client:
-        _admin_id, child_id = await _seed_household_with_account(factory)
+        async with factory() as session:
+            session.add(HouseholdRecord(name="Example House"))
+            await session.commit()
         token = await _issue_token(factory)
         headers = {"Authorization": f"Bearer {token}"}
 
         response = await client.put(
-            "/api/v1/integration/ha-user-mappings",
+            "/api/v1/integration/people/sync",
             headers=headers,
-            json=[{"haUserId": "ha-user-1", "personId": child_id}],
+            json=[
+                {"haPersonId": "ha-person-1", "haUserId": "ha-user-1", "displayName": "Marc", "isAdmin": True},
+                {"haPersonId": "ha-person-2", "haUserId": "ha-user-2", "displayName": "Lisa", "isAdmin": True},
+                {"haPersonId": "ha-person-3", "displayName": "Kid", "isAdmin": False},
+            ],
         )
-        assert response.status_code == 422
-        assert response.json()["detail"]["code"] == "person_not_account_bearing"
+        assert response.status_code == 200
+        roles = {person["haPersonId"]: person["role"] for person in response.json()}
+        assert roles == {"ha-person-1": "admin", "ha-person-2": "admin", "ha-person-3": "member"}
 
-        after_failed_put = await client.get(
-            "/api/v1/integration/ha-user-mappings", headers=headers
+        demoted = await client.put(
+            "/api/v1/integration/people/sync",
+            headers=headers,
+            json=[{"haPersonId": "ha-person-1", "haUserId": "ha-user-1", "displayName": "Marc", "isAdmin": False}],
         )
-        assert after_failed_put.json() == []
+        assert demoted.status_code == 200
+        assert demoted.json()[0]["role"] == "member"
 
 
-async def test_ha_user_mapping_endpoints_require_a_bearer_token() -> None:
+async def test_integration_endpoints_require_a_bearer_token() -> None:
     client, _factory = await _client()
     async with client:
         assert (await client.get("/api/v1/integration/people")).status_code == 401
-        assert (await client.get("/api/v1/integration/ha-user-mappings")).status_code == 401
-        assert (
-            await client.put("/api/v1/integration/ha-user-mappings", json=[])
-        ).status_code == 401
-        assert (
-            await client.delete("/api/v1/integration/ha-user-mappings/ha-user-1")
-        ).status_code == 401
+        assert (await client.put("/api/v1/integration/people/sync", json=[])).status_code == 401
         assert (
             await client.post("/api/v1/integration/conversation", json={"haUserId": "x", "text": "hi"})
         ).status_code == 401
@@ -267,7 +280,7 @@ async def test_ha_user_mapping_endpoints_require_a_bearer_token() -> None:
 async def test_conversation_reports_unmapped_users_truthfully() -> None:
     client, factory = await _client()
     async with client:
-        await _seed_household_with_account(factory)
+        await _seed_household_with_synced_admin(factory)
         token = await _issue_token(factory)
 
         response = await client.post(
@@ -285,7 +298,7 @@ async def test_conversation_reports_unmapped_users_truthfully() -> None:
 async def test_conversation_persists_and_continues_a_topic_for_a_mapped_user() -> None:
     client, factory = await _client()
     async with client:
-        admin_id, _child_id = await _seed_household_with_account(factory)
+        admin_id, _child_id = await _seed_household_with_synced_admin(factory)
         async with factory() as session:
             admin = await session.get(PersonRecord, admin_id)
             assert admin is not None
@@ -300,13 +313,6 @@ async def test_conversation_persists_and_continues_a_topic_for_a_mapped_user() -
             await session.commit()
         token = await _issue_token(factory)
         headers = {"Authorization": f"Bearer {token}"}
-
-        put_response = await client.put(
-            "/api/v1/integration/ha-user-mappings",
-            headers=headers,
-            json=[{"haUserId": "ha-user-1", "personId": admin_id}],
-        )
-        assert put_response.status_code == 200
 
         first = await client.post(
             "/api/v1/integration/conversation",
@@ -335,7 +341,7 @@ async def test_conversation_persists_and_continues_a_topic_for_a_mapped_user() -
 async def test_cancel_turn_reports_already_terminal_for_a_real_turn() -> None:
     client, factory = await _client()
     async with client:
-        admin_id, _child_id = await _seed_household_with_account(factory)
+        admin_id, _child_id = await _seed_household_with_synced_admin(factory)
         async with factory() as session:
             admin = await session.get(PersonRecord, admin_id)
             assert admin is not None
@@ -350,11 +356,6 @@ async def test_cancel_turn_reports_already_terminal_for_a_real_turn() -> None:
             await session.commit()
         token = await _issue_token(factory)
         headers = {"Authorization": f"Bearer {token}"}
-        await client.put(
-            "/api/v1/integration/ha-user-mappings",
-            headers=headers,
-            json=[{"haUserId": "ha-user-1", "personId": admin_id}],
-        )
 
         conversation_response = await client.post(
             "/api/v1/integration/conversation",
@@ -384,7 +385,7 @@ async def test_cancel_turn_reports_already_terminal_for_a_real_turn() -> None:
 async def test_cancel_turn_not_found_is_indistinguishable_from_unmapped() -> None:
     client, factory = await _client()
     async with client:
-        await _seed_household_with_account(factory)
+        await _seed_household_with_synced_admin(factory)
         token = await _issue_token(factory)
         headers = {"Authorization": f"Bearer {token}"}
 
@@ -398,9 +399,8 @@ async def test_cancel_turn_not_found_is_indistinguishable_from_unmapped() -> Non
 
 
 async def _mapped_headers_and_topic(client, factory):  # type: ignore[no-untyped-def]
-    """Seed a mapped account-bearing person, create one topic via /conversation, return
-    (auth headers, topic_id)."""
-    admin_id, _child_id = await _seed_household_with_account(factory)
+    """Seed a synced admin, create one topic via /conversation, return (auth headers, topic_id)."""
+    admin_id, _child_id = await _seed_household_with_synced_admin(factory)
     async with factory() as session:
         admin = await session.get(PersonRecord, admin_id)
         assert admin is not None
@@ -412,11 +412,6 @@ async def _mapped_headers_and_topic(client, factory):  # type: ignore[no-untyped
         await session.commit()
     token = await _issue_token(factory)
     headers = {"Authorization": f"Bearer {token}"}
-    await client.put(
-        "/api/v1/integration/ha-user-mappings",
-        headers=headers,
-        json=[{"haUserId": "ha-user-1", "personId": admin_id}],
-    )
     conversation_response = await client.post(
         "/api/v1/integration/conversation",
         headers=headers,
@@ -515,33 +510,20 @@ async def test_topic_endpoints_fail_closed_for_a_different_mapped_person() -> No
                 display_name="Other Adult",
                 role="member",
                 profile_kind="adult",
+                ha_person_id="ha-person-other",
+                ha_user_id="ha-user-2",
             )
             session.add(other_person)
             await session.flush()
-            session.add_all(
-                [
-                    AccountRecord(
-                        household_id=household.id,
-                        person_id=other_person.id,
-                        email="other4@example.invalid",
-                        password_verifier="x",
-                    ),
-                    AssistantRecord(
-                        household_id=household.id,
-                        owner_person_id=other_person.id,
-                        name="Nova",
-                        kind="primary",
-                    ),
-                ]
+            session.add(
+                AssistantRecord(
+                    household_id=household.id,
+                    owner_person_id=other_person.id,
+                    name="Nova",
+                    kind="primary",
+                )
             )
             await session.commit()
-            other_person_id = other_person.id
-
-        await client.put(
-            "/api/v1/integration/ha-user-mappings",
-            headers=headers,
-            json=[{"haUserId": "ha-user-2", "personId": other_person_id}],
-        )
 
         response = await client.patch(
             f"/api/v1/integration/topics/{topic_id}",

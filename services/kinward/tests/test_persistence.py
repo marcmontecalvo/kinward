@@ -19,7 +19,8 @@ async def test_single_household_schema_round_trip() -> None:
             household_id=household.id,
             display_name="Example Adult",
             role="admin",
-            email="adult@example.invalid",
+            ha_person_id="ha-person-admin",
+            ha_user_id="ha-user-admin",
         )
         session.add(person)
         await session.flush()

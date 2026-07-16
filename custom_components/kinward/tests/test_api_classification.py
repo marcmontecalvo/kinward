@@ -5,22 +5,18 @@ from kinward.api import (
     BriefingStatus,
     ContextFailure,
     ContextSuccess,
-    HaUserMapping,
-    MappingsFailure,
-    MappingsSuccess,
     NextEventStatus,
-    PeopleFailure,
-    PeopleSuccess,
-    Person,
     SendMessageFailure,
     SendMessageSuccess,
     SummaryFailure,
     SummarySuccess,
+    SyncedPerson,
+    SyncPeopleFailure,
+    SyncPeopleSuccess,
     classify_context_response,
-    classify_mappings_response,
-    classify_people_response,
     classify_send_message_response,
     classify_summary_response,
+    classify_sync_people_response,
 )
 
 
@@ -121,44 +117,61 @@ def test_classify_summary_response_missing_household_is_unknown() -> None:
     assert classify_summary_response(200, {}) == SummaryFailure("unknown")
 
 
-def test_classify_people_response_success() -> None:
-    payload = [{"id": "person-1", "displayName": "Example Adult"}]
-    assert classify_people_response(200, payload) == PeopleSuccess(
-        people=[Person(id="person-1", display_name="Example Adult")]
+def _synced_person_payload(**overrides: object) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "id": "person-1",
+        "haPersonId": "ha-person-1",
+        "haUserId": "ha-user-1",
+        "displayName": "Example Adult",
+        "role": "member",
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_classify_sync_people_response_success() -> None:
+    payload = [_synced_person_payload()]
+    assert classify_sync_people_response(200, payload) == SyncPeopleSuccess(
+        people=[
+            SyncedPerson(
+                id="person-1",
+                ha_person_id="ha-person-1",
+                ha_user_id="ha-user-1",
+                display_name="Example Adult",
+                role="member",
+            )
+        ]
     )
 
 
-def test_classify_people_response_empty_list() -> None:
-    assert classify_people_response(200, []) == PeopleSuccess(people=[])
+def test_classify_sync_people_response_person_with_no_login() -> None:
+    payload = [_synced_person_payload(haUserId=None)]
+    result = classify_sync_people_response(200, payload)
+    assert isinstance(result, SyncPeopleSuccess)
+    assert result.people[0].ha_user_id is None
 
 
-def test_classify_people_response_malformed_item_is_unknown() -> None:
-    assert classify_people_response(200, [{"id": "person-1"}]) == PeopleFailure("unknown")
+def test_classify_sync_people_response_empty_list() -> None:
+    assert classify_sync_people_response(200, []) == SyncPeopleSuccess(people=[])
 
 
-def test_classify_people_response_invalid_auth() -> None:
-    assert classify_people_response(401, []) == PeopleFailure("invalid_auth")
+def test_classify_sync_people_response_malformed_item_is_unknown() -> None:
+    assert classify_sync_people_response(200, [{"id": "person-1"}]) == SyncPeopleFailure("unknown")
 
 
-def test_classify_mappings_response_success() -> None:
-    payload = [{"haUserId": "ha-user-1", "personId": "person-1"}]
-    assert classify_mappings_response(200, payload) == MappingsSuccess(
-        mappings=[HaUserMapping(ha_user_id="ha-user-1", person_id="person-1")]
-    )
+def test_classify_sync_people_response_invalid_auth() -> None:
+    assert classify_sync_people_response(401, []) == SyncPeopleFailure("invalid_auth")
 
 
-def test_classify_mappings_response_empty_list() -> None:
-    assert classify_mappings_response(200, []) == MappingsSuccess(mappings=[])
+def test_classify_sync_people_response_household_not_configured() -> None:
+    assert classify_sync_people_response(409, []) == SyncPeopleFailure("household_not_configured")
 
 
-def test_classify_mappings_response_rejected_upsert_is_unknown() -> None:
-    assert classify_mappings_response(422, {"detail": {"code": "person_not_account_bearing"}}) == (
-        MappingsFailure("unknown")
-    )
-
-
-def test_classify_mappings_response_invalid_auth() -> None:
-    assert classify_mappings_response(401, []) == MappingsFailure("invalid_auth")
+def test_classify_sync_people_response_reports_admin_role() -> None:
+    payload = [_synced_person_payload(role="admin")]
+    result = classify_sync_people_response(200, payload)
+    assert isinstance(result, SyncPeopleSuccess)
+    assert result.people[0].role == "admin"
 
 
 def test_classify_send_message_response_mapped_success() -> None:

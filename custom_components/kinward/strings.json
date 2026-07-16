@@ -21,22 +21,6 @@
       "already_configured": "This household is already configured."
     }
   },
-  "options": {
-    "step": {
-      "map_user": {
-        "title": "Map Home Assistant users to Kinward profiles",
-        "description": "Which Kinward profile is {ha_user_name}? Choose \"Not mapped\" if they don't have one yet.",
-        "data": {
-          "person_id": "Kinward profile"
-        }
-      }
-    },
-    "abort": {
-      "cannot_connect": "Could not reach the Kinward backend to load or save the mapping.",
-      "no_account_bearing_people": "No Kinward profile has an account yet, so there is nothing to map to.",
-      "no_ha_users": "No Home Assistant users are available to map."
-    }
-  },
   "entity": {
     "binary_sensor": {
       "backend": { "name": "Backend" }

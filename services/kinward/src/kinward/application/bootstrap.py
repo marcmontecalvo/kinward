@@ -7,26 +7,20 @@ import json
 import secrets
 from typing import Any, Protocol
 
-from argon2 import PasswordHasher
 from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from kinward.persistence.models import (
-    AccountRecord,
     ActivityRecord,
     AssistantRecord,
     BootstrapAttemptRecord,
     HouseholdRecord,
     OutboxMessageRecord,
-    PersonRecord,
     PetRecord,
     SetupCapabilityRecord,
 )
 from kinward.domain.assistant_ownership import validate_owner_count
-
-
-PASSWORD_HASHER = PasswordHasher()
 
 
 class BootstrapUnitOfWork(Protocol):
@@ -57,12 +51,6 @@ class BootstrapError(Exception):
 
 
 @dataclass(frozen=True)
-class SelectedProfile:
-    display_name: str
-    kind: str
-
-
-@dataclass(frozen=True)
 class SelectedPet:
     display_name: str
     species: str
@@ -72,12 +60,7 @@ class SelectedPet:
 @dataclass(frozen=True)
 class BootstrapCommand:
     household_name: str
-    admin_name: str
-    admin_email: str
-    password: str
-    assistant_name: str
     fallback_assistant_name: str
-    profiles: tuple[SelectedProfile, ...]
     pets: tuple[SelectedPet, ...]
     idempotency_key: str
     setup_authorization: str
@@ -85,12 +68,7 @@ class BootstrapCommand:
     def fingerprint(self) -> str:
         payload = {
             "household_name": self.household_name.strip(),
-            "admin_name": self.admin_name.strip(),
-            "admin_email": self.admin_email.strip().lower(),
-            "password": self.password,
-            "assistant_name": self.assistant_name.strip(),
             "fallback_assistant_name": self.fallback_assistant_name.strip(),
-            "profiles": [profile.__dict__ for profile in self.profiles],
             "pets": [
                 {"display_name": pet.display_name, "species": pet.species, "shared_facts": pet.shared_facts}
                 for pet in self.pets
@@ -104,18 +82,9 @@ def capability_hash(value: str) -> str:
 
 
 def enforce_bootstrap_policy(command: BootstrapCommand) -> None:
-    primary_valid, _ = validate_owner_count(assistant_type="personal", owner_count=1)
     fallback_valid, _ = validate_owner_count(assistant_type="shared-fallback", owner_count=0)
-    if not primary_valid or not fallback_valid:
+    if not fallback_valid:
         raise BootstrapError("ownership_invariant", "Assistant ownership policy rejected setup.")
-    if command.assistant_name.strip().casefold() == command.fallback_assistant_name.strip().casefold():
-        raise BootstrapError(
-            "assistant_name_conflict",
-            "The personal and household assistant need different names.",
-            retryable=True,
-        )
-    if any(profile.kind not in {"adult", "child"} for profile in command.profiles):
-        raise BootstrapError("profile_kind_invalid", "Only adult and child profiles are supported.")
 
 
 async def execute_bootstrap(
@@ -176,27 +145,6 @@ async def execute_bootstrap(
             "Setup could not be committed safely. Retry with the same request identity.",
             retryable=True,
         ) from error
-    admin = PersonRecord(
-        household_id=household.id,
-        display_name=command.admin_name.strip(),
-        role="admin",
-        email=command.admin_email.strip().lower(),
-        profile_kind="adult",
-    )
-    session.add(admin)
-    await session.flush()
-    account = AccountRecord(
-        household_id=household.id,
-        person_id=admin.id,
-        email=command.admin_email.strip().lower(),
-        password_verifier=PASSWORD_HASHER.hash(command.password),
-    )
-    primary = AssistantRecord(
-        household_id=household.id,
-        owner_person_id=admin.id,
-        name=command.assistant_name.strip(),
-        kind="primary",
-    )
     fallback = AssistantRecord(
         household_id=household.id,
         owner_person_id=None,
@@ -204,17 +152,7 @@ async def execute_bootstrap(
         kind="household-fallback",
         classification="household-shared",
     )
-    session.add_all([account, primary, fallback])
-    for profile in command.profiles:
-        session.add(
-            PersonRecord(
-                household_id=household.id,
-                display_name=profile.display_name.strip(),
-                role="member",
-                profile_kind=profile.kind,
-                classification="private-child" if profile.kind == "child" else "private-person",
-            )
-        )
+    session.add(fallback)
     for pet in command.pets:
         session.add(
             PetRecord(
@@ -227,8 +165,6 @@ async def execute_bootstrap(
     await session.flush()
     result = {
         "household_id": household.id,
-        "admin_person_id": admin.id,
-        "primary_assistant_id": primary.id,
         "fallback_assistant_id": fallback.id,
     }
     session.add_all(
@@ -240,8 +176,8 @@ async def execute_bootstrap(
             ),
             ActivityRecord(
                 household_id=household.id,
-                person_id=admin.id,
-                assistant_id=primary.id,
+                person_id=None,
+                assistant_id=fallback.id,
                 summary="Household setup completed",
                 outcome="completed",
                 detail={"classification": "system-operational"},

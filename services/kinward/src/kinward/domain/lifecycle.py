@@ -19,8 +19,6 @@ BOOTSTRAP_RECORD_LIFECYCLES: dict[str, RecordLifecycle] = {
     "child": RecordLifecycle("private-child", True, True, "quarantine", "delete with profile"),
     "pet": RecordLifecycle("household-shared", True, True, "quarantine", "delete with pet profile"),
     "relationship": RecordLifecycle("household-shared", True, True, "quarantine", "delete with referenced profile"),
-    "account": RecordLifecycle("private-person", True, False, "quarantine", "delete with profile"),
-    "password_verifier": RecordLifecycle("private-person", False, False, "regenerate", "delete with account"),
     "primary_assistant": RecordLifecycle("private-person", True, False, "quarantine", "delete with owner"),
     "fallback_assistant": RecordLifecycle("household-shared", True, False, "restore", "delete with household"),
     "setup_capability": RecordLifecycle("system-operational", False, False, "regenerate", "delete after terminal setup/reset"),

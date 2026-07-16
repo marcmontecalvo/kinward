@@ -5,19 +5,17 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from kinward.persistence.models import AccountRecord, PersonRecord
+from kinward.persistence.models import PersonRecord
 
 
 @dataclass(frozen=True)
-class AccountBearingPerson:
+class Person:
     id: str
     display_name: str
 
 
-async def list_account_bearing_people(session: AsyncSession) -> list[AccountBearingPerson]:
+async def list_people(session: AsyncSession) -> list[Person]:
     rows = await session.execute(
-        select(PersonRecord.id, PersonRecord.display_name)
-        .join(AccountRecord, AccountRecord.person_id == PersonRecord.id)
-        .order_by(PersonRecord.display_name)
+        select(PersonRecord.id, PersonRecord.display_name).order_by(PersonRecord.display_name)
     )
-    return [AccountBearingPerson(id=row.id, display_name=row.display_name) for row in rows]
+    return [Person(id=row.id, display_name=row.display_name) for row in rows]
