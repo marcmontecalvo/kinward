@@ -133,6 +133,29 @@ class SyncPeopleFailure:
 SyncPeopleResult = SyncPeopleSuccess | SyncPeopleFailure
 
 
+@dataclass(frozen=True)
+class Pet:
+    """A household-shared pet profile, as reported by the pets endpoint."""
+
+    id: str
+    display_name: str
+    species: str
+    shared_facts: list[str]
+
+
+@dataclass(frozen=True)
+class PetsSuccess:
+    pets: list[Pet]
+
+
+@dataclass(frozen=True)
+class PetsFailure:
+    error: ConfigFlowErrorCode
+
+
+PetsResult = PetsSuccess | PetsFailure
+
+
 def classify_context_response(status_code: int, payload: Any) -> ContextResult:
     if status_code == 200 and isinstance(payload, dict):
         household_id = payload.get("householdId")
@@ -244,6 +267,40 @@ def classify_sync_people_response(status_code: int, payload: Any) -> SyncPeopleR
     return SyncPeopleSuccess(people=people)
 
 
+def _pet_from(payload: Any) -> Pet | None:
+    if not isinstance(payload, dict):
+        return None
+    pet_id = payload.get("id")
+    display_name = payload.get("displayName")
+    species = payload.get("species")
+    shared_facts = payload.get("sharedFacts")
+    if (
+        not isinstance(pet_id, str)
+        or not isinstance(display_name, str)
+        or not isinstance(species, str)
+        or not isinstance(shared_facts, list)
+        or not all(isinstance(fact, str) for fact in shared_facts)
+    ):
+        return None
+    return Pet(id=pet_id, display_name=display_name, species=species, shared_facts=shared_facts)
+
+
+def classify_pets_response(status_code: int, payload: Any) -> PetsResult:
+    if status_code == 401:
+        return PetsFailure("invalid_auth")
+    if status_code == 409:
+        return PetsFailure("household_not_configured")
+    if status_code != 200 or not isinstance(payload, list):
+        return PetsFailure("unknown")
+    pets: list[Pet] = []
+    for item in payload:
+        pet = _pet_from(item)
+        if pet is None:
+            return PetsFailure("unknown")
+        pets.append(pet)
+    return PetsSuccess(pets=pets)
+
+
 def classify_send_message_response(status_code: int, payload: Any) -> SendMessageResult:
     if status_code == 401:
         return SendMessageFailure("invalid_auth")
@@ -317,6 +374,13 @@ class KinwardApiClient:
         except (TimeoutError, aiohttp.ClientError):
             return SyncPeopleFailure("cannot_connect")
         return classify_sync_people_response(status, payload)
+
+    async def async_fetch_pets(self) -> PetsResult:
+        try:
+            status, payload = await self._request("GET", "/api/v1/integration/pets")
+        except (TimeoutError, aiohttp.ClientError):
+            return PetsFailure("cannot_connect")
+        return classify_pets_response(status, payload)
 
     async def async_send_conversation_message(
         self, *, ha_user_id: str, text: str, conversation_id: str | None, language: str

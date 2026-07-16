@@ -7,7 +7,17 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 import homeassistant.util.dt as dt_util
 
-from .api import HaPerson, KinwardApiClient, SummaryFailure, SummarySuccess, SyncPeopleFailure
+from .api import (
+    HaPerson,
+    KinwardApiClient,
+    Pet,
+    PetsFailure,
+    SummaryFailure,
+    SummarySuccess,
+    SyncedPerson,
+    SyncPeopleFailure,
+    SyncPeopleSuccess,
+)
 from .const import DEFAULT_UPDATE_INTERVAL, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
@@ -28,6 +38,8 @@ class KinwardDataUpdateCoordinator(DataUpdateCoordinator[SummarySuccess]):
         self._client = client
         self.household_id = household_id
         self.last_success_at: datetime | None = None
+        self.people: list[SyncedPerson] = []
+        self.pets: list[Pet] = []
 
     @property
     def client(self) -> KinwardApiClient:
@@ -56,9 +68,20 @@ class KinwardDataUpdateCoordinator(DataUpdateCoordinator[SummarySuccess]):
         result = await self._client.async_sync_people(people)
         if isinstance(result, SyncPeopleFailure):
             _LOGGER.warning("Kinward person sync failed: %s", result.error)
+            return
+        assert isinstance(result, SyncPeopleSuccess)
+        self.people = result.people
+
+    async def _async_fetch_pets(self) -> None:
+        result = await self._client.async_fetch_pets()
+        if isinstance(result, PetsFailure):
+            _LOGGER.warning("Kinward pets fetch failed: %s", result.error)
+            return
+        self.pets = result.pets
 
     async def _async_update_data(self) -> SummarySuccess:
         await self._async_sync_people()
+        await self._async_fetch_pets()
         result = await self._client.async_fetch_summary()
         if isinstance(result, SummaryFailure):
             raise UpdateFailed(result.error)

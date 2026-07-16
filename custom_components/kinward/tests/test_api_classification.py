@@ -6,6 +6,9 @@ from kinward.api import (
     ContextFailure,
     ContextSuccess,
     NextEventStatus,
+    Pet,
+    PetsFailure,
+    PetsSuccess,
     SendMessageFailure,
     SendMessageSuccess,
     SummaryFailure,
@@ -14,6 +17,7 @@ from kinward.api import (
     SyncPeopleFailure,
     SyncPeopleSuccess,
     classify_context_response,
+    classify_pets_response,
     classify_send_message_response,
     classify_summary_response,
     classify_sync_people_response,
@@ -172,6 +176,47 @@ def test_classify_sync_people_response_reports_admin_role() -> None:
     result = classify_sync_people_response(200, payload)
     assert isinstance(result, SyncPeopleSuccess)
     assert result.people[0].role == "admin"
+
+
+def _pet_payload(**overrides: object) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "id": "pet-1",
+        "displayName": "Biscuit",
+        "species": "Dog",
+        "sharedFacts": ["Needs a walk every morning"],
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_classify_pets_response_success() -> None:
+    payload = [_pet_payload()]
+    assert classify_pets_response(200, payload) == PetsSuccess(
+        pets=[
+            Pet(
+                id="pet-1",
+                display_name="Biscuit",
+                species="Dog",
+                shared_facts=["Needs a walk every morning"],
+            )
+        ]
+    )
+
+
+def test_classify_pets_response_empty_list() -> None:
+    assert classify_pets_response(200, []) == PetsSuccess(pets=[])
+
+
+def test_classify_pets_response_malformed_item_is_unknown() -> None:
+    assert classify_pets_response(200, [{"id": "pet-1"}]) == PetsFailure("unknown")
+
+
+def test_classify_pets_response_invalid_auth() -> None:
+    assert classify_pets_response(401, []) == PetsFailure("invalid_auth")
+
+
+def test_classify_pets_response_household_not_configured() -> None:
+    assert classify_pets_response(409, []) == PetsFailure("household_not_configured")
 
 
 def test_classify_send_message_response_mapped_success() -> None:

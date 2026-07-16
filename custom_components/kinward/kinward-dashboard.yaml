@@ -60,3 +60,34 @@ views:
           - type: calendar
             entities:
               - calendar.replace_with_household_calendar
+
+      - type: grid
+        cards:
+          - type: heading
+            heading: Household roster
+          - type: markdown
+            title: People
+            content: >-
+              {% set people = state_attr('sensor.kinward_people', 'people') %}
+              {% if people %}
+              | Name | Role | HA login |
+              | --- | --- | --- |
+              {% for person in people -%}
+              | {{ person.display_name }} | {{ person.role }} | {{ 'yes' if person.ha_user_id else 'no' }} |
+              {% endfor %}
+              {% else %}
+              No people synced yet.
+              {% endif %}
+          - type: markdown
+            title: Pets
+            content: >-
+              {% set pets = state_attr('sensor.kinward_pets', 'pets') %}
+              {% if pets %}
+              | Name | Species |
+              | --- | --- |
+              {% for pet in pets -%}
+              | {{ pet.display_name }} | {{ pet.species }} |
+              {% endfor %}
+              {% else %}
+              No pets on record yet.
+              {% endif %}

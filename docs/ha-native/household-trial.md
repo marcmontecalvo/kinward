@@ -44,6 +44,8 @@ do not silently work around a problem to make a checkbox pass.
       **Settings -> People** if this is a fresh instance) and shows a state.
 - [ ] `sensor.kinward_household_status` shows the real adult/child counts.
 - [ ] `binary_sensor.kinward_backend` is `on`.
+- [ ] `sensor.kinward_people` exists; its state is the synced person count and
+      its `people` attribute lists each person with `role` (`admin`/`member`).
 
 ## 4. Run refresh or briefing generation from HA
 
@@ -54,8 +56,9 @@ do not silently work around a problem to make a checkbox pass.
 ## 5. Confirm people sync automatically from Home Assistant
 
 - [ ] Within one polling interval of adding the integration (step 2), every
-      existing `person.*` entity appears as a synced Kinward person on the
-      backend (`GET /api/v1/integration/people`).
+      existing `person.*` entity appears as a synced Kinward person, visible
+      either via `sensor.kinward_people`'s `people` attribute in
+      **Developer Tools -> States** or `GET /api/v1/integration/people`.
 - [ ] Add a second `person.*` entity in HA (with or without a linked login).
       Within one polling interval it also appears as a synced person, with no
       further configuration.
@@ -65,7 +68,10 @@ do not silently work around a problem to make a checkbox pass.
       `role: "admin"`, and any person linked to a non-admin (or no) user
       synced with `role: "member"` - there is no separate Kinward admin
       designation step. If more than one HA user is an admin, confirm more
-      than one Kinward person shows `role: "admin"`.
+      than one Kinward person shows `role: "admin"`. This is visible directly
+      in `sensor.kinward_people`'s `people` attribute (also rendered as a
+      table in the dashboard's "Household roster" view, step 8) - no API call
+      needed to check who's an admin.
 - [ ] In HA, toggle that user's admin flag off (**Settings -> People ->
       Users**), then re-poll. Confirm the synced person's Kinward role flips
       to `"member"` automatically, and back to `"admin"` if you toggle it on
@@ -110,6 +116,37 @@ do not silently work around a problem to make a checkbox pass.
       IDs substituted in.
 - [ ] The dashboard renders correctly in the HA web UI and in the Companion
       app on at least one device.
+- [ ] The "Household roster" view's People/Pets tables render (not "No people
+      synced yet." once step 5 has run at least once).
+
+## 9. Pet CRUD (admin-only, backend-only - no HA-side create/edit form yet)
+
+Pets have no HA form to add or edit them (Epic 10's custom-card/panel gate
+hasn't been triggered), so creation and edits go through the backend API
+directly using the integration token and a synced admin's `ha_user_id`
+(the same one visible in step 5's `sensor.kinward_people`). Reading the
+result back is always visible in HA via `sensor.kinward_pets`.
+
+- [ ] Create a pet:
+      ```bash
+      curl -s -X POST http://localhost:8000/api/v1/integration/pets \
+        -H "Authorization: Bearer <integration token>" \
+        -H "Content-Type: application/json" \
+        -d '{"haUserId": "<admin ha_user_id>", "displayName": "Biscuit", "species": "Dog", "sharedFacts": ["Needs a walk every morning"]}'
+      ```
+      Returns `201` with the new pet's `id`. Within one polling interval,
+      `sensor.kinward_pets` shows the updated count and the pet in its `pets`
+      attribute (and the dashboard's Pets table).
+- [ ] Update it: `PATCH /api/v1/integration/pets/{id}` with the same
+      `haUserId` plus any of `displayName`/`species`/`sharedFacts`. Confirm
+      the change is reflected after the next poll.
+- [ ] Delete it: `DELETE /api/v1/integration/pets/{id}?haUserId=<admin ha_user_id>`
+      returns `204`; confirm it disappears from `sensor.kinward_pets` after
+      the next poll.
+- [ ] Confirm a non-admin `haUserId` (or an unmapped one) gets `403
+      admin_required` on create/update/delete, and that plain `GET /pets`
+      needs only a valid integration token (no admin check) since pet facts
+      are household-shared, not privacy-sensitive.
 
 ## Notes / defects observed
 
