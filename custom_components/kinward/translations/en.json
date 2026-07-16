@@ -24,8 +24,8 @@
   "options": {
     "step": {
       "init": {
-        "title": "Model and memory connections",
-        "description": "Choose what LLM this household's assistants use, and which of the two memory systems (Honcho for conversation memory, llm_wiki for household facts) they connect to. Leave a backend set to \"none\" to keep it truthfully disabled.",
+        "title": "Model, memory, and assistant policy",
+        "description": "Choose what LLM this household's assistants use, and which of the two memory systems (Honcho for conversation memory, llm_wiki for household facts) they connect to. Leave a backend set to \"none\" to keep it truthfully disabled. Also sets household policy for creating additional personal assistants - a person may already have more than one.",
         "data": {
           "model_provider": "Model provider",
           "model_base_url": "Model API base URL",
@@ -34,7 +34,9 @@
           "memory_backend": "Conversational memory backend",
           "honcho_url": "Honcho URL",
           "knowledge_backend": "Household knowledge backend",
-          "llm_wiki_url": "llm_wiki URL"
+          "llm_wiki_url": "llm_wiki URL",
+          "max_assistants_per_person": "Max assistants per person (0 = no limit)",
+          "require_admin_approval_for_assistant_creation": "Require admin approval to create additional assistants"
         }
       }
     },

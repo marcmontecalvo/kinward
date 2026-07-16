@@ -22,6 +22,7 @@ def test_every_bootstrap_record_has_explicit_lifecycle_metadata() -> None:
         "surface_layout",
         "layout_activation_attempt",
         "provider_settings",
+        "assistant_policy",
     }
     for lifecycle in BOOTSTRAP_RECORD_LIFECYCLES.values():
         assert lifecycle.classification

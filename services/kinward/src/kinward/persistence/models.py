@@ -58,7 +58,6 @@ class AssistantRecord(Base):
     __tablename__ = "assistants"
     __table_args__ = (
         UniqueConstraint("household_id", "name", name="uq_assistants_household_name"),
-        UniqueConstraint("owner_person_id", name="uq_assistants_personal_owner"),
         CheckConstraint(
             "(kind = 'household-fallback' AND owner_person_id IS NULL) OR "
             "(kind = 'primary' AND owner_person_id IS NOT NULL)",
@@ -87,6 +86,29 @@ class AssistantRecord(Base):
 
     household: Mapped[HouseholdRecord] = relationship(back_populates="assistants")
     owner: Mapped[PersonRecord | None] = relationship(back_populates="assistants")
+
+
+class AssistantPolicyRecord(Base):
+    """Admin-editable household policy for creating additional owned assistants.
+
+    One row per household (created lazily on first read), changed from the Kinward
+    integration's options flow in Home Assistant, same as ``ProviderSettingsRecord``.
+    """
+
+    __tablename__ = "assistant_policy"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    household_id: Mapped[str] = mapped_column(
+        ForeignKey("households.id", ondelete="CASCADE"), nullable=False, unique=True
+    )
+    max_assistants_per_person: Mapped[int | None] = mapped_column(nullable=True)
+    require_admin_approval_for_creation: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False
+    )
+    record_version: Mapped[int] = mapped_column(default=1, nullable=False)
+    classification: Mapped[str] = mapped_column(String(32), default="household-shared", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now, nullable=False)
 
 
 class SurfaceLayoutRecord(Base):

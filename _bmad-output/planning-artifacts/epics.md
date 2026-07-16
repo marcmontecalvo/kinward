@@ -227,6 +227,16 @@ Each account-bearing person can use exactly one private primary assistant throug
 - Model/tool output is treated as untrusted typed proposals.
 - No-model operation still supports local commands and truthful capability reporting.
 
+> **Implemented (2026-07-16):** `application/conversation.handle_conversation_request` now generates a
+> real reply instead of always returning the "no model configured" placeholder. A new `kinward/llm/`
+> package (`ModelProvider` protocol; `OpenAiCompatibleModelProvider` for OpenAI/Ollama/vLLM/llama.cpp/LM
+> Studio, `AnthropicModelProvider`, and `NullModelProvider` for the truthful no-model-configured state)
+> is called with the full prior-turn history as context. "No-model operation still supports truthful
+> capability reporting" holds exactly as before via `NullModelProvider` - never a fabricated reply.
+> Provider/model/API key are admin-editable per household (`ProviderSettingsRecord`), changed live from
+> the Kinward integration's options flow in Home Assistant; the API key is never echoed back once set.
+> Tests in `tests/test_llm_providers.py` and `tests/test_conversation.py`.
+
 ### Story 2.3: Support cancellation and terminal integrity
 
 - Cancellation stops further model output and prevents every unsubmitted action.
@@ -321,6 +331,36 @@ Safely manage household people and assistant ownership while keeping initial HA-
 > `PATCH /api/v1/integration/assistants/primary`. It only ever touches the `AssistantRecord`, never the
 > owning `PersonRecord`, so preferences structurally cannot alter authority/privacy/action policy.
 > Tests in `tests/test_assistants.py` and `tests/test_integration_api.py`.
+>
+> **Superseded (2026-07-16, multiple assistants per person):** "exactly one primary personal assistant"
+> is no longer the rule. A person may have zero, one, or several personal assistants with distinct
+> names/personalities - there is no product-enforced ceiling by default. A household may optionally cap
+> it (`max_assistants_per_person`) and/or require admin approval to create additional ones
+> (`require_admin_approval_for_creation`), both changed from the Kinward integration's options flow in
+> Home Assistant (server-stored in `AssistantPolicyRecord`, mirroring `ProviderSettingsRecord`'s
+> pattern) - never a locally-stored HA-side file, per cross-cutting rule 2 (the integration is an
+> adapter and must not own household policy). The auto-created-on-sync assistant is unaffected by
+> policy and always succeeds. Deleting a person's last remaining assistant is blocked (mirrors
+> `domain/admin_invariant.py`'s "last admin" protection) - `conversation.kinward` always has something
+> to resolve to.
+>
+> **Implemented (2026-07-16):** migration `008_multiple_assistants_per_person` drops
+> `uq_assistants_personal_owner` and adds `assistant_policy`. `application/assistant_policy.py` and the
+> expanded `application/assistants.py` (`list_own_assistants`, `create_additional_assistant`,
+> `delete_own_assistant`, generalized `update_own_assistant`) implement the policy engine. API:
+> `GET/POST /assistants`, `PATCH/DELETE /assistants/{id}` (replacing the old `/assistants/primary`),
+> `GET/PATCH /settings/assistant-policy`. HA integration: the two policy knobs join the existing
+> options-flow screen; `kinward.create_assistant`/`kinward.delete_assistant` services let a person use
+> the new capability today without bespoke dashboard UI (deferred per cross-cutting rule 12). Choosing
+> *which* of a person's several assistants a given spoken/typed request addresses (e.g. wake-word/name
+> routing - "hey Calopex") is explicitly out of scope here; `conversation.kinward` still resolves to a
+> single assistant per person today. Addressing *another* person's assistant, and what it may then
+> disclose, is ADR-002 (proposed, not yet decided) - not implemented pending that decision.
+>
+> **Deferred (2026-07-16, until/with Epic 6):** assistant-to-assistant delegation (one assistant asking
+> another assistant something on its owner's behalf, e.g. "check with Lisa's AI about Monday") is a
+> meaningful action that can affect another person's data - it needs Epic 6's approval/quorum machinery
+> before it exists, not a standalone feature built around that safety net. See Epic 6 note below.
 
 # Epic 4: Topics, Memory, Knowledge, and Corrections
 
@@ -340,6 +380,30 @@ Provide useful continuity without allowing optional memory systems or inferred k
 - Household facts use a separate sharing classification.
 - Fallback and shared contexts cannot query private indexes.
 - Memory/knowledge providers are optional projections or retrieval adapters.
+
+> **Implemented (2026-07-16):** the previously-built-but-unwired `HonchoMemoryProvider` (conversational
+> recall) and `LlmWikiKnowledgeProvider` (household fact search) are now actually called from
+> `handle_conversation_request` - `recall`/`search_facts` ground the model's system prompt, and a real
+> reply gets appended back to memory. Isolation is per `(household workspace) -> (person peer, assistant
+> peer) -> session` - a session keyed by the exact `(person_id, assistant_id)` pair, auto-created lazily
+> on first contact. This already satisfies "personal memory is owned by one person" for *any* caller
+> addressing *any* assistant, not just an owner talking to their own - a different calling `person_id`
+> against the same assistant is structurally a different, isolated session. See ADR-002 for the fuller
+> V0 design this generalizes to (per-assistant access modes, tool permissions, approvals) - none of that
+> is built yet, only the memory-isolation invariant it depends on.
+>
+> **Fixed (2026-07-16):** two real bugs found by exercising `HonchoMemoryProvider` against a live Honcho
+> instance rather than only mocks - session creation sent `peers` as a list where Honcho's schema
+> requires a `dict[str, SessionPeerConfig]` (422 every time, silently masked since Honcho auto-creates
+> the session on first message anyway); and `append_messages`/`recall` assumed every response was
+> wrapped as `{"items": [...]}`, but Honcho's actual message-create/search routes return a bare
+> `list[Message]` - meaning recall and append silently returned nothing against any real deployment
+> until fixed. Tests in `tests/test_memory_providers.py`, `tests/test_conversation.py`.
+>
+> **Not yet wired:** proposing new facts (`propose_fact`) from a conversation - this needs structured
+> extraction and confirmation policy (Story 4.3/4.4), not just "call the existing thing," and remains
+> unbuilt. Home Assistant entity-state grounding (read-only, separate from memory/knowledge) is Epic 7's
+> territory - see the Story 7.2 note.
 
 ### Story 4.3: Manage inferred observations
 
@@ -402,17 +466,43 @@ Every meaningful external action is authorized, approved where required, submitt
 - Submitted never means completed.
 - Unknown attempts survive restart, backup, restore, account transition, assistant lifecycle, and deletion.
 
+> **Scoping note (2026-07-16, ADR-002):** ADR-002's `pending_action` is a concrete instance of the state
+> machine this story describes, with a specific state set (`pending`/`approved`/`denied`/`expired`/
+> `cancelled`/`executed`/`failed`) and a re-check-at-execution-time rule (approval validity, expiry,
+> target-resource existence/unchanged, approver still authorized, tool connection still available) that
+> should inform this story's own "unknown attempts survive... and are reconciled" design rather than
+> diverge from it. Zero call sites still exist for any of this - `ApprovalRecord` remains schema-only.
+
 ### Story 6.2: Enforce general multi-principal approval
 
 - Approval objects identify principals, quorum, affected-principal approvals, expiry, invalidation, serialized responses, precedence, and exactly-once transition to acting.
 - Minor actions apply requester-independent policy and exact named-adult quorum.
 - Protected minor conversation and prepared-message bodies are excluded from adult approval by default.
 
+> **Scoping note (2026-07-16, ADR-002):** ADR-002 gives a concrete first case for this story: a
+> cross-person action against an *existing* resource (reschedule/cancel/modify a calendar event, and
+> later higher-risk HA actions like unlocking a door) becomes a pending approval notified to the
+> affected owner rather than executing immediately - approval is one-time by default and must not
+> silently become a standing permission. This is single-approver-notified-owner, not yet the general
+> quorum/multiple-simultaneous-approvers case this story's "quorum"/"exact named-adult quorum" bullets
+> describe - ADR-002 explicitly treats broader permission grants derived from repeated approvals as
+> future/deferred work, not V0.
+
 ### Story 6.3: Support bounded household coordination
 
 - Coordination uses minimum-necessary context and complete delegation metadata.
 - Accept, decline, counter, revoke, expire, cancel, complete, fail, and unknown outcomes close consistently for authorized participants.
 - Specialist assistants remain disabled until delegation prerequisites pass.
+
+> **Scoping note (2026-07-16):** this is where assistant-to-assistant delegation belongs - e.g. one
+> person's assistant asking another person's assistant something on its owner's behalf ("check with
+> Lisa's AI about Monday"), possibly proposing a change to the other person's data. That's a meaningful
+> action affecting someone else, so it's explicitly deferred until this story's approval/quorum
+> machinery exists rather than built as a standalone messaging feature first - see epics.md Story 3.4's
+> note on multiple assistants per person, where the capability was raised and intentionally not built.
+> Memory for such an exchange, if/when built, should reuse the same peer-pair session pattern already
+> used for person-assistant memory (see ADR-002) rather than a new memory concept - each
+> (assistant, assistant) pair gets its own session, auto-created lazily like everything else.
 
 ### Story 6.4: Expose safe HA actions
 
@@ -440,12 +530,39 @@ Use HA as the physical-world authority while Kinward adds household language, po
 - Unavailable or stale state cannot be represented as current.
 - HA-dependent Kinward capability degrades without blocking unrelated core use.
 
+> **Implemented (2026-07-16), read path only:** `HomeAssistantClient.states()` (previously never called)
+> is now read during a conversation turn and folded into the model's system prompt when configured -
+> read-only, capped and compacted (`entity_id: state` lines), not a new HA connection setting (it reuses
+> the existing `home_assistant_url`/`home_assistant_token` deployment settings). This is a first-pass
+> grounding mechanism, not the full port this story describes - no per-entity freshness/availability
+> metadata is surfaced to the model yet, and there's no write path here (see Story 7.3).
+>
+> **Scoping note (2026-07-16, ADR-002):** ADR-002 specifies a further "operational household context"
+> layer - structured, short-lived state (recent actions, active timers) shared across people, assistants,
+> rooms, and voice nodes, so a follow-up like "turn that light back off" or "cancel the timer" resolves
+> correctly regardless of who created it or which voice node hears the follow-up. This is explicitly
+> *separate* from Honcho conversational memory and from the raw HA-state read above, and does not exist
+> yet - `recent_actions`/`active_timers` stores, deterministic reference-resolution ranking, and
+> explicit retention/expiry are all new scope this story (or a new one) will need to cover.
+
 ### Story 7.3: Execute and reconcile HA mutations
 
 - Identity, permission, resource authority, freshness, approval, and activity policy run before submission.
 - Requested, submitted, observed, completed, failed, and unknown remain separate.
 - Completion requires a fresh matching HA observation.
 - Ambiguous or missing observations preserve unknown state until reconciliation.
+
+> **Scoping note (2026-07-16, ADR-002):** `HomeAssistantClient.call_service()` exists but still has no
+> call sites - the write path this story describes remains entirely unbuilt. ADR-002 adds a concrete
+> permission model to design against once it is built: tool permissions are deterministic, decided by
+> code (`allow` / `approval_required` / `deny`), never by the model, and are evaluated separately from
+> assistant access and from which memory peer is active - "may this caller address this assistant" and
+> "may this action proceed" are independent questions. Routine shared-device control (lights, switches,
+> scenes, media, household-manageable timers) is the example given for likely default-`allow` capability;
+> higher-risk actions (locks, garage doors, alarm, cameras, security automations) are the example given
+> for default-`deny`/independently-gated. This directly informs "identity, permission, resource
+> authority... policy run before submission" above - it does not replace Epic 6's approval/quorum
+> machinery, which is what `approval_required` results here would still need to call into.
 
 ### Story 7.4: Add purpose-specific HA automation hooks
 

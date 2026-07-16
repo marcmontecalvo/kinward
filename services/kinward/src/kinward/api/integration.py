@@ -8,9 +8,18 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from kinward.application.assistant_policy import (
+    get_or_create_assistant_policy,
+    update_assistant_policy,
+)
+from kinward.application.assistants import AssistantNotFound
+from kinward.application.assistants import Deleted as AssistantDeleted
 from kinward.application.assistants import (
-    AssistantNotFound,
-    update_own_primary_assistant,
+    PolicyBlocked,
+    create_additional_assistant,
+    delete_own_assistant,
+    list_own_assistants,
+    update_own_assistant,
 )
 from kinward.application.authorization import NotAdmin, resolve_admin
 from kinward.application.conversation import (
@@ -40,6 +49,7 @@ from kinward.application.provider_settings import (
 )
 from kinward.config import Settings
 from kinward.persistence.models import (
+    AssistantPolicyRecord,
     AssistantRecord,
     PersonRecord,
     ProviderSettingsRecord,
@@ -401,6 +411,12 @@ class AssistantPayload(BaseModel):
         return cls(id=assistant.id, name=assistant.name, personality=dict(assistant.personality))
 
 
+class CreateAssistantRequest(BaseModel):
+    ha_user_id: str = Field(alias="haUserId", min_length=1, max_length=64)
+    name: str = Field(min_length=1, max_length=120)
+    personality: dict[str, Any] | None = None
+
+
 class UpdateOwnAssistantRequest(BaseModel):
     ha_user_id: str = Field(alias="haUserId", min_length=1, max_length=64)
     name: str | None = Field(default=None, max_length=120)
@@ -411,18 +427,146 @@ def _assistant_not_found() -> HTTPException:
     return HTTPException(status_code=404, detail={"code": "assistant_not_found"})
 
 
-@router.patch("/assistants/primary", response_model=AssistantPayload)
-async def integration_update_own_assistant(
-    body: UpdateOwnAssistantRequest, _token: IntegrationToken, session: Session
+def _policy_blocked(violation: PolicyBlocked) -> HTTPException:
+    status_code = (
+        status.HTTP_403_FORBIDDEN
+        if violation.code == "admin_approval_required"
+        else status.HTTP_409_CONFLICT
+    )
+    return HTTPException(
+        status_code=status_code, detail={"code": violation.code, "message": violation.message}
+    )
+
+
+async def _is_admin(session: AsyncSession, *, ha_user_id: str) -> bool:
+    result = await resolve_admin(session, ha_user_id=ha_user_id)
+    return not isinstance(result, (Unmapped, NotAdmin))
+
+
+@router.get("/assistants", response_model=list[AssistantPayload])
+async def integration_list_own_assistants(
+    ha_user_id: AdminHaUserIdQuery, _token: IntegrationToken, session: Session
+) -> list[AssistantPayload]:
+    result = await list_own_assistants(session, ha_user_id=ha_user_id)
+    if isinstance(result, Unmapped):
+        return []
+    return [AssistantPayload.from_record(assistant) for assistant in result]
+
+
+@router.post("/assistants", response_model=AssistantPayload, status_code=status.HTTP_201_CREATED)
+async def integration_create_assistant(
+    body: CreateAssistantRequest, _token: IntegrationToken, session: Session
 ) -> AssistantPayload:
-    result = await update_own_primary_assistant(
-        session, ha_user_id=body.ha_user_id, name=body.name, personality=body.personality
+    summary = await fetch_household_summary(session)
+    if summary is None:
+        raise _household_not_configured()
+    requester_is_admin = await _is_admin(session, ha_user_id=body.ha_user_id)
+    result = await create_additional_assistant(
+        session,
+        household_id=summary.id,
+        ha_user_id=body.ha_user_id,
+        name=body.name,
+        personality=body.personality,
+        requester_is_admin=requester_is_admin,
+    )
+    if isinstance(result, Unmapped):
+        await session.rollback()
+        raise _assistant_not_found()
+    if isinstance(result, PolicyBlocked):
+        await session.rollback()
+        raise _policy_blocked(result)
+    await session.commit()
+    return AssistantPayload.from_record(result)
+
+
+@router.patch("/assistants/{assistant_id}", response_model=AssistantPayload)
+async def integration_update_own_assistant(
+    assistant_id: str, body: UpdateOwnAssistantRequest, _token: IntegrationToken, session: Session
+) -> AssistantPayload:
+    result = await update_own_assistant(
+        session,
+        ha_user_id=body.ha_user_id,
+        assistant_id=assistant_id,
+        name=body.name,
+        personality=body.personality,
     )
     if isinstance(result, (Unmapped, AssistantNotFound)):
         await session.rollback()
         raise _assistant_not_found()
     await session.commit()
     return AssistantPayload.from_record(result)
+
+
+@router.delete("/assistants/{assistant_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def integration_delete_own_assistant(
+    assistant_id: str, ha_user_id: AdminHaUserIdQuery, _token: IntegrationToken, session: Session
+) -> None:
+    result = await delete_own_assistant(session, ha_user_id=ha_user_id, assistant_id=assistant_id)
+    if isinstance(result, (Unmapped, AssistantNotFound)):
+        await session.rollback()
+        raise _assistant_not_found()
+    if isinstance(result, PolicyBlocked):
+        await session.rollback()
+        raise _policy_blocked(result)
+    assert isinstance(result, AssistantDeleted)
+    await session.commit()
+
+
+class AssistantPolicyPayload(BaseModel):
+    max_assistants_per_person: int | None = Field(serialization_alias="maxAssistantsPerPerson")
+    require_admin_approval_for_creation: bool = Field(
+        serialization_alias="requireAdminApprovalForCreation"
+    )
+
+    @classmethod
+    def from_record(cls, policy: AssistantPolicyRecord) -> AssistantPolicyPayload:
+        return cls(
+            max_assistants_per_person=policy.max_assistants_per_person,
+            require_admin_approval_for_creation=policy.require_admin_approval_for_creation,
+        )
+
+
+class UpdateAssistantPolicyRequest(BaseModel):
+    """Both fields are required: the options flow always submits the whole form,
+    prefilled from a prior GET, so there's no partial-update ambiguity to preserve
+    here the way there is for provider_settings' write-only API key field.
+    """
+
+    max_assistants_per_person: int | None = Field(alias="maxAssistantsPerPerson")
+    require_admin_approval_for_creation: bool = Field(alias="requireAdminApprovalForCreation")
+
+
+@router.get("/settings/assistant-policy", response_model=AssistantPolicyPayload)
+async def integration_get_assistant_policy(
+    _token: IntegrationToken, session: Session
+) -> AssistantPolicyPayload:
+    summary = await fetch_household_summary(session)
+    if summary is None:
+        raise _household_not_configured()
+    policy = await get_or_create_assistant_policy(session, household_id=summary.id)
+    await session.commit()
+    return AssistantPolicyPayload.from_record(policy)
+
+
+@router.patch("/settings/assistant-policy", response_model=AssistantPolicyPayload)
+async def integration_update_assistant_policy(
+    body: UpdateAssistantPolicyRequest, _token: IntegrationToken, session: Session
+) -> AssistantPolicyPayload:
+    """Gated by the integration bearer token alone, like ``/settings/providers`` -
+    only the Kinward HA integration's own options flow calls this, and HA already
+    restricts that to admins.
+    """
+    summary = await fetch_household_summary(session)
+    if summary is None:
+        raise _household_not_configured()
+    policy = await update_assistant_policy(
+        session,
+        household_id=summary.id,
+        max_assistants_per_person=body.max_assistants_per_person,
+        require_admin_approval_for_creation=body.require_admin_approval_for_creation,
+    )
+    await session.commit()
+    return AssistantPolicyPayload.from_record(policy)
 
 
 class ConversationRequest(BaseModel):
