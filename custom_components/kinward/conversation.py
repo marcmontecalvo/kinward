@@ -66,6 +66,7 @@ class KinwardConversationEntity(KinwardEntity, ConversationEntity):
             text=user_input.text,
             conversation_id=user_input.conversation_id,
             language=user_input.language,
+            device_id=user_input.device_id,
         )
 
         if isinstance(result, SendMessageFailure):

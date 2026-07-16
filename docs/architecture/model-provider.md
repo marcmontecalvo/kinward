@@ -39,6 +39,10 @@ Each turn folds three optional context sources into the system prompt before cal
 - Recent Home Assistant entity state (via the existing `HomeAssistantClient`, read-only,
   capped and compacted - not a new HA connection setting, since that client's own
   `home_assistant_url`/`home_assistant_token` are unchanged deployment `Settings`).
+- A resolved "most recently changed light/switch" and "currently active timer," when one exists
+  - a v0 heuristic for ADR-002's operational household context, see
+  `docs/architecture/operational-household-context.md`. Read-only description only; nothing here
+  can yet act on a device or timer (see that doc's "what remains out of scope").
 - Conversational memory recall from the configured memory backend.
 - Household fact search from the configured knowledge backend.
 
