@@ -602,6 +602,19 @@ Preserve the whole household authority graph and all unresolved safety obligatio
 > backup/restore verification until Stories 9.1-9.3 exist. `delete_person`'s CASCADE hard-delete
 > behavior is confirmed correct as-is and needs no further work. No code changes in this pass - this
 > is scoping only, pending sign-off.
+>
+> **Buildable-now slice implemented (2026-07-16):** `docs/architecture/data-retention.md` documents
+> the 13 `BOOTSTRAP_RECORD_LIFECYCLES` entries per-class (classification, backup/import eligibility,
+> restore disposition, deletion). `domain/lifecycle.py` gained `TABLE_LIFECYCLE_KEYS` (maps each real
+> `persistence/models.py` table to its lifecycle key(s)) and `UNCLASSIFIED_TABLES` (an explicit,
+> reasoned list of the 6 persisted tables with no lifecycle decision yet: `approvals` pending Epic 6;
+> `memory_index`, `worker_heartbeats`, `integration_tokens`, `topics`, `topic_turns` pending a
+> retention decision). `tests/test_lifecycle.py` enforces the taxonomy against the live schema: every
+> table must be classified or a tracked gap (fails on new unclassified tables), every
+> `TABLE_LIFECYCLE_KEYS` entry must resolve to a real taxonomy key, and single-class tables' ORM
+> `classification` column defaults are checked against the taxonomy's declared classification to catch
+> drift. Blocker-preservation checks and backup/restore-survival verification remain blocked on Epic 6
+> and Stories 9.1-9.3 as scoped above.
 
 > **Deferred to v2 (2026-07-16, non-committed horizon):** cross-instance Home Assistant re-binding.
 > Scenario: the household's HA instance is lost or rebuilt from scratch (corruption, hardware
