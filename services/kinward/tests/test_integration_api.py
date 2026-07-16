@@ -860,3 +860,87 @@ async def test_provider_settings_requires_a_bearer_token() -> None:
     async with client:
         response = await client.get("/api/v1/integration/settings/providers")
         assert response.status_code == 401
+
+
+async def test_assistant_access_mode_round_trips_and_gates_cross_person_conversation() -> None:
+    client, factory = await _client()
+    async with client:
+        await _seed_household(factory)
+        token = await _issue_token(factory)
+        headers = {"Authorization": f"Bearer {token}"}
+        await client.put(
+            "/api/v1/integration/people/sync",
+            headers=headers,
+            json=[
+                {"haPersonId": "ha-person-marc", "haUserId": "ha-user-marc", "displayName": "Marc"},
+                {"haPersonId": "ha-person-lisa", "haUserId": "ha-user-lisa", "displayName": "Lisa"},
+            ],
+        )
+        marcs_assistants = (
+            await client.get("/api/v1/integration/assistants?haUserId=ha-user-marc", headers=headers)
+        ).json()
+        bob_id = marcs_assistants[0]["id"]
+        assert marcs_assistants[0]["accessMode"] == "owner_only"
+
+        # Lisa cannot see or address Marc's assistant while it's owner_only.
+        not_yet_accessible = (
+            await client.get(
+                "/api/v1/integration/assistants/accessible?haUserId=ha-user-lisa", headers=headers
+            )
+        ).json()
+        assert bob_id not in [a["id"] for a in not_yet_accessible]
+
+        denied = await client.post(
+            "/api/v1/integration/conversation",
+            headers=headers,
+            json={"haUserId": "ha-user-lisa", "text": "hi Bob", "assistantId": bob_id},
+        )
+        assert denied.json()["outcome"] == "access_denied"
+
+        # Marc opens Bob up to the household.
+        updated = await client.patch(
+            f"/api/v1/integration/assistants/{bob_id}",
+            headers=headers,
+            json={"haUserId": "ha-user-marc", "accessMode": "household"},
+        )
+        assert updated.status_code == 200
+        assert updated.json()["accessMode"] == "household"
+
+        now_accessible = (
+            await client.get(
+                "/api/v1/integration/assistants/accessible?haUserId=ha-user-lisa", headers=headers
+            )
+        ).json()
+        assert bob_id in [a["id"] for a in now_accessible]
+
+        allowed = await client.post(
+            "/api/v1/integration/conversation",
+            headers=headers,
+            json={"haUserId": "ha-user-lisa", "text": "hi Bob", "assistantId": bob_id},
+        )
+        assert allowed.json()["outcome"] == "completed"
+        assert allowed.json()["mapped"] is True
+
+
+async def test_invalid_access_mode_is_rejected_via_api() -> None:
+    client, factory = await _client()
+    async with client:
+        await _seed_household(factory)
+        token = await _issue_token(factory)
+        headers = {"Authorization": f"Bearer {token}"}
+        await client.put(
+            "/api/v1/integration/people/sync",
+            headers=headers,
+            json=[{"haPersonId": "ha-person-marc", "haUserId": "ha-user-marc", "displayName": "Marc"}],
+        )
+        assistants = (
+            await client.get("/api/v1/integration/assistants?haUserId=ha-user-marc", headers=headers)
+        ).json()
+
+        response = await client.patch(
+            f"/api/v1/integration/assistants/{assistants[0]['id']}",
+            headers=headers,
+            json={"haUserId": "ha-user-marc", "accessMode": "anyone-with-a-key"},
+        )
+        assert response.status_code == 422
+        assert response.json()["detail"]["code"] == "invalid_access_mode"

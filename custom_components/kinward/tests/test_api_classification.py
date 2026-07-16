@@ -10,6 +10,8 @@ from kinward.api import (
     ContextFailure,
     ContextSuccess,
     NextEventStatus,
+    PeopleFailure,
+    Person,
     Pet,
     PetsFailure,
     PetsSuccess,
@@ -27,6 +29,7 @@ from kinward.api import (
     classify_context_response,
     classify_delete_assistant_response,
     classify_list_assistants_response,
+    classify_people_response,
     classify_pets_response,
     classify_provider_settings_response,
     classify_send_message_response,
@@ -345,15 +348,49 @@ def test_classify_assistant_policy_response_invalid_auth() -> None:
     assert classify_assistant_policy_response(401, {}) == AssistantPolicyFailure("invalid_auth")
 
 
+def test_classify_people_response_success() -> None:
+    payload = [{"id": "person-1", "displayName": "Marc"}, {"id": "person-2", "displayName": "Lisa"}]
+    assert classify_people_response(200, payload) == [
+        Person(id="person-1", display_name="Marc"),
+        Person(id="person-2", display_name="Lisa"),
+    ]
+
+
+def test_classify_people_response_invalid_auth() -> None:
+    assert classify_people_response(401, {}) == PeopleFailure("invalid_auth")
+
+
+def test_classify_people_response_malformed_is_unknown() -> None:
+    assert classify_people_response(200, [{"id": "person-1"}]) == PeopleFailure("unknown")
+
+
 def _assistant_payload(**overrides: object) -> dict[str, object]:
-    payload: dict[str, object] = {"id": "assistant-1", "name": "Calopex", "personality": {}}
+    payload: dict[str, object] = {
+        "id": "assistant-1",
+        "name": "Calopex",
+        "personality": {},
+        "accessMode": "owner_only",
+        "allowedPersonIds": [],
+    }
     payload.update(overrides)
     return payload
 
 
+def _assistant(**overrides: object) -> Assistant:
+    defaults: dict[str, object] = {
+        "id": "assistant-1",
+        "name": "Calopex",
+        "personality": {},
+        "access_mode": "owner_only",
+        "allowed_person_ids": [],
+    }
+    defaults.update(overrides)
+    return Assistant(**defaults)  # type: ignore[arg-type]
+
+
 def test_classify_list_assistants_response_success() -> None:
     result = classify_list_assistants_response(200, [_assistant_payload()])
-    assert result == [Assistant(id="assistant-1", name="Calopex", personality={})]
+    assert result == [_assistant()]
 
 
 def test_classify_list_assistants_response_malformed_is_a_failure() -> None:
@@ -363,7 +400,14 @@ def test_classify_list_assistants_response_malformed_is_a_failure() -> None:
 
 def test_classify_assistant_action_response_success() -> None:
     result = classify_assistant_action_response(201, _assistant_payload())
-    assert result == Assistant(id="assistant-1", name="Calopex", personality={})
+    assert result == _assistant()
+
+
+def test_classify_assistant_action_response_carries_access_mode_and_allowlist() -> None:
+    result = classify_assistant_action_response(
+        200, _assistant_payload(accessMode="allowlist", allowedPersonIds=["person-2"])
+    )
+    assert result == _assistant(access_mode="allowlist", allowed_person_ids=["person-2"])
 
 
 def test_classify_assistant_action_response_policy_blocked_carries_the_message() -> None:

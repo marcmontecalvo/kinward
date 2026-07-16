@@ -15,13 +15,17 @@ from kinward.application.assistant_policy import (
 from kinward.application.assistants import AssistantNotFound
 from kinward.application.assistants import Deleted as AssistantDeleted
 from kinward.application.assistants import (
+    InvalidAccessMode,
     PolicyBlocked,
     create_additional_assistant,
     delete_own_assistant,
+    list_accessible_assistants,
     list_own_assistants,
     update_own_assistant,
 )
 from kinward.application.authorization import NotAdmin, resolve_admin
+from kinward.application.conversation import AccessDenied
+from kinward.application.conversation import AssistantNotFound as AddressedAssistantNotFound
 from kinward.application.conversation import (
     AlreadyTerminal,
     Completed,
@@ -405,10 +409,18 @@ class AssistantPayload(BaseModel):
     id: str
     name: str
     personality: dict[str, Any]
+    access_mode: str = Field(serialization_alias="accessMode")
+    allowed_person_ids: list[str] = Field(serialization_alias="allowedPersonIds")
 
     @classmethod
     def from_record(cls, assistant: AssistantRecord) -> AssistantPayload:
-        return cls(id=assistant.id, name=assistant.name, personality=dict(assistant.personality))
+        return cls(
+            id=assistant.id,
+            name=assistant.name,
+            personality=dict(assistant.personality),
+            access_mode=assistant.access_mode,
+            allowed_person_ids=list(assistant.allowed_person_ids),
+        )
 
 
 class CreateAssistantRequest(BaseModel):
@@ -421,10 +433,19 @@ class UpdateOwnAssistantRequest(BaseModel):
     ha_user_id: str = Field(alias="haUserId", min_length=1, max_length=64)
     name: str | None = Field(default=None, max_length=120)
     personality: dict[str, Any] | None = None
+    access_mode: str | None = Field(default=None, alias="accessMode")
+    allowed_person_ids: list[str] | None = Field(default=None, alias="allowedPersonIds")
 
 
 def _assistant_not_found() -> HTTPException:
     return HTTPException(status_code=404, detail={"code": "assistant_not_found"})
+
+
+def _invalid_access_mode() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        detail={"code": "invalid_access_mode", "message": "accessMode must be one of: owner_only, household, allowlist."},
+    )
 
 
 def _policy_blocked(violation: PolicyBlocked) -> HTTPException:
@@ -448,6 +469,22 @@ async def integration_list_own_assistants(
     ha_user_id: AdminHaUserIdQuery, _token: IntegrationToken, session: Session
 ) -> list[AssistantPayload]:
     result = await list_own_assistants(session, ha_user_id=ha_user_id)
+    if isinstance(result, Unmapped):
+        return []
+    return [AssistantPayload.from_record(assistant) for assistant in result]
+
+
+@router.get("/assistants/accessible", response_model=list[AssistantPayload])
+async def integration_list_accessible_assistants(
+    ha_user_id: AdminHaUserIdQuery, _token: IntegrationToken, session: Session
+) -> list[AssistantPayload]:
+    """Every assistant this person may address (ADR-002) - their own, plus anyone
+    else's under household/allowlist mode. Superset of ``GET /assistants``.
+    """
+    summary = await fetch_household_summary(session)
+    if summary is None:
+        raise _household_not_configured()
+    result = await list_accessible_assistants(session, household_id=summary.id, ha_user_id=ha_user_id)
     if isinstance(result, Unmapped):
         return []
     return [AssistantPayload.from_record(assistant) for assistant in result]
@@ -489,10 +526,15 @@ async def integration_update_own_assistant(
         assistant_id=assistant_id,
         name=body.name,
         personality=body.personality,
+        access_mode=body.access_mode,
+        allowed_person_ids=body.allowed_person_ids,
     )
     if isinstance(result, (Unmapped, AssistantNotFound)):
         await session.rollback()
         raise _assistant_not_found()
+    if isinstance(result, InvalidAccessMode):
+        await session.rollback()
+        raise _invalid_access_mode()
     await session.commit()
     return AssistantPayload.from_record(result)
 
@@ -574,6 +616,7 @@ class ConversationRequest(BaseModel):
     text: str = Field(min_length=1, max_length=4000)
     conversation_id: str | None = Field(default=None, alias="conversationId", max_length=36)
     language: str = Field(default="en", min_length=2, max_length=16)
+    assistant_id: str | None = Field(default=None, alias="assistantId", max_length=36)
 
 
 class ConversationResponse(BaseModel):
@@ -596,6 +639,7 @@ async def integration_conversation(
         text=body.text,
         conversation_id=body.conversation_id,
         language=body.language,
+        assistant_id=body.assistant_id,
         settings=settings,
     )
     await session.commit()
@@ -605,6 +649,20 @@ async def integration_conversation(
             outcome="unmapped",
             response_text=UNMAPPED_RESPONSE_TEXT,
             mapped=False,
+        )
+    if isinstance(result, AddressedAssistantNotFound):
+        return ConversationResponse(
+            conversation_id=None,
+            outcome="assistant_not_found",
+            response_text="That assistant doesn't exist.",
+            mapped=True,
+        )
+    if isinstance(result, AccessDenied):
+        return ConversationResponse(
+            conversation_id=None,
+            outcome="access_denied",
+            response_text=f"You don't have access to {result.assistant_name}.",
+            mapped=True,
         )
     assert isinstance(result, Completed)
     return ConversationResponse(

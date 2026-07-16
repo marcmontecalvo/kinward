@@ -8,7 +8,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from kinward.application.conversation import (
+    AccessDenied,
     AlreadyTerminal,
+    AssistantNotFound,
     Completed,
     Deleted,
     TopicNotFound,
@@ -78,7 +80,7 @@ async def _seed_mapped_person(session):  # type: ignore[no-untyped-def]
     return household, person
 
 
-async def _add_other_mapped_person(session, household, *, ha_person_id: str, ha_user_id: str):  # type: ignore[no-untyped-def]
+async def _add_other_mapped_person(session, household, *, ha_person_id: str, ha_user_id: str, assistant_name: str = "Nova"):  # type: ignore[no-untyped-def]
     other_person = PersonRecord(
         household_id=household.id,
         display_name="Other Adult",
@@ -91,7 +93,10 @@ async def _add_other_mapped_person(session, household, *, ha_person_id: str, ha_
     await session.flush()
     session.add(
         AssistantRecord(
-            household_id=household.id, owner_person_id=other_person.id, name="Nova", kind="primary"
+            household_id=household.id,
+            owner_person_id=other_person.id,
+            name=assistant_name,
+            kind="primary",
         )
     )
     await session.commit()
@@ -513,3 +518,145 @@ async def test_memory_is_not_appended_when_no_model_is_configured() -> None:
         assert isinstance(result, Completed)
         assert result.response_text == NO_MODEL_RESPONSE
         assert not any(path.endswith("/messages") for path in calls)
+
+
+async def _get_assistant(session, *, owner_person_id: str):  # type: ignore[no-untyped-def]
+    return (
+        await session.scalars(
+            select(AssistantRecord).where(AssistantRecord.owner_person_id == owner_person_id)
+        )
+    ).one()
+
+
+async def test_addressing_someone_elses_owner_only_assistant_is_denied() -> None:
+    factory = await _factory()
+    async with factory() as session:
+        household, _person_one = await _seed_mapped_person(session)
+        other = await _add_other_mapped_person(
+            session, household, ha_person_id="ha-person-2", ha_user_id="ha-user-2"
+        )
+        nova = await _get_assistant(session, owner_person_id=other.id)
+        assert nova.access_mode == "owner_only"
+
+        result = await handle_conversation_request(
+            session,
+            ha_user_id="ha-user-1",
+            text="hello Nova",
+            conversation_id=None,
+            language="en",
+            assistant_id=nova.id,
+        )
+
+        assert result == AccessDenied(assistant_name="Nova")
+
+
+async def test_addressing_an_unknown_assistant_id_is_not_found() -> None:
+    factory = await _factory()
+    async with factory() as session:
+        await _seed_mapped_person(session)
+
+        result = await handle_conversation_request(
+            session,
+            ha_user_id="ha-user-1",
+            text="hello",
+            conversation_id=None,
+            language="en",
+            assistant_id="does-not-exist",
+        )
+
+        assert isinstance(result, AssistantNotFound)
+
+
+async def test_owner_can_always_explicitly_address_their_own_assistant() -> None:
+    factory = await _factory()
+    async with factory() as session:
+        _household, person = await _seed_mapped_person(session)
+        atlas = await _get_assistant(session, owner_person_id=person.id)
+
+        result = await handle_conversation_request(
+            session,
+            ha_user_id="ha-user-1",
+            text="hello",
+            conversation_id=None,
+            language="en",
+            assistant_id=atlas.id,
+        )
+
+        assert isinstance(result, Completed)
+
+
+async def test_household_mode_allows_addressing_another_persons_assistant_with_an_isolated_session() -> None:
+    factory = await _factory()
+    async with factory() as session:
+        household, person_one = await _seed_mapped_person(session)
+        other = await _add_other_mapped_person(
+            session, household, ha_person_id="ha-person-2", ha_user_id="ha-user-2"
+        )
+        nova = await _get_assistant(session, owner_person_id=other.id)
+        nova.access_mode = "household"
+        await session.commit()
+
+        # The owner (ha-user-2) talks to their own Nova first.
+        owner_result = await handle_conversation_request(
+            session, ha_user_id="ha-user-2", text="hi Nova, it's me", conversation_id=None, language="en"
+        )
+        await session.commit()
+        assert isinstance(owner_result, Completed)
+
+        # A different household member addresses Nova explicitly - allowed under household mode.
+        guest_result = await handle_conversation_request(
+            session,
+            ha_user_id="ha-user-1",
+            text="hi Nova, can you check something for me",
+            conversation_id=None,
+            language="en",
+            assistant_id=nova.id,
+        )
+        await session.commit()
+        assert isinstance(guest_result, Completed)
+
+        # Isolated: this is a different topic from the owner's own conversation with Nova.
+        assert guest_result.conversation_id != owner_result.conversation_id
+        guest_topic = await session.get(TopicRecord, guest_result.conversation_id)
+        owner_topic = await session.get(TopicRecord, owner_result.conversation_id)
+        assert guest_topic is not None and owner_topic is not None
+        assert guest_topic.person_id == person_one.id
+        assert owner_topic.person_id == other.id
+        assert guest_topic.assistant_id == owner_topic.assistant_id == nova.id
+
+
+async def test_allowlist_mode_allows_only_listed_people() -> None:
+    factory = await _factory()
+    async with factory() as session:
+        household, person_one = await _seed_mapped_person(session)
+        other = await _add_other_mapped_person(
+            session, household, ha_person_id="ha-person-2", ha_user_id="ha-user-2"
+        )
+        third = await _add_other_mapped_person(
+            session, household, ha_person_id="ha-person-3", ha_user_id="ha-user-3", assistant_name="Rex"
+        )
+        nova = await _get_assistant(session, owner_person_id=other.id)
+        nova.access_mode = "allowlist"
+        nova.allowed_person_ids = [person_one.id]
+        await session.commit()
+
+        allowed = await handle_conversation_request(
+            session,
+            ha_user_id="ha-user-1",
+            text="hi Nova",
+            conversation_id=None,
+            language="en",
+            assistant_id=nova.id,
+        )
+        assert isinstance(allowed, Completed)
+
+        denied = await handle_conversation_request(
+            session,
+            ha_user_id="ha-user-3",
+            text="hi Nova",
+            conversation_id=None,
+            language="en",
+            assistant_id=nova.id,
+        )
+        assert denied == AccessDenied(assistant_name="Nova")
+        _ = third

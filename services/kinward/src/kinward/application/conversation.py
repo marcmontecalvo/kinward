@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from kinward.application.provider_settings import get_or_create_provider_settings
 from kinward.config import Settings, get_settings
+from kinward.domain.assistant_access import can_address_assistant
 from kinward.integrations.home_assistant import HomeAssistantClient
 from kinward.llm.contracts import ModelMessage, ModelProvider
 from kinward.llm.factory import model_provider as build_model_provider
@@ -35,7 +36,19 @@ class Completed:
     response_text: str
 
 
-ConversationOutcome = Unmapped | Completed
+@dataclass(frozen=True)
+class AssistantNotFound:
+    """The explicitly addressed assistant_id doesn't exist in this household - fail closed."""
+
+
+@dataclass(frozen=True)
+class AccessDenied:
+    """The caller may not address this assistant under its configured ADR-002 access mode."""
+
+    assistant_name: str
+
+
+ConversationOutcome = Unmapped | Completed | AssistantNotFound | AccessDenied
 
 TERMINAL_OUTCOMES = frozenset({"completed", "failed", "cancelled"})
 
@@ -63,10 +76,17 @@ async def _resolve_person_id(session: AsyncSession, *, ha_user_id: str) -> str |
 
 
 async def _find_primary_assistant(session: AsyncSession, person_id: str) -> AssistantRecord | None:
+    """The caller's own assistant when none is explicitly addressed (ADR-002).
+
+    A person may now own several (epics.md Story 3.4) - deterministically picks the
+    oldest rather than an arbitrary one. Which of several a given request addresses
+    (wake-word/name routing) remains out of scope; this is only the default.
+    """
     assistant = await session.scalar(
-        select(AssistantRecord).where(
-            AssistantRecord.owner_person_id == person_id, AssistantRecord.kind == "primary"
-        )
+        select(AssistantRecord)
+        .where(AssistantRecord.owner_person_id == person_id, AssistantRecord.kind == "primary")
+        .order_by(AssistantRecord.created_at)
+        .limit(1)
     )
     return assistant
 
@@ -133,6 +153,7 @@ async def handle_conversation_request(
     text: str,
     conversation_id: str | None,
     language: str,
+    assistant_id: str | None = None,
     settings: Settings | None = None,
     model: ModelProvider | None = None,
     memory_provider: ConversationalMemoryProvider | None = None,
@@ -142,6 +163,11 @@ async def handle_conversation_request(
     """``model``/``memory_provider``/``knowledge_provider``/``ha_client`` are injectable seams
     for tests; production callers leave them unset and this builds them from the household's
     ``ProviderSettingsRecord`` and the deployment's ``Settings``.
+
+    ``assistant_id`` explicitly addresses an assistant other than the caller's own (ADR-002) -
+    left unset, behavior is unchanged: the caller's own assistant, no access check needed. It
+    only matters when starting a *new* topic; continuing an existing one always uses that
+    topic's own assistant, since which assistant a topic is with is already fixed once created.
     """
     runtime_settings = settings or get_settings()
     person_id = await _resolve_person_id(session, ha_user_id=ha_user_id)
@@ -153,8 +179,26 @@ async def handle_conversation_request(
         topic = await _find_own_topic(session, topic_id=conversation_id, person_id=person_id)
     person = await session.get(PersonRecord, person_id)
     assert person is not None
-    assistant = await _find_primary_assistant(session, person_id)
-    assert assistant is not None, "sync creates a primary assistant atomically with every person"
+
+    if topic is not None:
+        assistant = await session.get(AssistantRecord, topic.assistant_id)
+        assert assistant is not None, "a topic's assistant is never deleted out from under it"
+    elif assistant_id is not None:
+        addressed = await session.get(AssistantRecord, assistant_id)
+        if addressed is None or addressed.household_id != person.household_id:
+            return AssistantNotFound()
+        if not can_address_assistant(
+            owner_person_id=addressed.owner_person_id,
+            access_mode=addressed.access_mode,
+            allowed_person_ids=addressed.allowed_person_ids,
+            caller_person_id=person_id,
+        ):
+            return AccessDenied(assistant_name=addressed.name)
+        assistant = addressed
+    else:
+        assistant = await _find_primary_assistant(session, person_id)
+        assert assistant is not None, "sync creates a primary assistant atomically with every person"
+
     if topic is None:
         topic = TopicRecord(
             household_id=person.household_id, person_id=person_id, assistant_id=assistant.id

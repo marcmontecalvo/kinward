@@ -135,6 +135,25 @@ SyncPeopleResult = SyncPeopleSuccess | SyncPeopleFailure
 
 
 @dataclass(frozen=True)
+class Person:
+    """A synced household person, as reported by the people endpoint - just enough
+
+    to resolve a display name to the internal id ADR-002's allowlist needs.
+    """
+
+    id: str
+    display_name: str
+
+
+@dataclass(frozen=True)
+class PeopleFailure:
+    error: ConfigFlowErrorCode
+
+
+PeopleResult = list[Person] | PeopleFailure
+
+
+@dataclass(frozen=True)
 class Pet:
     """A household-shared pet profile, as reported by the pets endpoint."""
 
@@ -202,6 +221,8 @@ class Assistant:
     id: str
     name: str
     personality: dict[str, Any]
+    access_mode: str
+    allowed_person_ids: list[str]
 
 
 @dataclass(frozen=True)
@@ -222,9 +243,24 @@ def _assistant_from(payload: Any) -> Assistant | None:
     assistant_id = payload.get("id")
     name = payload.get("name")
     personality = payload.get("personality")
-    if not isinstance(assistant_id, str) or not isinstance(name, str) or not isinstance(personality, dict):
+    access_mode = payload.get("accessMode")
+    allowed_person_ids = payload.get("allowedPersonIds")
+    if (
+        not isinstance(assistant_id, str)
+        or not isinstance(name, str)
+        or not isinstance(personality, dict)
+        or not isinstance(access_mode, str)
+        or not isinstance(allowed_person_ids, list)
+        or not all(isinstance(item, str) for item in allowed_person_ids)
+    ):
         return None
-    return Assistant(id=assistant_id, name=name, personality=personality)
+    return Assistant(
+        id=assistant_id,
+        name=name,
+        personality=personality,
+        access_mode=access_mode,
+        allowed_person_ids=allowed_person_ids,
+    )
 
 
 def _error_reason(status_code: int, payload: Any) -> str:
@@ -398,6 +434,32 @@ def classify_sync_people_response(status_code: int, payload: Any) -> SyncPeopleR
     return SyncPeopleSuccess(people=people)
 
 
+def _person_from(payload: Any) -> Person | None:
+    if not isinstance(payload, dict):
+        return None
+    person_id = payload.get("id")
+    display_name = payload.get("displayName")
+    if not isinstance(person_id, str) or not isinstance(display_name, str):
+        return None
+    return Person(id=person_id, display_name=display_name)
+
+
+def classify_people_response(status_code: int, payload: Any) -> PeopleResult:
+    if status_code == 401:
+        return PeopleFailure("invalid_auth")
+    if status_code == 409:
+        return PeopleFailure("household_not_configured")
+    if status_code != 200 or not isinstance(payload, list):
+        return PeopleFailure("unknown")
+    people: list[Person] = []
+    for item in payload:
+        person = _person_from(item)
+        if person is None:
+            return PeopleFailure("unknown")
+        people.append(person)
+    return people
+
+
 def _pet_from(payload: Any) -> Pet | None:
     if not isinstance(payload, dict):
         return None
@@ -559,6 +621,13 @@ class KinwardApiClient:
             return PetsFailure("cannot_connect")
         return classify_pets_response(status, payload)
 
+    async def async_fetch_people(self) -> PeopleResult:
+        try:
+            status, payload = await self._request("GET", "/api/v1/integration/people")
+        except (TimeoutError, aiohttp.ClientError):
+            return PeopleFailure("cannot_connect")
+        return classify_people_response(status, payload)
+
     async def async_send_conversation_message(
         self, *, ha_user_id: str, text: str, conversation_id: str | None, language: str
     ) -> SendMessageResult:
@@ -674,3 +743,25 @@ class KinwardApiClient:
         except (TimeoutError, aiohttp.ClientError):
             return AssistantActionFailure(reason="cannot_connect")
         return classify_delete_assistant_response(status, payload)
+
+    async def async_update_assistant_access(
+        self,
+        *,
+        ha_user_id: str,
+        assistant_id: str,
+        access_mode: str,
+        allowed_person_ids: list[str],
+    ) -> Assistant | AssistantActionFailure:
+        """Set who besides the owner may address this assistant (ADR-002)."""
+        body = {
+            "haUserId": ha_user_id,
+            "accessMode": access_mode,
+            "allowedPersonIds": allowed_person_ids,
+        }
+        try:
+            status, payload = await self._request(
+                "PATCH", f"/api/v1/integration/assistants/{quote(assistant_id)}", json_body=body
+            )
+        except (TimeoutError, aiohttp.ClientError):
+            return AssistantActionFailure(reason="cannot_connect")
+        return classify_assistant_action_response(status, payload)
