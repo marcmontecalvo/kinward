@@ -545,6 +545,86 @@ Preserve the whole household authority graph and all unresolved safety obligatio
 > retention enforcement, the deletion-pending/reconciliation-only access overlay, and blocker
 > preservation - this only covers the admin-invariant redesign the previous pass flagged, not the rest
 > of the story.
+>
+> **Needs redesign (2026-07-16, remainder scoping pass):** "deletion-pending", "reconciliation-only
+> access", and "blocker preservation" as written come from `AD-01 — Local account authentication
+> [DORMANT]`, which is explicitly parked for the HA-native path (Kinward has no session/account of its
+> own to place into an overlay state). `SOLUTION-DESIGN.md`'s "Account baseline" section still
+> describes that overlay verbatim with no dormant marker - treat `ARCHITECTURE-SPINE.md`'s AD-01
+> dormant status as controlling; that stale section should get the same marker (tracked separately,
+> not part of this doc-only pass).
+>
+> The underlying obligation that survives the pivot is not about account authority at all - it's
+> `AD-13` ("required deletion erases or crypto-shreds protected payload and appends a disposition
+> event while retaining only the permitted sanitized envelope/tombstone and minimum reconciliation
+> state") and `AD-20` ("unknown results survive restart/backup/restore and block retry ... until
+> reconciliation"). Both are properties of the *action/activity records themselves*, not a person
+> lifecycle state. Concretely: **"blocker preservation" on person deletion means checking for any
+> unresolved (`submitted`/`unknown`) meaningful-action attempts tied to that person before deleting,
+> and retaining a sanitized tombstone rather than silently losing them** - there is no separate
+> "reconciliation-only access mode" to build; there's nothing left to grant access to once the person
+> is gone.
+>
+> **Decided (2026-07-16):** `application/person_deletion.delete_person` does a hard
+> `session.delete(person)` and relies on SQLAlchemy FK `ondelete` behavior for cleanup.
+> `ActivityRecord.person_id` is `ondelete="SET NULL"` (tombstone-shaped - the activity entry survives,
+> only the person reference is cleared), while `AssistantRecord.owner_person_id`, `TopicRecord.person_id`,
+> and `MemoryIndexRecord.person_id` are all `ondelete="CASCADE"` - deleting a person today immediately
+> and irreversibly hard-deletes their personal assistant and their entire conversation/memory history in
+> the same transaction. This is the intended disposition for now - a full hard delete of everything tied
+> to the person is fine as-is; no tombstone/grace-period work is needed here. See the new
+> cross-instance-migration horizon below for the actual scenario this data would otherwise need to
+> survive.
+>
+> **Real dependency gaps, not just naming problems:**
+> - "Blocker preservation" needs something to check against. `ApprovalRecord` exists in
+>   `persistence/models.py` but has zero call sites anywhere in the codebase - Epic 6's meaningful-action/
+>   approval machinery (AD-20) isn't built yet. Until it exists, a pre-deletion blocker check is
+>   vacuously true and can't be meaningfully implemented.
+> - "Named durable classes have documented retention" has exactly one numerically-decided rule today:
+>   `AD-25`'s fixed 30-day `pending-inferred-observation` expiry - and that knowledge-state lifecycle
+>   itself isn't implemented (`memory/contracts.py` has `proposed`/`confirmed`/`retired` only, no
+>   expiry field, no scheduled job; `worker.py` is a heartbeat-only shim with no cleanup logic).
+>   Everything else falls under the "Open product safe interims" line in `ARCHITECTURE-SPINE.md`:
+>   *"named durable classes have no automatic deletion while required/user deletion remains"* - i.e.
+>   no other numeric retention period has been decided. `domain/lifecycle.py`'s
+>   `BOOTSTRAP_RECORD_LIFECYCLES` table already sketches a per-record-type taxonomy
+>   (`classification`/`backup_eligible`/`import_eligible`/`restore_disposition`/`deletion`) but nothing
+>   imports it - it's the right seam to wire retention into once durations are decided, not something
+>   to invent numbers for unilaterally here.
+> - Acceptance criteria referencing backup/restore survival (`epics.md:516`, `528`) can't be verified
+>   yet either way: Stories 9.1-9.3 (backup/restore/import) have no implementation at all - no code
+>   under `application/` or `api/` for any of the three.
+>
+> **Recommended buildable-now slice**, once product signs off on this scoping: wire
+> `BOOTSTRAP_RECORD_LIFECYCLES` into a real per-class retention disposition doc. Defer the
+> blocker-preservation check until Epic 6's approval/meaningful-action machinery exists, and defer
+> backup/restore verification until Stories 9.1-9.3 exist. `delete_person`'s CASCADE hard-delete
+> behavior is confirmed correct as-is and needs no further work. No code changes in this pass - this
+> is scoping only, pending sign-off.
+
+> **Deferred to v2 (2026-07-16, non-committed horizon):** cross-instance Home Assistant re-binding.
+> Scenario: the household's HA instance is lost or rebuilt from scratch (corruption, hardware
+> replacement) but the Kinward deployment/database survives intact. The operator recreates their
+> `person` entities in the fresh HA instance and wants to re-attach the surviving Kinward household
+> (people, pets, assistants, topics, memory, activity - everything) to that new HA instance rather than
+> starting over. This is **not** the same capability as Stories 9.1-9.3 (single-deployment backup/
+> restore/import of a point-in-time snapshot) - it's re-establishing the identity link between an
+> already-intact Kinward household and a different/rebuilt HA instance.
+>
+> Why this doesn't work today: `application/people_sync.sync_people` matches purely on
+> `PersonRecord.ha_person_id`, the durable id from HA's own person registry
+> (`services/kinward/src/kinward/application/people_sync.py:38-40`). A rebuilt HA instance generates
+> brand-new registry ids even for identically-named `person` entities, so today's sync would treat
+> every recreated person as new and silently orphan every existing `PersonRecord` (and everything
+> owned by it) rather than reattaching to it.
+>
+> Out of scope for this pass and for Story 9.4 generally - this needs its own future PRD and
+> architecture amendment (per `ARCHITECTURE-SPINE.md`'s "Non-committed horizons" convention) covering
+> at minimum: an explicit admin-driven rebind action (never automatic/inferable from name matching
+> alone, to avoid silently binding the wrong person), export/import of the rebind mapping, and how it
+> composes with the admin invariant and Stories 9.1-9.3 once those exist. Tracked in
+> `ARCHITECTURE-SPINE.md`'s "Non-committed horizons" list.
 
 ### Story 9.5: Recover the same administrator profile safely
 

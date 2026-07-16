@@ -395,6 +395,14 @@ Provider credentials belong to a person or the household, not to an assistant. A
 
 ### Account baseline
 
+> **Dormant (2026-07-16, HA-native identity redesign):** this section describes the local
+> account/session/deletion-pending model of `ARCHITECTURE-SPINE.md`'s `AD-01 [DORMANT]`. Kinward has
+> no identity system of its own for the HA-native path - HA is the sole login, and there is no local
+> session or account-lifecycle overlay to enter. Treat AD-01's dormant status as controlling over this
+> unedited section; it becomes relevant again only if a non-HA standalone client is built (Story 10.4).
+> See `epics.md` Story 9.4 for how the surviving "blocker preservation" obligation is redefined without
+> an account-lifecycle overlay.
+
 Local credential verifiers use an Argon2id-equivalent password hash with parameters recorded for future rehash. Successful authentication creates an opaque high-entropy session secret; only its verifier/hashed representation and metadata are stored server-side. The browser receives it only through a `Secure`, `HttpOnly`, `SameSite` cookie. Session records bind the existing person/account, issuance and expiry, security version, and revocation state.
 
 Account state is exactly `active`, `disabled`, `locked`, or `recovery-pending`; `deletion-pending` is a separate person-lifecycle overlay. Only an active account without that overlay may create work or use personal authority. Entering a non-active state or deletion-pending atomically invalidates sessions, invitations, grants, approvals, handoffs, delegations, provider access, and proactivity and cancels unsubmitted work. Submitted and `unknown` attempts retain reconciliation blockers. Deletion-pending exposes only minimum reconciliation. Reactivation requires same-profile proof, new security artifacts, and revalidation of every current policy/share/grant; it never revives expired work or releases restore quarantine.
