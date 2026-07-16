@@ -17,9 +17,7 @@ from kinward.application.conversation import (
     list_topics,
     update_topic,
 )
-from kinward.application.ha_user_mappings import upsert_mapping
 from kinward.persistence.models import (
-    AccountRecord,
     AssistantRecord,
     Base,
     HouseholdRecord,
@@ -41,27 +39,42 @@ async def _seed_mapped_person(session):  # type: ignore[no-untyped-def]
     session.add(household)
     await session.flush()
     person = PersonRecord(
-        household_id=household.id, display_name="Example Adult", role="admin", profile_kind="adult"
+        household_id=household.id,
+        display_name="Example Adult",
+        role="admin",
+        profile_kind="adult",
+        ha_person_id="ha-person-1",
+        ha_user_id="ha-user-1",
     )
     session.add(person)
     await session.flush()
-    session.add_all(
-        [
-            AccountRecord(
-                household_id=household.id,
-                person_id=person.id,
-                email="adult@example.invalid",
-                password_verifier="x",
-            ),
-            AssistantRecord(
-                household_id=household.id, owner_person_id=person.id, name="Atlas", kind="primary"
-            ),
-        ]
+    session.add(
+        AssistantRecord(
+            household_id=household.id, owner_person_id=person.id, name="Atlas", kind="primary"
+        )
     )
-    await session.flush()
-    await upsert_mapping(session, ha_user_id="ha-user-1", person_id=person.id)
     await session.commit()
     return household, person
+
+
+async def _add_other_mapped_person(session, household, *, ha_person_id: str, ha_user_id: str):  # type: ignore[no-untyped-def]
+    other_person = PersonRecord(
+        household_id=household.id,
+        display_name="Other Adult",
+        role="member",
+        profile_kind="adult",
+        ha_person_id=ha_person_id,
+        ha_user_id=ha_user_id,
+    )
+    session.add(other_person)
+    await session.flush()
+    session.add(
+        AssistantRecord(
+            household_id=household.id, owner_person_id=other_person.id, name="Nova", kind="primary"
+        )
+    )
+    await session.commit()
+    return other_person
 
 
 async def test_unmapped_ha_user_fails_closed() -> None:
@@ -129,30 +142,7 @@ async def test_a_conversation_id_belonging_to_a_different_person_is_not_continue
     factory = await _factory()
     async with factory() as session:
         household, _person_one = await _seed_mapped_person(session)
-        other_person = PersonRecord(
-            household_id=household.id, display_name="Other Adult", role="member", profile_kind="adult"
-        )
-        session.add(other_person)
-        await session.flush()
-        session.add_all(
-            [
-                AccountRecord(
-                    household_id=household.id,
-                    person_id=other_person.id,
-                    email="other@example.invalid",
-                    password_verifier="x",
-                ),
-                AssistantRecord(
-                    household_id=household.id,
-                    owner_person_id=other_person.id,
-                    name="Nova",
-                    kind="primary",
-                ),
-            ]
-        )
-        await session.flush()
-        await upsert_mapping(session, ha_user_id="ha-user-2", person_id=other_person.id)
-        await session.commit()
+        await _add_other_mapped_person(session, household, ha_person_id="ha-person-2", ha_user_id="ha-user-2")
 
         owned = await handle_conversation_request(
             session, ha_user_id="ha-user-1", text="mine", conversation_id=None, language="en"
@@ -219,30 +209,7 @@ async def test_cancel_does_not_let_a_different_person_cancel_another_persons_tur
     factory = await _factory()
     async with factory() as session:
         household, _person_one = await _seed_mapped_person(session)
-        other_person = PersonRecord(
-            household_id=household.id, display_name="Other Adult", role="member", profile_kind="adult"
-        )
-        session.add(other_person)
-        await session.flush()
-        session.add_all(
-            [
-                AccountRecord(
-                    household_id=household.id,
-                    person_id=other_person.id,
-                    email="other2@example.invalid",
-                    password_verifier="x",
-                ),
-                AssistantRecord(
-                    household_id=household.id,
-                    owner_person_id=other_person.id,
-                    name="Nova",
-                    kind="primary",
-                ),
-            ]
-        )
-        await session.flush()
-        await upsert_mapping(session, ha_user_id="ha-user-2", person_id=other_person.id)
-        await session.commit()
+        await _add_other_mapped_person(session, household, ha_person_id="ha-person-2", ha_user_id="ha-user-2")
 
         owned = await handle_conversation_request(
             session, ha_user_id="ha-user-1", text="mine", conversation_id=None, language="en"
@@ -328,30 +295,7 @@ async def test_update_topic_fails_closed_for_another_persons_topic() -> None:
     factory = await _factory()
     async with factory() as session:
         household, _person_one = await _seed_mapped_person(session)
-        other_person = PersonRecord(
-            household_id=household.id, display_name="Other Adult", role="member", profile_kind="adult"
-        )
-        session.add(other_person)
-        await session.flush()
-        session.add_all(
-            [
-                AccountRecord(
-                    household_id=household.id,
-                    person_id=other_person.id,
-                    email="other3@example.invalid",
-                    password_verifier="x",
-                ),
-                AssistantRecord(
-                    household_id=household.id,
-                    owner_person_id=other_person.id,
-                    name="Nova",
-                    kind="primary",
-                ),
-            ]
-        )
-        await session.flush()
-        await upsert_mapping(session, ha_user_id="ha-user-2", person_id=other_person.id)
-        await session.commit()
+        await _add_other_mapped_person(session, household, ha_person_id="ha-person-2", ha_user_id="ha-user-2")
 
         owned = await handle_conversation_request(
             session, ha_user_id="ha-user-1", text="mine", conversation_id=None, language="en"

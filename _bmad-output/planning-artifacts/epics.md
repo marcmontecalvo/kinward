@@ -61,8 +61,8 @@ All non-UI requirements in the PRD and architecture remain active unless this do
 
 1. Kinward remains a hexagonal modular monolith with framework-free domain and application layers.
 2. The HA integration is an adapter. It must not own household policy or directly mutate persistence.
-3. Every protected request carries immutable Kinward access context derived from an explicit HA-user-to-Kinward-profile mapping.
-4. HA administrator status never grants another adult's private Kinward data.
+3. Every protected request carries immutable Kinward access context derived from the Home Assistant person entity synced to that request's HA user - not an explicit admin-configured mapping (superseded 2026-07-16: Kinward has no identity system of its own; every HA `person` entity syncs automatically, keyed on its durable HA person id).
+4. Being an HA administrator makes a synced person a Kinward administrator too (role is read from HA's own admin flag on every sync pass, plural admins supported, no separate Kinward-side designation - superseded 2026-07-16). That household role never by itself grants another adult's private Kinward data - role and privacy authorization remain separate axes (see Story 3.3).
 5. Standard HA entities are used only when state is compact, useful in dashboards/automations, and safe for HA history/logbook.
 6. Private bodies, secrets, unrestricted payloads, prompts, and large nested documents must not be placed in entity state or attributes.
 7. Rich data uses authorization-checked backend APIs or integration WebSocket commands only when required.
@@ -120,6 +120,12 @@ So that the HA pivot does not weaken identity, assistant ownership, or privacy f
 - Exactly one household exists per deployment.
 - Pets receive no account, assistant, private memory, credentials, approval, delegation, or authority.
 - Existing Story 1.2 tests remain authoritative after presentation dependencies are removed.
+
+> **Superseded (2026-07-16, HA-native identity redesign):** Kinward has no local accounts, so bootstrap
+> no longer creates an "initial administrator" at all - it only creates the household, the fallback
+> assistant, and any pets. People (including whoever ends up administrator) exist solely via HA
+> `person` sync (see Story 3.1's note). "As the initial administrator" and "initial
+> administrator/profile binding" above no longer describe the implementation; retained for history.
 
 ### Story 1.3: Add a pinned Home Assistant development profile
 
@@ -205,6 +211,14 @@ Each account-bearing person can use exactly one private primary assistant throug
 - Mapping changes are versioned and audited without protected content.
 - HA administrators gain no role-derived access to another adult's private data.
 
+> **Superseded (2026-07-16, HA-native identity redesign):** there is no explicit admin-configured
+> mapping step or `HaUserMappingRecord` anymore - every HA `person` entity syncs automatically, and
+> `PersonRecord.ha_user_id` (set only while that person has an HA login) is the resolution key, kept
+> current every sync pass instead of admin-edited. "Fails closed" still holds exactly as stated: no
+> row for that `ha_user_id` resolves to nothing. The last bullet is unchanged and still load-bearing:
+> being an HA admin makes someone a Kinward admin (cross-cutting rule 4), but that role alone still
+> grants no access to another adult's private data - only privacy classification does (Story 3.3).
+
 ### Story 2.2: Implement the Kinward conversation entity
 
 - A `ConversationEntity` sends policy-filtered requests to Kinward.
@@ -246,11 +260,28 @@ Safely manage household people and assistant ownership while keeping initial HA-
 - Pet profiles remain optional and household-shared only.
 - Initial setup does not require rooms, devices, routines, detailed schedules, notification rules, or dashboard editing.
 
+> **Superseded (2026-07-16, HA-native identity redesign):** the "people" half is gone - administrators
+> don't create profiles at all anymore. Every HA `person` entity (with or without a linked login) syncs
+> in automatically as a Kinward profile; a no-login person (e.g. a young child) is simply a `person`
+> entity with no `user_id`, which already *is* the "pre-account person" concept this story wanted -
+> nothing separate to build. Only the pet half remains genuinely new work: pet CRUD after bootstrap
+> (create/list/update/remove), since bootstrap already accepts initial pets but has no later add path.
+>
+> **Implemented (2026-07-16):** pet CRUD lives in `application/pets.py`, exposed as
+> `GET/POST /api/v1/integration/pets` and `PATCH`/`DELETE /api/v1/integration/pets/{id}`, admin-only
+> for mutation (see Story 8.2's admin-plural note). Tests in `tests/test_pets.py` and the API round
+> trip in `tests/test_integration_api.py`.
+
 ### Story 3.2: Bind invitations without duplicate profiles
 
 - Invitations are single-use, expiring, revocable, hashed, and invalid after binding.
 - Acceptance binds to the intended existing profile.
 - Stale, ambiguous, cross-profile, or replayed acceptance fails closed.
+
+> **Superseded (2026-07-16, HA-native identity redesign):** eliminated entirely. HA already has real
+> user management and Kinward has no email-delivery mechanism to build an invitation flow on top of;
+> a person becomes usable the moment they exist in HA, via sync. Nothing in this story is built or
+> planned.
 
 ### Story 3.3: Enforce account, role, privacy, ownership, and authority separately
 
@@ -258,12 +289,38 @@ Safely manage household people and assistant ownership while keeping initial HA-
 - Adult, teen, and child policies are deterministic.
 - Teen private disclosure remains unconditionally denied outside the exact owner-authorized, privacy-filtered exception.
 
+> **Updated (2026-07-16, HA-native identity redesign):** "account state" is dead - there is no local
+> Kinward account. "Household role" is narrower than it reads above and is no longer admin-assigned:
+> it is exactly two values, `admin`/`member`, mechanically derived every sync pass from whether the
+> synced person's linked HA user is currently an HA administrator (plural admins are expected and
+> supported - see cross-cutting rule 4). This story's still-real, still-unbuilt remainder is
+> `profile_kind` reclassification (adult/teen/child) and privacy-class management for a synced person -
+> that's a genuine admin-facing action this story still owns; admin/member role is not.
+>
+> **Implemented (2026-07-16):** `application/people.reclassify_person` sets `profile_kind` and keeps
+> the person's `classification` (privacy class) in lockstep - `child` -> `private-child`, `adult`/`teen`
+> -> `private-person` - never touching `role`. Exposed admin-only as
+> `PATCH /api/v1/integration/people/{id}/reclassify`. Tests in `tests/test_people_admin.py` and
+> `tests/test_integration_api.py`.
+
 ### Story 3.4: Configure the primary assistant
 
 - Every account-bearing person has exactly one primary personal assistant in the first release.
 - The owner sets assistant name and supported personality/interaction preferences.
 - Preferences never alter authority, privacy, or action policy.
 - Disablement, deletion, and replacement preserve same-owner boundaries and defined content/work disposition.
+
+> **Updated (2026-07-16, HA-native identity redesign):** "account-bearing" now just means "synced from
+> HA" - every synced person gets their primary assistant auto-created atomically as part of the same
+> sync pass that creates their profile, with a default name. What's left of this story is letting the
+> owner rename/customize their own assistant's personality after the fact; auto-creation is no longer
+> new scope.
+>
+> **Implemented (2026-07-16):** `application/assistants.update_own_primary_assistant` lets the resolved
+> owner (by `ha_user_id`) rename their primary assistant and/or set its `personality` dict, exposed as
+> `PATCH /api/v1/integration/assistants/primary`. It only ever touches the `AssistantRecord`, never the
+> owning `PersonRecord`, so preferences structurally cannot alter authority/privacy/action policy.
+> Tests in `tests/test_assistants.py` and `tests/test_integration_api.py`.
 
 # Epic 4: Topics, Memory, Knowledge, and Corrections
 
@@ -408,11 +465,21 @@ Operate Kinward through HA-hosted configuration and backend administration witho
 - Reauthentication and reconnect preserve non-secret local configuration.
 - Disablement is distinguishable from failure.
 
+> **Superseded (2026-07-16, HA-native identity redesign):** "profile mapping" as an integration option
+> is gone - there is no options flow and nothing to map. People sync automatically; admin role is
+> derived automatically. The remaining real scope here is backend connection/reauthentication only.
+
 ### Story 8.2: Preserve Kinward administrative authority
 
 - Authorized administrators manage people, invitations, assistants, child policy, household integrations, proactive defaults, backup, and health.
 - Adults manage their own integrations, memory, preferences, and sharing without unrelated administrative access.
 - Complex functions may initially use backend CLI/API workflows; lack of a custom panel does not weaken policy.
+
+> **Superseded (2026-07-16, HA-native identity redesign):** "invitations" is dead (Story 3.2). "People"
+> here now means the still-real remainder: `profile_kind`/privacy reclassification and pet CRUD (Story
+> 3.1/3.3), not creating people (that's sync-only now). "Authorized administrators" (plural, by design)
+> means every current HA admin - see cross-cutting rule 4; there is no single distinguished admin to
+> authorize against.
 
 ### Story 8.3: Provide authorized activity
 
@@ -460,11 +527,36 @@ Preserve the whole household authority graph and all unresolved safety obligatio
 - Ephemeral, invalidated, expired-security, and user-deleted content is removed as specified.
 - Person deletion immediately shuts down authority, permits reconciliation-only access, preserves blockers, protects the sole administrator, and reaches atomic final disposition.
 
+> **Needs redesign (2026-07-16, HA-native identity redesign):** "protects the sole administrator"
+> assumed exactly one administrator; that assumption no longer holds - any number of people can be
+> admins, derived live from HA. Whoever builds this story must redefine the invariant in terms that
+> hold under multiple admins (e.g. "a deletion/demotion in HA can never silently leave the household
+> with zero admins" is the closest equivalent to today's rule) rather than protecting one named person.
+> Also note: Kinward never deletes a `PersonRecord` on its own when a `person` entity disappears from
+> HA sync (see Story 3.1's note) - actual deletion is this story's explicit, auditable action, not a
+> side effect of sync.
+>
+> **Partially implemented (2026-07-16):** the redesigned invariant itself is built -
+> `domain/admin_invariant.validate_admin_removal` blocks exactly the "would leave zero admins" case,
+> not "isn't the one designated admin" - and `application/person_deletion.delete_person` wires it into
+> an explicit, auditable deletion action (`DELETE /api/v1/integration/people/{id}`, admin-only,
+> transactional, records an `ActivityRecord`). Tests in `tests/test_admin_invariant.py` and
+> `tests/test_person_deletion.py`. Still open, and out of this pass's scope: documented per-class
+> retention enforcement, the deletion-pending/reconciliation-only access overlay, and blocker
+> preservation - this only covers the admin-invariant redesign the previous pass flagged, not the rest
+> of the story.
+
 ### Story 9.5: Recover the same administrator profile safely
 
 - Portable account-access material and excluded recovery artifacts are explicitly classified.
 - Recovery restores access to the same administrator profile without database editing.
 - Post-restore tests verify reauthorization, quarantine, token invalidation, deletion restrictions, and unresolved-action blocking.
+
+> **Superseded (2026-07-16, HA-native identity redesign):** there is no local Kinward account or
+> password to recover - HA is the sole login (AD-01 marked dormant in ARCHITECTURE-SPINE.md).
+> Recovering access to an admin's login is entirely Home Assistant's own responsibility, outside
+> Kinward's remit; nothing in this story is built or planned unless a non-HA standalone client is ever
+> built (Story 10.4).
 
 # Epic 10: Evidence-Gated Extensions
 

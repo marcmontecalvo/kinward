@@ -24,6 +24,8 @@ async def async_setup_entry(
             KinwardAttentionSensor(coordinator),
             KinwardNextEventSensor(coordinator),
             KinwardLastRefreshSensor(coordinator),
+            KinwardPeopleSensor(coordinator),
+            KinwardPetsSensor(coordinator),
         ]
     )
 
@@ -115,6 +117,69 @@ class KinwardNextEventSensor(KinwardEntity, SensorEntity):
             "capability_state": data.next_event.state,
             "reason": data.next_event.reason,
             "summary": data.next_event.summary,
+        }
+
+
+class KinwardPeopleSensor(KinwardEntity, SensorEntity):
+    """Every synced person and the Kinward role (admin/member) they currently hold.
+
+    Role is derived live from HA's own admin flag on every sync pass - there is no
+    Kinward-side admin designation to look up separately (see coordinator/people_sync).
+    """
+
+    _attr_translation_key = "people"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(self, coordinator: KinwardDataUpdateCoordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.household_id}-people"
+
+    @property
+    def native_value(self) -> int:
+        return len(self.coordinator.people)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, list[dict[str, str | None]]]:
+        return {
+            "people": [
+                {
+                    "id": person.id,
+                    "display_name": person.display_name,
+                    "role": person.role,
+                    "ha_person_id": person.ha_person_id,
+                    "ha_user_id": person.ha_user_id,
+                }
+                for person in self.coordinator.people
+            ]
+        }
+
+
+class KinwardPetsSensor(KinwardEntity, SensorEntity):
+    """Every household-shared pet profile currently on record."""
+
+    _attr_translation_key = "pets"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(self, coordinator: KinwardDataUpdateCoordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.household_id}-pets"
+
+    @property
+    def native_value(self) -> int:
+        return len(self.coordinator.pets)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, list[dict[str, object]]]:
+        return {
+            "pets": [
+                {
+                    "id": pet.id,
+                    "display_name": pet.display_name,
+                    "species": pet.species,
+                    "shared_facts": pet.shared_facts,
+                }
+                for pet in self.coordinator.pets
+            ]
         }
 
 

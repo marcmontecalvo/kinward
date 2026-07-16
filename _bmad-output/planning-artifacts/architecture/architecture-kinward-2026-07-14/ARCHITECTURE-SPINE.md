@@ -47,7 +47,13 @@ flowchart LR
 
 ## Invariants & Rules
 
-### AD-01 — Local account authentication [ADOPTED]
+### AD-01 — Local account authentication [DORMANT]
+
+Superseded for the HA-native path: Kinward has no identity system of its own. People (including the
+household administrator) sync from Home Assistant's own `person` entities, keyed on their stable HA
+person registry id; a person's HA login toggling on/off changes only whether a `person` entity has a
+linked `user_id`, never Kinward identity. This rule is dormant, not deleted - it becomes relevant again
+only if a non-HA standalone client is ever built (Story 10.4, already gated behind a future PRD).
 
 - **Binds:** FR-002, FR-005–FR-008, FR-028, FR-083, FR-085, FR-093, NFR-007
 - **Prevents:** Replayable bearer credentials, unsafe profile rebinding, session survival after authority loss, and hidden external identity dependency.

@@ -78,25 +78,6 @@ SummaryResult = SummarySuccess | SummaryFailure
 
 
 @dataclass(frozen=True)
-class Person:
-    id: str
-    display_name: str
-
-
-@dataclass(frozen=True)
-class PeopleSuccess:
-    people: list[Person]
-
-
-@dataclass(frozen=True)
-class PeopleFailure:
-    error: ConfigFlowErrorCode
-
-
-PeopleResult = PeopleSuccess | PeopleFailure
-
-
-@dataclass(frozen=True)
 class SendMessageSuccess:
     conversation_id: str | None
     outcome: str
@@ -113,22 +94,66 @@ SendMessageResult = SendMessageSuccess | SendMessageFailure
 
 
 @dataclass(frozen=True)
-class HaUserMapping:
-    ha_user_id: str
-    person_id: str
+class HaPerson:
+    """One Home Assistant ``person.*`` entity, as read from ``hass.states.async_all``.
+
+    ``is_admin`` reflects the linked HA user's current admin flag (false if there's
+    no linked user at all) - Kinward has no admin designation of its own; whoever is
+    an HA administrator is a Kinward administrator, and any number of people can hold
+    that role at once.
+    """
+
+    ha_person_id: str
+    ha_user_id: str | None
+    display_name: str
+    is_admin: bool = False
 
 
 @dataclass(frozen=True)
-class MappingsSuccess:
-    mappings: list[HaUserMapping]
+class SyncedPerson:
+    """A Kinward person as reported back by the sync endpoint."""
+
+    id: str
+    ha_person_id: str
+    ha_user_id: str | None
+    display_name: str
+    role: str
 
 
 @dataclass(frozen=True)
-class MappingsFailure:
+class SyncPeopleSuccess:
+    people: list[SyncedPerson]
+
+
+@dataclass(frozen=True)
+class SyncPeopleFailure:
     error: ConfigFlowErrorCode
 
 
-MappingsResult = MappingsSuccess | MappingsFailure
+SyncPeopleResult = SyncPeopleSuccess | SyncPeopleFailure
+
+
+@dataclass(frozen=True)
+class Pet:
+    """A household-shared pet profile, as reported by the pets endpoint."""
+
+    id: str
+    display_name: str
+    species: str
+    shared_facts: list[str]
+
+
+@dataclass(frozen=True)
+class PetsSuccess:
+    pets: list[Pet]
+
+
+@dataclass(frozen=True)
+class PetsFailure:
+    error: ConfigFlowErrorCode
+
+
+PetsResult = PetsSuccess | PetsFailure
 
 
 def classify_context_response(status_code: int, payload: Any) -> ContextResult:
@@ -204,44 +229,76 @@ def classify_summary_response(status_code: int, payload: Any) -> SummaryResult:
     )
 
 
-def classify_people_response(status_code: int, payload: Any) -> PeopleResult:
-    if status_code == 401:
-        return PeopleFailure("invalid_auth")
-    if status_code == 409:
-        return PeopleFailure("household_not_configured")
-    if status_code != 200 or not isinstance(payload, list):
-        return PeopleFailure("unknown")
-    people: list[Person] = []
-    for item in payload:
-        if not isinstance(item, dict):
-            return PeopleFailure("unknown")
-        person_id = item.get("id")
-        display_name = item.get("displayName")
-        if not isinstance(person_id, str) or not isinstance(display_name, str):
-            return PeopleFailure("unknown")
-        people.append(Person(id=person_id, display_name=display_name))
-    return PeopleSuccess(people=people)
+def _synced_person_from(payload: Any) -> SyncedPerson | None:
+    if not isinstance(payload, dict):
+        return None
+    person_id = payload.get("id")
+    ha_person_id = payload.get("haPersonId")
+    ha_user_id = payload.get("haUserId")
+    display_name = payload.get("displayName")
+    role = payload.get("role")
+    if (
+        not isinstance(person_id, str)
+        or not isinstance(ha_person_id, str)
+        or not isinstance(display_name, str)
+        or not isinstance(role, str)
+    ):
+        return None
+    if ha_user_id is not None and not isinstance(ha_user_id, str):
+        return None
+    return SyncedPerson(
+        id=person_id, ha_person_id=ha_person_id, ha_user_id=ha_user_id, display_name=display_name, role=role
+    )
 
 
-def classify_mappings_response(status_code: int, payload: Any) -> MappingsResult:
+def classify_sync_people_response(status_code: int, payload: Any) -> SyncPeopleResult:
     if status_code == 401:
-        return MappingsFailure("invalid_auth")
+        return SyncPeopleFailure("invalid_auth")
     if status_code == 409:
-        return MappingsFailure("household_not_configured")
-    if status_code == 422:
-        return MappingsFailure("unknown")
+        return SyncPeopleFailure("household_not_configured")
     if status_code != 200 or not isinstance(payload, list):
-        return MappingsFailure("unknown")
-    mappings: list[HaUserMapping] = []
+        return SyncPeopleFailure("unknown")
+    people: list[SyncedPerson] = []
     for item in payload:
-        if not isinstance(item, dict):
-            return MappingsFailure("unknown")
-        ha_user_id = item.get("haUserId")
-        person_id = item.get("personId")
-        if not isinstance(ha_user_id, str) or not isinstance(person_id, str):
-            return MappingsFailure("unknown")
-        mappings.append(HaUserMapping(ha_user_id=ha_user_id, person_id=person_id))
-    return MappingsSuccess(mappings=mappings)
+        person = _synced_person_from(item)
+        if person is None:
+            return SyncPeopleFailure("unknown")
+        people.append(person)
+    return SyncPeopleSuccess(people=people)
+
+
+def _pet_from(payload: Any) -> Pet | None:
+    if not isinstance(payload, dict):
+        return None
+    pet_id = payload.get("id")
+    display_name = payload.get("displayName")
+    species = payload.get("species")
+    shared_facts = payload.get("sharedFacts")
+    if (
+        not isinstance(pet_id, str)
+        or not isinstance(display_name, str)
+        or not isinstance(species, str)
+        or not isinstance(shared_facts, list)
+        or not all(isinstance(fact, str) for fact in shared_facts)
+    ):
+        return None
+    return Pet(id=pet_id, display_name=display_name, species=species, shared_facts=shared_facts)
+
+
+def classify_pets_response(status_code: int, payload: Any) -> PetsResult:
+    if status_code == 401:
+        return PetsFailure("invalid_auth")
+    if status_code == 409:
+        return PetsFailure("household_not_configured")
+    if status_code != 200 or not isinstance(payload, list):
+        return PetsFailure("unknown")
+    pets: list[Pet] = []
+    for item in payload:
+        pet = _pet_from(item)
+        if pet is None:
+            return PetsFailure("unknown")
+        pets.append(pet)
+    return PetsSuccess(pets=pets)
 
 
 def classify_send_message_response(status_code: int, payload: Any) -> SendMessageResult:
@@ -300,31 +357,30 @@ class KinwardApiClient:
             return SummaryFailure("cannot_connect")
         return classify_summary_response(status, payload)
 
-    async def async_fetch_people(self) -> PeopleResult:
-        try:
-            status, payload = await self._request("GET", "/api/v1/integration/people")
-        except (TimeoutError, aiohttp.ClientError):
-            return PeopleFailure("cannot_connect")
-        return classify_people_response(status, payload)
-
-    async def async_fetch_ha_user_mappings(self) -> MappingsResult:
-        try:
-            status, payload = await self._request("GET", "/api/v1/integration/ha-user-mappings")
-        except (TimeoutError, aiohttp.ClientError):
-            return MappingsFailure("cannot_connect")
-        return classify_mappings_response(status, payload)
-
-    async def async_put_ha_user_mappings(
-        self, mappings: list[HaUserMapping]
-    ) -> MappingsResult:
-        body = [{"haUserId": item.ha_user_id, "personId": item.person_id} for item in mappings]
+    async def async_sync_people(self, people: list[HaPerson]) -> SyncPeopleResult:
+        body = [
+            {
+                "haPersonId": person.ha_person_id,
+                "haUserId": person.ha_user_id,
+                "displayName": person.display_name,
+                "isAdmin": person.is_admin,
+            }
+            for person in people
+        ]
         try:
             status, payload = await self._request(
-                "PUT", "/api/v1/integration/ha-user-mappings", json_body=body
+                "PUT", "/api/v1/integration/people/sync", json_body=body
             )
         except (TimeoutError, aiohttp.ClientError):
-            return MappingsFailure("cannot_connect")
-        return classify_mappings_response(status, payload)
+            return SyncPeopleFailure("cannot_connect")
+        return classify_sync_people_response(status, payload)
+
+    async def async_fetch_pets(self) -> PetsResult:
+        try:
+            status, payload = await self._request("GET", "/api/v1/integration/pets")
+        except (TimeoutError, aiohttp.ClientError):
+            return PetsFailure("cannot_connect")
+        return classify_pets_response(status, payload)
 
     async def async_send_conversation_message(
         self, *, ha_user_id: str, text: str, conversation_id: str | None, language: str
@@ -342,12 +398,3 @@ class KinwardApiClient:
         except (TimeoutError, aiohttp.ClientError):
             return SendMessageFailure("cannot_connect")
         return classify_send_message_response(status, payload)
-
-    async def async_delete_ha_user_mapping(self, ha_user_id: str) -> bool:
-        try:
-            status, _payload = await self._request(
-                "DELETE", f"/api/v1/integration/ha-user-mappings/{ha_user_id}"
-            )
-        except (TimeoutError, aiohttp.ClientError):
-            return False
-        return status == 204

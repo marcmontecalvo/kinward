@@ -34,7 +34,7 @@ do not silently work around a problem to make a checkbox pass.
 ## 2. Configure a Kinward backend entry
 
 - [ ] Enter `http://api:8000` and the token from step 0. The entry completes
-      and is titled with the real household name.
+      and is titled with the real household name - nothing else is asked.
 - [ ] Repeating the same entry is rejected as already configured (duplicate
       protection).
 
@@ -44,6 +44,8 @@ do not silently work around a problem to make a checkbox pass.
       **Settings -> People** if this is a fresh instance) and shows a state.
 - [ ] `sensor.kinward_household_status` shows the real adult/child counts.
 - [ ] `binary_sensor.kinward_backend` is `on`.
+- [ ] `sensor.kinward_people` exists; its state is the synced person count and
+      its `people` attribute lists each person with `role` (`admin`/`member`).
 
 ## 4. Run refresh or briefing generation from HA
 
@@ -51,36 +53,51 @@ do not silently work around a problem to make a checkbox pass.
       without error and `sensor.kinward_household_status`'s `last_changed`
       (or `sensor.kinward_last_refresh`'s state) updates.
 
-## 5. Map a Home Assistant user to a Kinward profile
+## 5. Confirm people sync automatically from Home Assistant
 
-- [ ] On the integration's device page, click **Configure** to open the
-      Options flow. Confirm it steps through each active HA user one at a
-      time, showing their real name.
-- [ ] Map the admin HA user to the household's admin Kinward profile; leave
-      any other HA user "Not mapped".
-- [ ] Re-opening **Configure** shows the mapping was saved (defaults reflect
-      the previous choice).
+- [ ] Within one polling interval of adding the integration (step 2), every
+      existing `person.*` entity appears as a synced Kinward person, visible
+      either via `sensor.kinward_people`'s `people` attribute in
+      **Developer Tools -> States** or `GET /api/v1/integration/people`.
+- [ ] Add a second `person.*` entity in HA (with or without a linked login).
+      Within one polling interval it also appears as a synced person, with no
+      further configuration.
+- [ ] Rename that person in HA. Confirm the synced Kinward profile's display
+      name updates and no duplicate profile is created.
+- [ ] Confirm the person linked to an HA admin user synced with Kinward
+      `role: "admin"`, and any person linked to a non-admin (or no) user
+      synced with `role: "member"` - there is no separate Kinward admin
+      designation step. If more than one HA user is an admin, confirm more
+      than one Kinward person shows `role: "admin"`. This is visible directly
+      in `sensor.kinward_people`'s `people` attribute (also rendered as a
+      table in the dashboard's "Household roster" view, step 8) - no API call
+      needed to check who's an admin.
+- [ ] In HA, toggle that user's admin flag off (**Settings -> People ->
+      Users**), then re-poll. Confirm the synced person's Kinward role flips
+      to `"member"` automatically, and back to `"admin"` if you toggle it on
+      again.
 
 ## 6. Submit text requests through `conversation.kinward`
 
 - [ ] **Developer Tools -> Actions**, call `conversation.process` targeting
-      `conversation.kinward` as the **mapped** HA user with a short text
-      request. It returns the truthful "no model configured" capability
-      report and a `conversation_id`.
+      `conversation.kinward` as the **synced** HA user (one with a linked
+      `person.*` entity, per step 5) with a short text request. It returns the
+      truthful "no model configured" capability report and a
+      `conversation_id`.
 - [ ] Send a second request reusing that same `conversation_id`; confirm it's
       the same value in the response (the topic continued rather than a new
       one being created).
-- [ ] Call `conversation.process` again as an **unmapped** HA user (or after
-      removing the mapping in step 5). Confirm the response comes from Home
-      Assistant's own built-in Assist agent (e.g. ask it something HA's
-      built-in agent can answer, like the time, or try a device-control
-      phrase) rather than any Kinward-generated text - and that it never
-      continues a mapped person's private topic.
+- [ ] Call `conversation.process` again as an HA user id with no synced
+      `person.*` entity. Confirm the response comes from Home Assistant's own
+      built-in Assist agent (e.g. ask it something HA's built-in agent can
+      answer, like the time, or try a device-control phrase) rather than any
+      Kinward-generated text - and that it never continues a synced person's
+      private topic.
 - [ ] Call `kinward.cli`-issued cancel: `POST
       /api/v1/integration/conversation/turns/{turnId}/cancel` for a turn
       created in this step. Confirm it reports `alreadyTerminal: true` with
       the turn's real outcome (expected - nothing is ever in-flight today).
-- [ ] `GET /api/v1/integration/topics?haUserId=<mapped HA user id>` lists the
+- [ ] `GET /api/v1/integration/topics?haUserId=<synced HA user id>` lists the
       topic(s) from this step; `PATCH` a rename and an archive/reopen, then
       `DELETE` it and confirm a follow-up `GET` 404s.
 
@@ -99,6 +116,37 @@ do not silently work around a problem to make a checkbox pass.
       IDs substituted in.
 - [ ] The dashboard renders correctly in the HA web UI and in the Companion
       app on at least one device.
+- [ ] The "Household roster" view's People/Pets tables render (not "No people
+      synced yet." once step 5 has run at least once).
+
+## 9. Pet CRUD (admin-only, backend-only - no HA-side create/edit form yet)
+
+Pets have no HA form to add or edit them (Epic 10's custom-card/panel gate
+hasn't been triggered), so creation and edits go through the backend API
+directly using the integration token and a synced admin's `ha_user_id`
+(the same one visible in step 5's `sensor.kinward_people`). Reading the
+result back is always visible in HA via `sensor.kinward_pets`.
+
+- [ ] Create a pet:
+      ```bash
+      curl -s -X POST http://localhost:8000/api/v1/integration/pets \
+        -H "Authorization: Bearer <integration token>" \
+        -H "Content-Type: application/json" \
+        -d '{"haUserId": "<admin ha_user_id>", "displayName": "Biscuit", "species": "Dog", "sharedFacts": ["Needs a walk every morning"]}'
+      ```
+      Returns `201` with the new pet's `id`. Within one polling interval,
+      `sensor.kinward_pets` shows the updated count and the pet in its `pets`
+      attribute (and the dashboard's Pets table).
+- [ ] Update it: `PATCH /api/v1/integration/pets/{id}` with the same
+      `haUserId` plus any of `displayName`/`species`/`sharedFacts`. Confirm
+      the change is reflected after the next poll.
+- [ ] Delete it: `DELETE /api/v1/integration/pets/{id}?haUserId=<admin ha_user_id>`
+      returns `204`; confirm it disappears from `sensor.kinward_pets` after
+      the next poll.
+- [ ] Confirm a non-admin `haUserId` (or an unmapped one) gets `403
+      admin_required` on create/update/delete, and that plain `GET /pets`
+      needs only a valid integration token (no admin check) since pet facts
+      are household-shared, not privacy-sensitive.
 
 ## Notes / defects observed
 

@@ -23,7 +23,7 @@ run = "uv run --project services/kinward python -m kinward.worker"
 
 [tasks.migrate]
 description = "Apply database migrations"
-run = "uv run --project services/kinward alembic -c services/kinward/alembic.ini upgrade head"
+run = "cd services/kinward && uv run alembic upgrade head"
 
 [tasks.test]
 description = "Run all tests"

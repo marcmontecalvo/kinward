@@ -101,18 +101,30 @@ docker compose up
 ```
 
 Use a randomly generated value of at least 24 characters; do not use the illustrative values from
-tests. Submit it to `POST http://localhost:8000/api/v1/setup/household` (directly, or through the
-Home Assistant `config_flow` once `custom_components/kinward` exists) along with the household,
-administrator, and any selected adult, child, or pet details; the endpoint creates the household,
-administrator account, administrator-owned personal assistant, ownerless household fallback, and
-those profiles in one transaction. It requires no provider or integration. Pets receive no
-credentials, account, assistant, private memory, approval, delegation, or action authority; only
-explicitly entered household-shared care facts are retained.
+tests. Submit it to `POST http://localhost:8000/api/v1/setup/household` along with the household name,
+fallback assistant name, and any selected pet details; the endpoint creates the household and an
+ownerless household fallback assistant in one transaction. It requires no provider or integration.
+Pets receive no credentials, account, assistant, private memory, approval, delegation, or action
+authority; only explicitly entered household-shared care facts are retained.
 
-Setup uses an explicit CSRF token, Argon2id password verification, and an idempotency identity. The
-authorization is stored only as a hash and becomes terminally unusable after commit. Remove the
-environment variable and restart `api` after setup. `/api/v1/setup/status` reports only whether setup
-is available or complete; it never returns a password verifier or reusable setup authorization.
+Kinward has no identity system of its own: people are not created by this call at all. Once
+`custom_components/kinward` is connected to this household, Home Assistant's own `person.*` entities
+become the only source of Kinward people - the integration syncs them on every poll. A person with no
+linked Home Assistant login (e.g. a child) is simply a `person.*` entity with no `user_id` attribute;
+nothing Kinward-specific is required to represent them.
+
+Kinward has no administrator designation step either: whoever is a Home Assistant administrator is a
+Kinward administrator, full stop. Every sync pass reads each synced person's linked HA user's admin
+flag and reconciles their Kinward role to match - promoting or demoting automatically as HA admin
+membership changes. Any number of people can hold the role at once. This is a coarse household-role
+distinction only; it does not by itself grant access to another adult's private data, which remains
+governed separately by privacy classification (see epics.md Story 3.3). Finer-grained permissions
+(e.g. a non-admin "manager" role) may be built later if the household actually needs them.
+
+Setup uses an explicit CSRF token and an idempotency identity. The authorization is stored only as a
+hash and becomes terminally unusable after commit. Remove the environment variable and restart `api`
+after setup. `/api/v1/setup/status` reports only whether setup is available or complete; it never
+returns a reusable setup authorization.
 
 Restart the long-running processes without rerunning the migration service:
 

@@ -8,8 +8,6 @@ def test_every_bootstrap_record_has_explicit_lifecycle_metadata() -> None:
         "child",
         "pet",
         "relationship",
-        "account",
-        "password_verifier",
         "primary_assistant",
         "fallback_assistant",
         "setup_capability",

@@ -2,9 +2,8 @@ from __future__ import annotations
 
 from typing import Annotated, cast
 
-from email_validator import EmailNotValidError, validate_email
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
-from pydantic import AfterValidator, BaseModel, Field, WithJsonSchema
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,7 +12,6 @@ from kinward.application.bootstrap import (
     BootstrapCommand,
     BootstrapError,
     SelectedPet,
-    SelectedProfile,
     SqlAlchemyBootstrapUnitOfWork,
     execute_bootstrap,
 )
@@ -24,24 +22,6 @@ from kinward.persistence.session import session_dependency
 router = APIRouter(prefix="/api/v1/setup", tags=["setup"])
 
 
-def _validate_email(value: str) -> str:
-    fictional = value.lower().endswith(".invalid")
-    candidate = value[:-8] + ".test" if fictional else value
-    try:
-        normalized = validate_email(candidate, check_deliverability=False, test_environment=fictional).normalized
-    except EmailNotValidError as error:
-        raise ValueError(str(error)) from None
-    return value.lower() if fictional else normalized
-
-
-AdminEmail = Annotated[str, AfterValidator(_validate_email), WithJsonSchema({"type": "string", "format": "email"})]
-
-
-class ProfileInput(BaseModel):
-    display_name: str = Field(min_length=1, max_length=120)
-    kind: str = Field(pattern="^(adult|child)$")
-
-
 class PetInput(BaseModel):
     display_name: str = Field(min_length=1, max_length=120)
     species: str = Field(min_length=1, max_length=80)
@@ -50,12 +30,7 @@ class PetInput(BaseModel):
 
 class BootstrapRequest(BaseModel):
     household_name: str = Field(min_length=1, max_length=120)
-    admin_name: str = Field(min_length=1, max_length=120)
-    admin_email: AdminEmail
-    password: str = Field(min_length=12, max_length=1024)
-    assistant_name: str = Field(min_length=1, max_length=120)
     fallback_assistant_name: str = Field(default="Kinward", min_length=1, max_length=120)
-    profiles: list[ProfileInput] = Field(default_factory=list, max_length=30)
     pets: list[PetInput] = Field(default_factory=list, max_length=30)
     csrf_token: str = Field(min_length=24, max_length=256)
 
@@ -67,8 +42,6 @@ class SetupStatusResponse(BaseModel):
 
 class BootstrapResponse(BaseModel):
     household_id: str
-    admin_person_id: str
-    primary_assistant_id: str
     fallback_assistant_id: str
 
 
@@ -101,12 +74,7 @@ async def bootstrap_household(
         raise HTTPException(status_code=403, detail={"code": "csrf_denied", "retryable": True})
     command = BootstrapCommand(
         household_name=body.household_name,
-        admin_name=body.admin_name,
-        admin_email=body.admin_email,
-        password=body.password,
-        assistant_name=body.assistant_name,
         fallback_assistant_name=body.fallback_assistant_name,
-        profiles=tuple(SelectedProfile(item.display_name, item.kind) for item in body.profiles),
         pets=tuple(SelectedPet(item.display_name, item.species, tuple(item.shared_facts)) for item in body.pets),
         idempotency_key=idempotency_key,
         setup_authorization=setup_authorization,

@@ -13,12 +13,13 @@ for a step-by-step household trial covering everything below end to end.
   `intentionally-disabled` / `not-yet-implemented` state - Epic 5's real
   briefing/calendar/attention pipeline isn't built yet).
 - `conversation.kinward` resolves whichever Home Assistant user is actually
-  talking to an account-bearing Kinward profile (via the integration's Options
-  flow - "Configure" on the integration's device page). A mapped request gets
-  a real, persisted, multi-turn topic - but since no model provider is
-  configured in this deployment, every reply is still a truthful "no model
-  configured" capability report rather than a generated answer. An unmapped
-  HA user or a shared display is handed off entirely to Home Assistant's own
+  talking to the Kinward person synced from that user's linked `person.*`
+  entity - Kinward has no identity system of its own; see "Sync people from
+  Home Assistant" below. A synced request gets a real, persisted, multi-turn
+  topic - but since no model provider is configured in this deployment, every
+  reply is still a truthful "no model configured" capability report rather
+  than a generated answer. An unsynced HA user (no `person.*` entity links to
+  them) or a shared display is handed off entirely to Home Assistant's own
   built-in Assist agent instead - never a Kinward-generated reply, and never
   another person's private context (epics.md Story 2.5).
 - Cancelling a request always reports "already terminal" today - every turn
@@ -58,18 +59,34 @@ copy this directory to that instance's `config/custom_components/kinward/`.
    create-integration-token` command.
 
 The config flow distinguishes an unreachable backend, a rejected token, an
-incompatible API contract version, and a backend with no household set up yet.
+incompatible API contract version, and a backend with no household set up
+yet. Nothing further is asked - there's no separate admin-designation step
+(see below).
 
-## Map Home Assistant users to Kinward profiles
+## Sync people from Home Assistant
 
-On the integration's card under **Settings -> Devices & Services**, click
-**Configure** to open the Options flow. Each active, non-system Home Assistant
-user is presented one at a time - choose the Kinward profile they are, or
-"Not mapped". Only account-bearing profiles can be chosen (today that's just
-the household's bootstrap administrator, until Epic 3's invitation flow adds
-accounts for everyone else). The mapping itself lives on the Kinward backend,
-not in Home Assistant's local storage, so it can be inspected/audited there
-independently of this UI.
+Kinward has no identity system of its own. Every ~60 seconds (the same poll
+that refreshes the dashboard entities), the integration reads every Home
+Assistant `person.*` entity and syncs it to the Kinward backend, keyed on that
+person's stable Home Assistant registry id - not their name, and not their
+linked login. A person with no login (e.g. a child) syncs in exactly the same
+way as one with a login; only their `person.*` entity's `user_id` attribute
+differs (absent vs. present). Renaming a person in Home Assistant, or turning
+their login on or off later, never creates a duplicate Kinward profile and
+never breaks `conversation.kinward`'s resolution of who's talking - both key
+off the same stable id, not the name. Removing a person from Home Assistant
+does not delete their Kinward profile or history; it only stops updating it.
+
+Kinward also has no admin designation of its own: whoever is a Home Assistant
+administrator is a Kinward administrator. Every sync pass looks up each
+synced person's linked HA user (when they have one) and reconciles their
+Kinward `role` to match that user's current admin flag - promoting or
+demoting automatically as HA admin membership changes, with no action needed
+in Kinward. Any number of people can hold the role at once; a household with
+two HA admins has two Kinward admins. This is a coarse role only - it doesn't
+by itself grant access to another adult's private data (that's privacy
+classification, a separate axis - epics.md Story 3.3). Finer-grained
+permissions than admin/member may be built later if actually needed.
 
 ## Dashboard
 

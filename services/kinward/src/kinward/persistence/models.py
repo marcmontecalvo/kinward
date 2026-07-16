@@ -37,13 +37,13 @@ class HouseholdRecord(Base):
 
 class PersonRecord(Base):
     __tablename__ = "people"
-    __table_args__ = (UniqueConstraint("household_id", "email", name="uq_people_household_email"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     household_id: Mapped[str] = mapped_column(ForeignKey("households.id", ondelete="CASCADE"), nullable=False)
     display_name: Mapped[str] = mapped_column(String(120), nullable=False)
     role: Mapped[str] = mapped_column(String(16), nullable=False)
-    email: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    ha_person_id: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True)
+    ha_user_id: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True)
     birth_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     profile_kind: Mapped[str] = mapped_column(String(16), default="adult", nullable=False)
     record_version: Mapped[int] = mapped_column(default=1, nullable=False)
@@ -192,19 +192,6 @@ class WorkerHeartbeatRecord(Base):
     heartbeat_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
-class AccountRecord(Base):
-    __tablename__ = "accounts"
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
-    household_id: Mapped[str] = mapped_column(ForeignKey("households.id", ondelete="CASCADE"), nullable=False)
-    person_id: Mapped[str] = mapped_column(ForeignKey("people.id", ondelete="CASCADE"), nullable=False, unique=True)
-    email: Mapped[str] = mapped_column(String(320), nullable=False, unique=True)
-    password_verifier: Mapped[str] = mapped_column(Text, nullable=False)
-    record_version: Mapped[int] = mapped_column(default=1, nullable=False)
-    classification: Mapped[str] = mapped_column(String(32), default="private-person", nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
-
-
 class PetRecord(Base):
     __tablename__ = "pets"
 
@@ -267,18 +254,6 @@ class IntegrationTokenRecord(Base):
     record_version: Mapped[int] = mapped_column(default=1, nullable=False)
     classification: Mapped[str] = mapped_column(String(32), default="system-operational", nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
-
-
-class HaUserMappingRecord(Base):
-    __tablename__ = "ha_user_mappings"
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
-    ha_user_id: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
-    person_id: Mapped[str] = mapped_column(ForeignKey("people.id", ondelete="CASCADE"), nullable=False)
-    record_version: Mapped[int] = mapped_column(default=1, nullable=False)
-    classification: Mapped[str] = mapped_column(String(32), default="system-operational", nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now, nullable=False)
 
 
 class TopicRecord(Base):
