@@ -30,9 +30,7 @@
       "briefing": { "name": "Briefing" },
       "attention": { "name": "Attention" },
       "next_event": { "name": "Next event" },
-      "last_refresh": { "name": "Last refresh" },
-      "people": { "name": "People" },
-      "pets": { "name": "Pets" }
+      "last_refresh": { "name": "Last refresh" }
     }
   }
 }

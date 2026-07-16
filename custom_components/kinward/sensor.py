@@ -127,7 +127,7 @@ class KinwardPeopleSensor(KinwardEntity, SensorEntity):
     Kinward-side admin designation to look up separately (see coordinator/people_sync).
     """
 
-    _attr_translation_key = "people"
+    _attr_name = "People"
     _attr_state_class = SensorStateClass.MEASUREMENT
 
     def __init__(self, coordinator: KinwardDataUpdateCoordinator) -> None:
@@ -157,7 +157,7 @@ class KinwardPeopleSensor(KinwardEntity, SensorEntity):
 class KinwardPetsSensor(KinwardEntity, SensorEntity):
     """Every household-shared pet profile currently on record."""
 
-    _attr_translation_key = "pets"
+    _attr_name = "Pets"
     _attr_state_class = SensorStateClass.MEASUREMENT
 
     def __init__(self, coordinator: KinwardDataUpdateCoordinator) -> None:
