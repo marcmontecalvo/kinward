@@ -75,3 +75,80 @@ set_assistant_access:
       example: ["Lisa"]
       selector:
         object:
+
+request_action:
+  name: Request action
+  description: >-
+    Ask Kinward to submit a Home Assistant service call on behalf of one of
+    your own assistants, subject to this household's tool-capability policy
+    (allow / approval_required / deny per capability). A denied or
+    approval-required result never executes silently - check
+    sensor.kinward_pending_approvals after calling this.
+  fields:
+    assistant_name:
+      name: Assistant
+      description: The name of one of your own assistants to act through.
+      required: true
+      example: "Bob"
+      selector:
+        text:
+    domain:
+      name: Domain
+      description: The Home Assistant domain of the target entity, e.g. "light".
+      required: true
+      example: "light"
+      selector:
+        text:
+    service:
+      name: Service
+      description: The Home Assistant service to call, e.g. "turn_off".
+      required: true
+      example: "turn_off"
+      selector:
+        text:
+    entity_id:
+      name: Entity
+      description: The target entity id. Must belong to the given domain.
+      required: true
+      example: "light.office"
+      selector:
+        text:
+    explanation:
+      name: Explanation
+      description: A short, human-readable reason for the request.
+      required: true
+      example: "Turning off the office light for the night."
+      selector:
+        text:
+    data:
+      name: Extra data
+      description: Optional additional service-call data beyond entity_id.
+      required: false
+      selector:
+        object:
+
+approve_action:
+  name: Approve action
+  description: >-
+    Approve a pending action by id, as shown on
+    sensor.kinward_pending_approvals. Any current household administrator may
+    approve it.
+  fields:
+    approval_id:
+      name: Approval ID
+      description: The pending action's id, from sensor.kinward_pending_approvals.
+      required: true
+      selector:
+        text:
+
+deny_action:
+  name: Deny action
+  description: >-
+    Deny a pending action by id, as shown on sensor.kinward_pending_approvals.
+  fields:
+    approval_id:
+      name: Approval ID
+      description: The pending action's id, from sensor.kinward_pending_approvals.
+      required: true
+      selector:
+        text:

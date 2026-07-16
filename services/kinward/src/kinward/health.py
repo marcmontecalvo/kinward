@@ -11,7 +11,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from kinward.config import Settings
 from kinward.persistence.models import OutboxMessageRecord, WorkerHeartbeatRecord
 
-EXPECTED_SCHEMA_REVISION = "009_assistant_access_modes"
+EXPECTED_SCHEMA_REVISION = "010_meaningful_action_approvals"
 CORE_WORKER_NAME = "core"
 
 CoreState = Literal["healthy", "unhealthy"]

@@ -26,6 +26,7 @@ async def async_setup_entry(
             KinwardLastRefreshSensor(coordinator),
             KinwardPeopleSensor(coordinator),
             KinwardPetsSensor(coordinator),
+            KinwardPendingApprovalsSensor(coordinator),
         ]
     )
 
@@ -179,6 +180,44 @@ class KinwardPetsSensor(KinwardEntity, SensorEntity):
                     "shared_facts": pet.shared_facts,
                 }
                 for pet in self.coordinator.pets
+            ]
+        }
+
+
+class KinwardPendingApprovalsSensor(KinwardEntity, SensorEntity):
+    """Meaningful actions currently awaiting admin approval (Epic 6; ADR-002 sec. 5).
+
+    Any current household admin may resolve one via the ``kinward.approve_action``/
+    ``kinward.deny_action`` actions - there is no per-resource owner to notify for
+    the HA device-control case this covers (see ``application/pending_actions.py``).
+    """
+
+    _attr_name = "Pending approvals"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(self, coordinator: KinwardDataUpdateCoordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.household_id}-pending-approvals"
+
+    @property
+    def native_value(self) -> int:
+        return len(self.coordinator.pending_actions)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, list[dict[str, object]]]:
+        return {
+            "pending_actions": [
+                {
+                    "id": action.id,
+                    "action": action.action,
+                    "explanation": action.explanation,
+                    "domain": action.domain,
+                    "service": action.service,
+                    "entity_id": action.entity_id,
+                    "created_at": action.created_at,
+                    "expires_at": action.expires_at,
+                }
+                for action in self.coordinator.pending_actions
             ]
         }
 

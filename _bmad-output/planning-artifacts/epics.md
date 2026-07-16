@@ -385,6 +385,14 @@ Safely manage household people and assistant ownership while keeping initial HA-
 > workflow for actions affecting another person's existing resources - all separate, larger pieces of
 > ADR-002 not touched by this pass.
 >
+> **Update (2026-07-16):** the operational household context layer landed as a v0 heuristic (see the
+> Story 7.2 note below), and tool permissions plus a capability-risk-tier approval workflow landed as a
+> v0 slice (see Epic 6 Stories 6.1/6.2's notes and Epic 7 Story 7.3's note) - but the approval workflow
+> for actions affecting *another person's existing resource* specifically (this note's original
+> wording, ADR-002 sec. 5's calendar-reschedule example) is still unbuilt; what shipped instead is the
+> no-owner capability-gating case. Assistant-to-assistant delegation below remains unbuilt and still
+> depends on the general quorum machinery, not this v0 slice.
+>
 > **Deferred (2026-07-16, until/with Epic 6):** assistant-to-assistant delegation (one assistant asking
 > another assistant something on its owner's behalf, e.g. "check with Lisa's AI about Monday") is a
 > meaningful action that can affect another person's data - it needs Epic 6's approval/quorum machinery
@@ -500,6 +508,21 @@ Every meaningful external action is authorized, approved where required, submitt
 > target-resource existence/unchanged, approver still authorized, tool connection still available) that
 > should inform this story's own "unknown attempts survive... and are reconciled" design rather than
 > diverge from it. Zero call sites still exist for any of this - `ApprovalRecord` remains schema-only.
+>
+> **Implemented (2026-07-16), v0 capability-risk-tier slice:** `ApprovalRecord` is wired up for the
+> first time - `application/pending_actions.py`'s `request_action`/`resolve_pending_action` implement
+> the state machine for ADR-002's *capability-risk-tier* case only (Epic 7 Story 7.3's HA device
+> control - see that story's note below), not the general multi-principal/quorum case Story 6.2
+> describes. States used: `pending`, `approved`, `denied`, `expired`, `executed`, `failed` (the full
+> ADR-002 seven-value enum, now CHECK-constrained in migration `010_meaningful_action_approvals` -
+> `cancelled` is defined but has no producer yet). Re-validation immediately before execution
+> (`domain/pending_action.revalidate_before_execution`) covers expiry and approval-state, the subset of
+> AD-20's five re-check conditions meaningful for a resource with no separate existence/ownership to
+> re-verify (an HA entity isn't "deleted" the way a calendar event is). "Submitted never means completed"
+> holds structurally: `ApprovalRecord.state` only reaches `executed` after `HomeAssistantClient.call_service`
+> returns a non-`None` result (see the Story 7.3 note for what `None` now means). Tests in
+> `tests/test_pending_action.py` (domain), `tests/test_pending_actions.py` (application), and
+> `tests/test_integration_api.py::test_approval_workflow_requires_admin_and_round_trips`.
 
 ### Story 6.2: Enforce general multi-principal approval
 
@@ -515,6 +538,20 @@ Every meaningful external action is authorized, approved where required, submitt
 > quorum/multiple-simultaneous-approvers case this story's "quorum"/"exact named-adult quorum" bullets
 > describe - ADR-002 explicitly treats broader permission grants derived from repeated approvals as
 > future/deferred work, not V0.
+>
+> **Implemented (2026-07-16), a different single-approver case than this story's own worked example:**
+> ADR-002 sec. 5's worked example (Lisa asks Bob to reschedule Marc's calendar event) needs a specific
+> `affected_person_id` who owns the resource and is the one notified/approving - that case is still
+> unbuilt (calendars are Epic 5, itself still placeholder). What *is* built is ADR-002 sec. 4's other
+> case: HA device control has no per-resource owner (nobody "owns" the front door lock the way Marc
+> owns his calendar event), so *any* current household admin resolves it
+> (`domain/pending_action.can_resolve_approval`, cross-cutting rule 4's plural-admin model) rather than
+> a specific affected person. `ApprovalRecord.affected_person_id` exists in the schema (migration
+> `010_meaningful_action_approvals`) for the future person-owned-resource case but is `None` for every
+> row this pass produces. Notification is a single household-wide `persistent_notification.create` HA
+> call (best-effort, never gating) rather than ADR-002's per-owner mobile-app push - a single-household
+> deployment has no specific device to target for "the resource's owner" when there is no owner. See
+> Epic 7 Story 7.3's note for the tool-permission side this approval flow is triggered from.
 
 ### Story 6.3: Support bounded household coordination
 
@@ -606,6 +643,45 @@ Use HA as the physical-world authority while Kinward adds household language, po
 > for default-`deny`/independently-gated. This directly informs "identity, permission, resource
 > authority... policy run before submission" above - it does not replace Epic 6's approval/quorum
 > machinery, which is what `approval_required` results here would still need to call into.
+>
+> **Implemented (2026-07-16), v0 write path:** `HomeAssistantClient.call_service()` has its first call
+> sites. `domain/tool_permission.py`'s `CAPABILITY_SERVICE_ALLOWLIST` maps concrete `(domain, service)`
+> pairs (not a caller-asserted label) to five capabilities - `control_lights`/`control_switches`/
+> `manage_household_timers` default `allow`; `control_locks`/`control_alarm_system` default `deny` -
+> matching ADR-002 sec. 4's example split. Permissions are admin-editable per household
+> (`HomeAssistantToolPolicyRecord`, `GET`/`PATCH /settings/home-assistant-tool-policy`, mirroring
+> `AssistantPolicyRecord`'s pattern) but **not yet surfaced in the integration's options-flow UI** -
+> callable via the REST contract only for now, same kind of gap Story 8.1 already tracks for other
+> settings. `application/pending_actions.request_action`/`resolve_pending_action` run identity
+> (`resolve_person`/`resolve_admin`), assistant-access, and capability-permission checks before
+> submission - "resource authority" is a cheap in-process check that `entity_id`'s domain prefix
+> matches the requested HA `domain` (`InvalidTarget` otherwise), not a live HA existence lookup.
+>
+> There is still no LLM tool-calling/function-calling support at all (`llm/contracts.py` unchanged) -
+> this is invoked explicitly (new `kinward.request_action`/`approve_action`/`deny_action` HA services,
+> `POST /api/v1/integration/actions` and friends), the same "backend capability + explicit HA service
+> call first" precedent Story 3.4's `kinward.set_assistant_access` set, not something a conversation
+> turn can trigger autonomously yet.
+>
+> `HomeAssistantClient.call_service` now returns `list[dict] | None` instead of always `[]` - `None`
+> means the call never went through (disabled/circuit open/HTTP error), a list (even empty) means HA
+> accepted and processed it. This still can't distinguish "never sent" from "sent but the response was
+> lost to a timeout" (`IntegrationClient.request()` catches both under `httpx.HTTPError`), which matters
+> for a possibly-successful lock/alarm call: `ApprovalRecord.state` resolves fail-closed to `failed`
+> either way (ADR-002's enum has no `unknown` value), but the paired `ActivityRecord.outcome` is set to
+> `unknown` (not `failed`) specifically for the ambiguous case, preserving the true "requested, submitted,
+> observed, completed, failed, and unknown remain separate" distinction this story's own AC asks for, one
+> layer down from where the enum can't hold it.
+>
+> **Not built - the full "fresh matching HA observation" rule**: a non-`None` synchronous `call_service`
+> response is treated as sufficient evidence of `executed`, the same scoping discipline the read-path note
+> above used ("no per-entity freshness/availability metadata surfaced yet"). There is no per-service
+> expected-state confirmation matrix (e.g. verifying `light.turn_off` actually left the entity `off`) and
+> no async reconciliation job (`worker.py` remains heartbeat-only) - "ambiguous or missing observations
+> preserve unknown state until reconciliation" only half-holds: the ambiguity is recorded, nothing
+> currently reconciles it. Tests in `tests/test_tool_permission.py`, `tests/test_pending_actions.py`
+> (including the `not_configured` vs. `ha_request_failed_after_send` distinction), and
+> `tests/test_integration_api.py`.
 
 ### Story 7.4: Add purpose-specific HA automation hooks
 
@@ -786,6 +862,15 @@ Preserve the whole household authority graph and all unresolved safety obligatio
 > drift. Blocker-preservation checks remain blocked on Epic 6. Backup/restore-survival verification is
 > now deferred to v2 alongside Stories 9.1-9.3 themselves (see the Epic 9 goal note above) rather than
 > merely pending - there is nothing to verify restoring against until that work is scheduled.
+>
+> **Update (2026-07-16):** `approvals` moved out of `UNCLASSIFIED_TABLES` into a real
+> `BOOTSTRAP_RECORD_LIFECYCLES` entry (`system-operational`, `backup_eligible=True`, restore, "retain
+> with household audit history" - mirroring `bootstrap_attempt`'s row) now that Epic 6's v0 slice gives
+> it call sites (see that story's note). `home_assistant_tool_policy` (Epic 7 Story 7.3's new table)
+> joined the taxonomy alongside it, `household-shared` like `assistant_policy`. Five persisted tables
+> remain in `UNCLASSIFIED_TABLES` now, not six. Blocker-preservation checks are still blocked, though
+> more narrowly: the v0 slice covers only no-owner HA capability approvals, not the general
+> multi-principal case a real pre-deletion blocker check would need to enumerate against.
 
 > **Deferred to v2 (2026-07-16, non-committed horizon):** cross-instance Home Assistant re-binding.
 > Scenario: the household's HA instance is lost or rebuilt from scratch (corruption, hardware
