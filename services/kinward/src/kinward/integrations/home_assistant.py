@@ -47,3 +47,23 @@ class HomeAssistantClient:
             json=data,
         )
         return result if isinstance(result, list) else []
+
+    async def render_template(
+        self, template: str, *, variables: dict[str, Any] | None = None
+    ) -> str | None:
+        """Render a Jinja template through HA's own template engine.
+
+        Used for area-membership lookups (``area_id()``/``area_entities()``) that only HA's
+        Jinja environment can answer - not a general templating facility. ``/api/template``
+        returns plain text, not JSON, so this uses the client's raw ``request()`` rather than
+        ``request_json``.
+        """
+        if not self.enabled:
+            return None
+        body: dict[str, Any] = {"template": template}
+        if variables:
+            body["variables"] = variables
+        response = await self.client.request(
+            "POST", "/api/template", headers=self._headers(), json=body
+        )
+        return response.text if response is not None else None

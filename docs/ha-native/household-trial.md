@@ -154,6 +154,32 @@ result back is always visible in HA via `sensor.kinward_pets`.
       needs only a valid integration token (no admin check) since pet facts
       are household-shared, not privacy-sensitive.
 
+## 10. Operational household context v0 heuristic (recent light/switch, active timer)
+
+`resolve_area_for_device`/`entities_in_area`
+(`services/kinward/src/kinward/application/operational_context.py`,
+`docs/architecture/operational-household-context.md`) call Home Assistant's own
+`area_id()`/`area_entities()` Jinja template functions via `POST /api/template`. No automated
+test can execute HA's real Jinja environment, so this must be smoke-tested against a live
+instance:
+
+- [ ] Turn on a light or switch in a known area, then within 5 minutes call
+      `conversation.process` targeting `conversation.kinward` from a device in that same area
+      with a model configured. Confirm the reply's grounding (visible via the generated
+      response, or by inspecting the request if you have model-call logging) reflects that
+      entity, not some other recently changed one elsewhere in the house.
+- [ ] Repeat from a device in a *different* area with nothing recently changed there. Confirm
+      it still finds the household-wide most-recently-changed entity (the empty-area-match
+      fallback) rather than reporting no candidate.
+- [ ] Start an HA `timer.*` helper, then ask a Kinward-mapped user about it via
+      `conversation.process`. Confirm the reply's grounding references the active timer
+      regardless of how long it's been running (no 5-minute cutoff applies to timers).
+- [ ] Wait more than 5 minutes after changing a light/switch with nothing else changed since.
+      Confirm it no longer appears in the grounding (the recency cutoff excludes it).
+- [ ] Record here whether `area_id(device_id)` and `area_entities(area_id)` actually returned
+      what was expected for your real device/area setup - this is the one part of this feature
+      no unit test can verify.
+
 ## Notes / defects observed
 
 **2026-07-15 implementation trial** (driven directly against the HA REST API

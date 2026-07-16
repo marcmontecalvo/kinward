@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from typing import Sequence
 
 import httpx
@@ -454,6 +455,82 @@ async def test_home_assistant_state_is_absent_from_the_prompt_when_not_configure
         await session.commit()
         system_prompt, _messages = model.calls[0]
         assert "home state" not in system_prompt.lower()
+
+
+async def test_recent_device_and_timer_are_folded_into_the_system_prompt_when_resolved() -> None:
+    now = datetime.now(timezone.utc)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/states":
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "entity_id": "light.office",
+                        "state": "on",
+                        "last_changed": (now - timedelta(minutes=1)).isoformat(),
+                    },
+                    {
+                        "entity_id": "timer.kitchen",
+                        "state": "active",
+                        "last_changed": (now - timedelta(minutes=20)).isoformat(),
+                    },
+                ],
+            )
+        return httpx.Response(200, text="none")
+
+    ha_client = HomeAssistantClient(
+        base_url="http://ha.invalid", token="fake-token", transport=httpx.MockTransport(handler)
+    )
+
+    factory = await _factory()
+    async with factory() as session:
+        await _seed_mapped_person(session)
+        model = RecordingModelProvider()
+        result = await handle_conversation_request(
+            session,
+            ha_user_id="ha-user-1",
+            text="is the light still on?",
+            conversation_id=None,
+            language="en",
+            device_id="device-1",
+            model=model,
+            ha_client=ha_client,
+        )
+        await session.commit()
+        assert isinstance(result, Completed)
+        system_prompt, _messages = model.calls[0]
+        assert "light.office is on" in system_prompt
+        assert "Currently active timer: timer.kitchen." in system_prompt
+
+
+async def test_recent_reference_note_is_absent_when_nothing_resolves() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/states":
+            return httpx.Response(200, json=[])
+        return httpx.Response(200, text="none")
+
+    ha_client = HomeAssistantClient(
+        base_url="http://ha.invalid", token="fake-token", transport=httpx.MockTransport(handler)
+    )
+
+    factory = await _factory()
+    async with factory() as session:
+        await _seed_mapped_person(session)
+        model = RecordingModelProvider()
+        await handle_conversation_request(
+            session,
+            ha_user_id="ha-user-1",
+            text="hello",
+            conversation_id=None,
+            language="en",
+            model=model,
+            ha_client=ha_client,
+        )
+        await session.commit()
+        system_prompt, _messages = model.calls[0]
+        assert "recently changed" not in system_prompt.lower()
+        assert "active timer" not in system_prompt.lower()
 
 
 async def test_memory_recall_grounds_the_system_prompt_and_a_configured_model_appends_the_turn() -> None:

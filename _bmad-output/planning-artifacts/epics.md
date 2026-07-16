@@ -572,6 +572,21 @@ Use HA as the physical-world authority while Kinward adds household language, po
 > *separate* from Honcho conversational memory and from the raw HA-state read above, and does not exist
 > yet - `recent_actions`/`active_timers` stores, deterministic reference-resolution ranking, and
 > explicit retention/expiry are all new scope this story (or a new one) will need to cover.
+>
+> **Implemented (2026-07-16), v0 heuristic:** `application/operational_context.py`'s
+> `resolve_recent_device`/`resolve_recent_timer` now resolve "most recently changed light/switch"
+> and "currently active timer" live from `HomeAssistantClient.states()` (the same fetch already
+> used for read-path grounding above, not re-fetched), preferring the caller's current area via
+> HA's own `area_id()`/`area_entities()` template functions when a `device_id` is available
+> (threaded end-to-end from HA's `ConversationInput.device_id` through
+> `custom_components/kinward/conversation.py` and `api.py` to the backend). **No persistence,
+> migration, or lifecycle entries were added** - this is a deliberately smaller v0 than the
+> `recent_actions`/`active_timers` store this note originally scoped: resolve everything live
+> from HA's own state, and only build Kinward-side persistence if household testing shows HA's
+> state can't support reliable cross-node lookup. There is no tiered ranking/ambiguity handling
+> (current-room > current-assistant > household-window; ringing > only-active > room >
+> household-manageable) and nothing can yet act on a resolved device or timer - see
+> `docs/architecture/operational-household-context.md`.
 
 ### Story 7.3: Execute and reconcile HA mutations
 

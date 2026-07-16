@@ -617,6 +617,7 @@ class ConversationRequest(BaseModel):
     conversation_id: str | None = Field(default=None, alias="conversationId", max_length=36)
     language: str = Field(default="en", min_length=2, max_length=16)
     assistant_id: str | None = Field(default=None, alias="assistantId", max_length=36)
+    device_id: str | None = Field(default=None, alias="deviceId", max_length=255)
 
 
 class ConversationResponse(BaseModel):
@@ -640,6 +641,7 @@ async def integration_conversation(
         conversation_id=body.conversation_id,
         language=body.language,
         assistant_id=body.assistant_id,
+        device_id=body.device_id,
         settings=settings,
     )
     await session.commit()

@@ -6,6 +6,12 @@ from typing import Literal
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from kinward.application.operational_context import (
+    EntityResolution,
+    ResolvedEntity,
+    resolve_recent_device,
+    resolve_recent_timer,
+)
 from kinward.application.provider_settings import get_or_create_provider_settings
 from kinward.config import Settings, get_settings
 from kinward.domain.assistant_access import can_address_assistant
@@ -124,11 +130,26 @@ def _home_state_summary(states: list[dict[str, object]]) -> str | None:
     return "\n".join(lines[:MAX_HOME_STATE_ENTITIES])
 
 
+def _recent_reference_note(recent_device: EntityResolution, recent_timer: EntityResolution) -> str | None:
+    lines: list[str] = []
+    if isinstance(recent_device, ResolvedEntity):
+        lines.append(
+            f"Most recently changed light/switch: {recent_device.entity_id} is "
+            f"{recent_device.state} (changed {recent_device.last_changed})."
+        )
+    if isinstance(recent_timer, ResolvedEntity):
+        lines.append(f"Currently active timer: {recent_timer.entity_id}.")
+    if not lines:
+        return None
+    return "\n".join(lines)
+
+
 def _build_system_prompt(
     *,
     assistant: AssistantRecord,
     person: PersonRecord,
     home_state: str | None,
+    recent_reference_note: str | None,
     memory_lines: list[str],
     knowledge_lines: list[str],
 ) -> str:
@@ -139,6 +160,8 @@ def _build_system_prompt(
         sections.append(f"Personality preferences: {assistant.personality}")
     if home_state:
         sections.append("Current home state (entity: state):\n" + home_state)
+    if recent_reference_note:
+        sections.append(recent_reference_note)
     if memory_lines:
         sections.append("Relevant things you remember about this person:\n" + "\n".join(memory_lines))
     if knowledge_lines:
@@ -154,6 +177,7 @@ async def handle_conversation_request(
     conversation_id: str | None,
     language: str,
     assistant_id: str | None = None,
+    device_id: str | None = None,
     settings: Settings | None = None,
     model: ModelProvider | None = None,
     memory_provider: ConversationalMemoryProvider | None = None,
@@ -168,6 +192,10 @@ async def handle_conversation_request(
     left unset, behavior is unchanged: the caller's own assistant, no access check needed. It
     only matters when starting a *new* topic; continuing an existing one always uses that
     topic's own assistant, since which assistant a topic is with is already fixed once created.
+
+    ``device_id`` is the HA device that heard this request, forwarded so recent-reference
+    resolution (ADR-002 sec. 3's v0 heuristic - see ``application/operational_context.py``) can
+    prefer the caller's current area. It plays no role beyond that.
     """
     runtime_settings = settings or get_settings()
     person_id = await _resolve_person_id(session, ha_user_id=ha_user_id)
@@ -226,8 +254,17 @@ async def handle_conversation_request(
     )
 
     home_state: str | None = None
+    recent_reference_note: str | None = None
     if resolved_ha_client.enabled:
-        home_state = _home_state_summary(await resolved_ha_client.states())
+        home_state_raw = await resolved_ha_client.states()
+        home_state = _home_state_summary(home_state_raw)
+        recent_device = await resolve_recent_device(
+            resolved_ha_client, states=home_state_raw, device_id=device_id
+        )
+        recent_timer = await resolve_recent_timer(
+            resolved_ha_client, states=home_state_raw, device_id=device_id
+        )
+        recent_reference_note = _recent_reference_note(recent_device, recent_timer)
 
     memory_hits = await memory.recall(
         household_id=person.household_id,
@@ -248,6 +285,7 @@ async def handle_conversation_request(
         assistant=assistant,
         person=person,
         home_state=home_state,
+        recent_reference_note=recent_reference_note,
         memory_lines=[hit.content for hit in memory_hits],
         knowledge_lines=[f"{fact.subject} {fact.predicate}: {fact.value}" for fact in knowledge_facts],
     )

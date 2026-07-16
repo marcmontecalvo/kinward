@@ -629,13 +629,20 @@ class KinwardApiClient:
         return classify_people_response(status, payload)
 
     async def async_send_conversation_message(
-        self, *, ha_user_id: str, text: str, conversation_id: str | None, language: str
+        self,
+        *,
+        ha_user_id: str,
+        text: str,
+        conversation_id: str | None,
+        language: str,
+        device_id: str | None = None,
     ) -> SendMessageResult:
         body = {
             "haUserId": ha_user_id,
             "text": text,
             "conversationId": conversation_id,
             "language": language,
+            "deviceId": device_id,
         }
         try:
             status, payload = await self._request(
