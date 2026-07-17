@@ -5,6 +5,7 @@ stepsCompleted:
   - step-03-create-stories
 status: revised-ha-native
 revisionDate: 2026-07-15
+implementationReviewDate: 2026-07-17
 homeAssistantBaseline: 2026.7.2
 inputDocuments:
   - _bmad-output/planning-artifacts/prd-Kinward-Assistant-Experience.md
@@ -74,18 +75,20 @@ All non-UI requirements in the PRD and architecture remain active unless this do
 
 ## 4. Epic summary
 
-| Epic | Outcome |
-| --- | --- |
-| 1 | A healthy Kinward backend and HA 2026.7.2 integration can be installed and used today. |
-| 2 | Household members can speak or type to their private Kinward assistant through Assist with truthful lifecycle behavior. |
-| 3 | The household and account graph is safely established and managed through backend workflows and HA-hosted configuration entry points. |
-| 4 | Topics, memory, knowledge, and corrections remain private, inspectable, and portable across authorized HA interactions. |
-| 5 | Kinward produces useful briefings and calendar-aware attention without becoming a notification feed. |
-| 6 | Meaningful actions and household coordination are approved, executed, reconciled, and recorded safely. |
-| 7 | Home Assistant state and actions are used through policy-bound, observation-confirmed adapters. |
-| 8 | Administration, health, activity, and diagnostics are available without exposing protected content. |
-| 9 | Backup, restore, import, retention, deletion, and recovery preserve the complete household authority model. |
-| 10 | Advanced generated views, custom cards, and broader clients remain evidence-gated extensions rather than foundation blockers. |
+Status as of `implementationReviewDate` above; see [§8](#8-story-by-story-status-and-remaining-work-2026-07-17-review) for the story-level detail behind each summary.
+
+| Epic | Outcome | Status |
+| --- | --- | --- |
+| 1 | A healthy Kinward backend and HA 2026.7.2 integration can be installed and used today. | **Built.** Only the manual day-one trial (1.7) is still outstanding. |
+| 2 | Household members can speak or type to their private Kinward assistant through Assist with truthful lifecycle behavior. | **Built.** Mapping, conversation entity, cancellation, and topic CRUD all exist; the fallback-assistant privacy boundary (2.5) has no dedicated regression test. |
+| 3 | The household and account graph is safely established and managed through backend workflows and HA-hosted configuration entry points. | **Done** for everything still in scope (invitations/local accounts were cut, not just deferred). |
+| 4 | Topics, memory, knowledge, and corrections remain private, inspectable, and portable across authorized HA interactions. | **Core lifecycle built.** Auto-extracting facts from a live conversation, and reclassifying a confirmed fact's sharing class, are not wired. |
+| 5 | Kinward produces useful briefings and calendar-aware attention without becoming a notification feed. | **Not started.** No calendar provider, briefing generation, change detection, or delivery policy exists yet — the largest fully greenfield epic. |
+| 6 | Meaningful actions and household coordination are approved, executed, reconciled, and recorded safely. | **v0 slice only.** Approval state machine covers HA-capability actions with no resource owner; the general multi-principal/quorum case (needed for cross-person actions like a calendar reschedule) and assistant-to-assistant coordination are unbuilt, and both are blocked on Epic 5. |
+| 7 | Home Assistant state and actions are used through policy-bound, observation-confirmed adapters. | **v0 read/write built.** No formal HA-resource mapping/versioning layer, no automation hooks (7.4), and completion still trusts a synchronous service-call response rather than a confirmed fresh observation. |
+| 8 | Administration, health, activity, and diagnostics are available without exposing protected content. | **Partial.** Health/diagnostics and most admin actions exist; there is no reauthentication step in the config flow and no read/query API for activity records (only writes). |
+| 9 | Backup, restore, import, retention, deletion, and recovery preserve the complete household authority model. | **Backup/restore/import deliberately deferred to v2.** Retention taxonomy and admin-invariant-safe deletion are done for what isn't blocked on Epic 6. |
+| 10 | Advanced generated views, custom cards, and broader clients remain evidence-gated extensions rather than foundation blockers. | **Correctly not started** — gated on real household usage evidence, per its own goal. |
 
 # Epic 1: Installable HA-Native Household Foundation
 
@@ -999,7 +1002,16 @@ Expand presentation only after the household trial demonstrates a concrete need.
 | 1.5 | Five-surface verification replaced by HA-native end-to-end verification. |
 | 1.6 | Cancelled as obsolete before completion. |
 
-## 6. Immediate execution queue
+## 6. Immediate execution queue (superseded 2026-07-17)
+
+> **Superseded.** This queue was written on 2026-07-15, at the start of the HA-native pivot, before
+> any of it was built. As of the 2026-07-17 review, Stories 1.3–1.6 and 2.1/2.2 below are all
+> **built** — `custom_components/kinward` (config flow, coordinator, entities, options flow),
+> `compose.yaml` pinning HA `2026.7.2`, and `kinward-dashboard.yaml` all exist, and
+> `application/conversation.py` implements mapping, the conversation entity, cancellation, and topic
+> CRUD. This section was never resynced against the epic-body implementation notes that accumulated
+> afterward. See [§8](#8-story-by-story-status-and-remaining-work-2026-07-17-review) for the current
+> queue.
 
 The next implementation work is intentionally narrow:
 
@@ -1012,15 +1024,172 @@ The next implementation work is intentionally narrow:
 
 No custom card, custom dashboard strategy, custom panel, or standalone frontend work may block this queue.
 
+## 6a. Current execution queue (2026-07-17)
+
+1. **Story 1.7** — run the actual same-day household trial. Nothing else blocks it; every dependency
+   it lists (integration, entry, entities, one summary, refresh, one conversational request, truthful
+   offline behavior) already exists in code and just needs to be exercised for real.
+2. **Story 8.1 remainder** — add a reauthentication step to `custom_components/kinward/config_flow.py`
+   (only `async_step_user` and the options flow exist today); without it a rotated/expired backend
+   credential requires removing and re-adding the integration.
+3. **Story 8.3 read side** — add an authorized, filtered `GET` activity endpoint.
+   `ActivityRecord` rows are already written by `pending_actions.py`, `bootstrap.py`,
+   `people_sync.py`, `layouts.py`, and `person_deletion.py`, but nothing can read them back yet.
+4. **Epic 5 (Stories 5.1–5.4)** — calendar connection, change detection, briefings, and delivery
+   policy. This is the largest remaining greenfield epic and the one still-unmet piece of the core
+   product promise ("useful briefings and calendar-aware attention").
+5. **Stories 6.2/6.3 remainder** — the person-owned-resource approval case (e.g. one person's
+   assistant proposing a change to another person's calendar event) and assistant-to-assistant
+   coordination. Both are explicitly blocked on Epic 5 existing first.
+6. **Stories 7.1/7.4** — a real HA-resource mapping/versioning layer and automation hooks/events.
+   Lower urgency than the above; can follow real usage rather than precede it.
+7. **Epic 9 Stories 9.1–9.3** — backup/restore/import. Intentionally deferred to v2 per the Epic 9
+   goal note; revisit after a real household has been running on this for a while, not before.
+8. **Epic 10** — do not start. Still correctly evidence-gated on household usage from the above.
+
+No custom card, custom dashboard strategy, custom panel, or standalone frontend work may block this
+queue.
+
 ## 7. Definition of the first usable release
 
 The first usable release is reached when:
 
-- Kinward starts from a clean checkout with SQLite and no optional providers.
-- HA 2026.7.2 installs and configures the Kinward integration through the UI.
-- One household and its initial profile/assistant graph exist atomically.
-- The Kinward dashboard shows HA person status and truthful Kinward summaries using core cards.
-- One authorized user can submit a private assistant request through Assist.
-- Backend, HA, model, memory, knowledge, and calendar degradation are shown separately.
-- Server-side privacy tests prove HA admin status cannot disclose another adult's private data.
-- No standalone Kinward frontend is required.
+- [x] Kinward starts from a clean checkout with SQLite and no optional providers.
+- [x] HA 2026.7.2 installs and configures the Kinward integration through the UI.
+- [x] One household and its initial profile/assistant graph exist atomically.
+- [x] The Kinward dashboard shows HA person status and truthful Kinward summaries using core cards.
+- [x] One authorized user can submit a private assistant request through Assist.
+- [~] Backend, HA, model, memory, and knowledge degradation are shown separately via `health.py`'s
+      `CapabilityHealthSet`. **Calendar is not yet a distinct capability** — Epic 5 has no calendar
+      provider to have a degraded state at all.
+- [~] Server-side privacy tests plausibly prove HA admin status cannot disclose another adult's private
+      data — coverage is spread across `test_conversation.py`, `test_assistants.py`, and
+      `test_people_admin.py`, but there is no single test named for this exact claim. Worth adding one
+      dedicated regression test asserting it directly, given how load-bearing this invariant is.
+- [x] No standalone Kinward frontend is required.
+
+Net: six of eight criteria are met. The two gaps (calendar degradation, a dedicated admin-privacy
+regression test) both trace back to Epic 5 not existing yet and to a documentation/test-naming gap
+rather than a missing capability.
+
+## 8. Story-by-story status and remaining work (2026-07-17 review)
+
+This section replaces the need to read all the chronological inline notes above just to find out
+what's left. It was produced by cross-checking every story's inline notes (where present) against the
+actual codebase — `services/kinward/src/kinward/` and `custom_components/kinward/` — since Epics 1 and
+2 in particular accumulated real implementation (config flow, entities, dashboard, conversation
+mapping, cancellation, topic CRUD) **without ever getting an inline "Implemented" note added**, unlike
+every other epic. Treat the epic-body notes as the authoritative *design record* (why something was
+built the way it was); treat this table as the current *status* pointer. Re-run this review whenever a
+new implementation pass lands, rather than trusting this table indefinitely.
+
+Legend: **Done** / **Partial** (gap noted) / **Not started** / **Deferred** (intentional, not a gap) /
+**N/A** (superseded, nothing to build).
+
+### Epic 1 — Installable HA-Native Household Foundation
+
+| Story | Status | Remaining work |
+| --- | --- | --- |
+| 1.1 Preserve backend deployment foundation | Done | — |
+| 1.2 Preserve atomic household bootstrap | Done | — |
+| 1.3 Pinned HA 2026.7.2 development profile | Done | — |
+| 1.4 Kinward custom integration and config flow | Done | — |
+| 1.5 Initial safe entity set | Done | — |
+| 1.6 First core-card dashboard | Done | — |
+| 1.7 Verify the same-day usable slice | **Not started** | Run the actual manual trial end-to-end and record defects/missing-UI needs. Everything it depends on already exists. |
+
+### Epic 2 — Private Assistant Through Home Assistant Assist
+
+| Story | Status | Remaining work |
+| --- | --- | --- |
+| 2.1 Map HA users to Kinward profiles | Done | — (`people_sync.sync_people`, `PersonRecord.ha_user_id`) |
+| 2.2 Kinward conversation entity | Done | — |
+| 2.3 Cancellation and terminal integrity | Done | — (`conversation.cancel_turn`) |
+| 2.4 Continue topics across authorized HA clients | Done | — (topic CRUD in `conversation.py` + `/topics` API) |
+| 2.5 Preserve the household fallback assistant boundary | **Partial** | The boundary holds structurally (per-(person, assistant) session isolation, `access_mode=household`), but there is no dedicated test proving a shared-display/unmapped-user request gets only household-safe context. Add one. |
+
+### Epic 3 — Household, Profiles, Invitations, and Assistant Setup
+
+| Story | Status | Remaining work |
+| --- | --- | --- |
+| 3.1 Manage pre-account people and pets | Done | — (people via sync; pet CRUD in `application/pets.py`) |
+| 3.2 Bind invitations without duplicate profiles | N/A | Superseded — HA owns user management; nothing to build. |
+| 3.3 Enforce account/role/privacy/ownership/authority separately | Done | — (`application/people.reclassify_person`) |
+| 3.4 Configure the primary assistant | Done | — (multi-assistant, policy, access modes, ADR-002 v0 all implemented) |
+
+### Epic 4 — Topics, Memory, Knowledge, and Corrections
+
+| Story | Status | Remaining work |
+| --- | --- | --- |
+| 4.1 Persist authorized topics and context | Done | — |
+| 4.2 Separate private memory and household-shared knowledge | Done | — (Honcho + LLM-wiki providers wired) |
+| 4.3 Manage inferred observations | **Partial** | Core lifecycle (`propose`/`confirm`/`reject`/expire) is built, but nothing in the conversation flow actually calls `propose_observation` — no structured-extraction step exists yet, so the feature is unreachable end-to-end. |
+| 4.4 Inspect, correct, reclassify, and delete durable facts | **Partial** | Inspect/correct/delete are built. Reclassifying a *confirmed* fact's sharing class after the fact has no operation — needs an authorization decision (can an owner unilaterally widen personal → household-shared?) before it can be built. |
+| 4.5 Degrade memory and knowledge truthfully | Done | — (`health.py` `CapabilityHealthSet` covers model/memory/knowledge separately) |
+
+### Epic 5 — Briefings, Calendar Awareness, and Proactive Attention
+
+| Story | Status | Remaining work |
+| --- | --- | --- |
+| 5.1 Connect private person-owned calendars | **Not started** | No calendar provider/port exists at all. |
+| 5.2 Detect meaningful calendar changes | **Not started** | Depends on 5.1. |
+| 5.3 Generate prioritized briefings | **Not started** | Depends on 5.1/5.2. |
+| 5.4 Deliver at the least disruptive permitted level | **Not started** | Depends on 5.1–5.3. |
+
+This is the only epic with zero code against it. It's also the one piece of the original product
+promise ("useful briefings and calendar-aware attention") still entirely unmet.
+
+### Epic 6 — Approvals, Actions, and Household Coordination
+
+| Story | Status | Remaining work |
+| --- | --- | --- |
+| 6.1 Meaningful-action state machine | **Partial** | v0 covers the capability-risk-tier case only (HA device control, no resource owner). The general multi-principal/quorum case is unbuilt; `cancelled` state has no producer yet. |
+| 6.2 General multi-principal approval | **Partial** | Only the no-owner HA-capability case is built. The person-owned-resource case (ADR-002's worked example: reschedule another person's calendar event) is unbuilt and blocked on Epic 5. |
+| 6.3 Bounded household coordination | **Not started** | Assistant-to-assistant delegation deliberately deferred until 6.1/6.2's general approval machinery exists. |
+| 6.4 Expose safe HA actions | Done | — (`kinward.request_action`/`approve_action`/`deny_action` services, `POST /api/v1/integration/actions`) |
+
+### Epic 7 — Home Assistant State and Device Actions
+
+| Story | Status | Remaining work |
+| --- | --- | --- |
+| 7.1 Map Kinward household concepts to HA resources | **Not started** | No versioned/household-language mapping layer exists; only the raw `(domain, service)` capability allowlist in `domain/tool_permission.py`. |
+| 7.2 Read fresh HA state through a provider-neutral port | **Partial** | v0 read-path grounding and a live "recent device/timer" heuristic exist. No per-entity freshness/availability metadata is surfaced yet, and there's no persisted `recent_actions`/`active_timers` store (deliberately deferred until live-lookup proves insufficient). |
+| 7.3 Execute and reconcile HA mutations | **Partial** | v0 write path exists (capability allowlist, pending-action approval gating). No per-service expected-state confirmation and no async reconciliation job — a non-`None` synchronous response is treated as sufficient evidence of completion, so "fresh matching HA observation" only half-holds. |
+| 7.4 Purpose-specific HA automation hooks | **Not started** | No documented events/triggers/conditions exposed for HA automations yet. |
+
+### Epic 8 — Administration, Activity, Health, and Diagnostics
+
+| Story | Status | Remaining work |
+| --- | --- | --- |
+| 8.1 Configuration-entry options and reauthentication | **Partial** | Options flow (assistant policy, tool policy, provider settings) exists. `config_flow.py` has no reauth step — only `async_step_user` and the options-flow init. |
+| 8.2 Preserve Kinward administrative authority | Done | — (pet CRUD, reclassify, admin-plural model) for what's still in scope |
+| 8.3 Provide authorized activity | **Partial** | `ActivityRecord` rows are written by five application modules but nothing reads them back — no filtered/authorized query endpoint exists. |
+| 8.4 Provide health and sanitized diagnostics | Done | — (`health.py` per-capability health, `diagnostics.py` redaction) |
+
+### Epic 9 — Backup, Restore, Import, Retention, Deletion, and Recovery
+
+| Story | Status | Remaining work |
+| --- | --- | --- |
+| 9.1 Create versioned protected backups | Deferred to v2 | Intentional — see Epic 9 goal note. |
+| 9.2 Restore atomically and quarantine before activation | Deferred to v2 | Same. |
+| 9.3 Import the documented minimum household data set | Deferred to v2 | Same. |
+| 9.4 Enforce retention and deletion-pending lifecycle | **Partial** | Admin-invariant-safe deletion and the retention taxonomy doc are done. Blocker-preservation (checking unresolved approvals before deleting a person) is vacuous until Epic 6's general approval machinery exists. |
+| 9.5 Recover the same administrator profile safely | N/A | Superseded — no local Kinward account exists to recover; entirely HA's responsibility. |
+
+### Epic 10 — Evidence-Gated Extensions
+
+| Story | Status | Remaining work |
+| --- | --- | --- |
+| 10.1–10.4 | **Correctly not started** | All four are explicitly gated on real household usage evidence per the epic's own goal. Do not start until Story 1.7's trial (and ideally some weeks of real use) produces that evidence. |
+
+### Roll-up: what's actually left to reach a fuller release
+
+1. Run the Story 1.7 trial (process step, not code — unblocks everything else being validated for real).
+2. Two small gaps: config-flow reauth (8.1), activity read API (8.3).
+3. One medium gap: the fallback-boundary regression test (2.5) and the admin-privacy regression test (§7).
+4. One large greenfield epic: calendars and briefings (Epic 5) — nothing else in the backlog is
+   blocked *on* code that doesn't exist except this.
+5. Two epics partially blocked *by* Epic 5: general approval/coordination (6.2/6.3) and the
+   HA-mapping/automation-hooks polish (7.1/7.4) are lower-priority and can trail real usage.
+6. Backup/restore/import (9.1–9.3) and evidence-gated extensions (Epic 10) are intentionally not
+   next — revisit only after the above is running for real.
