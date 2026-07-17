@@ -27,6 +27,9 @@ def test_every_bootstrap_record_has_explicit_lifecycle_metadata() -> None:
         "approval",
         "home_assistant_tool_policy",
         "home_assistant_resource_label",
+        "calendar_entity",
+        "calendar_event_observation",
+        "attention_item",
     }
     for lifecycle in BOOTSTRAP_RECORD_LIFECYCLES.values():
         assert lifecycle.classification

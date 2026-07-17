@@ -174,6 +174,7 @@ def _build_system_prompt(
     person: PersonRecord,
     home_state: str | None,
     recent_reference_note: str | None,
+    briefing_text: str | None,
     memory_lines: list[str],
     knowledge_lines: list[str],
 ) -> str:
@@ -186,6 +187,11 @@ def _build_system_prompt(
         sections.append("Current home state (entity: state):\n" + home_state)
     if recent_reference_note:
         sections.append(recent_reference_note)
+    if briefing_text:
+        sections.append(
+            "Current calendar briefing (Epic 5 - summarize only this; never invent "
+            "conflicts or importance beyond what it states):\n" + briefing_text
+        )
     if memory_lines:
         sections.append("Relevant things you remember about this person:\n" + "\n".join(memory_lines))
     if knowledge_lines:
@@ -306,6 +312,12 @@ async def handle_conversation_request(
             recent_device, recent_timer, label_for=label_for
         )
 
+    # Deferred import: application.calendar (via application.briefing) imports Unmapped
+    # from this module, so a top-level import here would be circular.
+    from kinward.application.briefing import compute_briefing
+
+    briefing = await compute_briefing(session, household_id=person.household_id)
+
     memory_hits = await memory.recall(
         household_id=person.household_id,
         person_id=person_id,
@@ -326,6 +338,7 @@ async def handle_conversation_request(
         person=person,
         home_state=home_state,
         recent_reference_note=recent_reference_note,
+        briefing_text=briefing.text_summary,
         memory_lines=[hit.content for hit in memory_hits],
         knowledge_lines=[f"{fact.subject} {fact.predicate}: {fact.value}" for fact in knowledge_facts],
     )

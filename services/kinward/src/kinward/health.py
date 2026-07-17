@@ -11,7 +11,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from kinward.config import Settings
 from kinward.persistence.models import OutboxMessageRecord, WorkerHeartbeatRecord
 
-EXPECTED_SCHEMA_REVISION = "012_ha_resource_labels"
+EXPECTED_SCHEMA_REVISION = "013_calendar_attention"
 CORE_WORKER_NAME = "core"
 
 CoreState = Literal["healthy", "unhealthy"]

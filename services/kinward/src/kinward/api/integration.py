@@ -14,6 +14,16 @@ from kinward.application.activity import (
     MAX_ACTIVITY_LIMIT,
     list_activity,
 )
+from kinward.application.briefing import compute_briefing
+from kinward.application.calendar import (
+    AttentionItemNotFound,
+    CalendarEntityStatus,
+    acknowledge_attention_item,
+    dismiss_attention_item,
+    list_attention_items,
+    list_calendar_entities,
+    set_calendar_entity_enabled,
+)
 from kinward.application.assistant_policy import (
     get_or_create_assistant_policy,
     update_assistant_policy,
@@ -91,7 +101,9 @@ from kinward.application.resource_labels import (
     set_resource_label,
 )
 from kinward.config import Settings
+from kinward.domain.attention_item import InvalidTransition as AttentionInvalidTransition
 from kinward.domain.pending_action import ApprovalResolutionError
+from kinward.integrations.home_assistant import HomeAssistantClient
 from kinward.memory.contracts import KnowledgeStoreProvider
 from kinward.memory.factory import knowledge_store_provider
 from kinward.persistence.models import (
@@ -99,6 +111,7 @@ from kinward.persistence.models import (
     ApprovalRecord,
     AssistantPolicyRecord,
     AssistantRecord,
+    AttentionItemRecord,
     HomeAssistantResourceLabelRecord,
     HomeAssistantToolPolicyRecord,
     KnowledgeFactRecord,
@@ -138,20 +151,25 @@ class HouseholdSummaryPayload(BaseModel):
     child_count: int = Field(serialization_alias="childCount")
 
 
-class NotYetImplementedCapability(BaseModel):
+class CalendarCapabilityBase(BaseModel):
+    """Shared state/reason shape for Epic 5's briefing/attention/nextEvent
+    capabilities - mirrors ``health.py``'s ``CapabilityHealth`` (``reason`` is
+    ``None`` once the capability is genuinely available, not a placeholder string).
+    """
+
     state: CapabilityState = "intentionally-disabled"
-    reason: str = "not-yet-implemented"
+    reason: str | None = "not-configured"
 
 
-class BriefingCapability(NotYetImplementedCapability):
+class BriefingCapability(CalendarCapabilityBase):
     summary: str | None = None
 
 
-class AttentionCapability(NotYetImplementedCapability):
+class AttentionCapability(CalendarCapabilityBase):
     count: int | None = None
 
 
-class NextEventCapability(NotYetImplementedCapability):
+class NextEventCapability(CalendarCapabilityBase):
     summary: str | None = None
     starts_at: str | None = Field(default=None, serialization_alias="startsAt")
 
@@ -200,17 +218,52 @@ async def integration_context(
     return IntegrationContextResponse(household_id=summary.id, household_name=summary.name)
 
 
+def _capability_state(*, configured: bool) -> tuple[CapabilityState, str | None]:
+    """Epic 5's briefing/attention/nextEvent capabilities share Home Assistant's own
+    configuration state (there is no separate "calendar provider" in v0 - HA is the
+    calendar source), mirroring ``health.py``'s ``_capability()`` shape.
+    """
+    if not configured:
+        return "intentionally-disabled", "not-configured"
+    return "available", None
+
+
 @router.get("/summary", response_model=IntegrationSummaryResponse)
 async def integration_summary(
-    _token: IntegrationToken, session: Session
+    _token: IntegrationToken, session: Session, settings: AppSettings
 ) -> IntegrationSummaryResponse:
     summary = await fetch_household_summary(session)
     if summary is None:
         raise _household_not_configured()
+
+    state, reason = _capability_state(configured=settings.home_assistant_enabled)
+    briefing = BriefingCapability(state=state, reason=reason)
+    attention = AttentionCapability(state=state, reason=reason)
+    next_event = NextEventCapability(state=state, reason=reason)
+    if settings.home_assistant_enabled:
+        # Reads only what the calendar sync worker pass has already written
+        # (``application/calendar.py``/``application/briefing.py``) - "the briefing is
+        # not stored as a second independent source of truth," and this endpoint never
+        # itself calls Home Assistant.
+        data = await compute_briefing(session, household_id=summary.id)
+        briefing = BriefingCapability(state="available", reason=None, summary=data.text_summary)
+        attention = AttentionCapability(
+            state="available", reason=None, count=data.active_attention_count
+        )
+        next_event = NextEventCapability(
+            state="available",
+            reason=None,
+            summary=data.next_event_summary,
+            starts_at=data.next_event_starts_at.isoformat() if data.next_event_starts_at else None,
+        )
+
     return IntegrationSummaryResponse(
         household=HouseholdSummaryPayload(
             adult_count=summary.adult_count, child_count=summary.child_count
-        )
+        ),
+        briefing=briefing,
+        attention=attention,
+        next_event=next_event,
     )
 
 
@@ -1497,3 +1550,143 @@ async def integration_list_activity(
     if isinstance(result, Unmapped):
         return []
     return [ActivityPayload.from_record(record) for record in result]
+
+
+class CalendarEntityPayload(BaseModel):
+    entity_id: str = Field(serialization_alias="entityId")
+    enabled: bool
+    known_to_ha: bool = Field(serialization_alias="knownToHa")
+
+    @classmethod
+    def from_status(cls, status: CalendarEntityStatus) -> CalendarEntityPayload:
+        return cls(entity_id=status.entity_id, enabled=status.enabled, known_to_ha=status.known_to_ha)
+
+
+class SetCalendarEntityRequest(BaseModel):
+    entity_id: str = Field(alias="entityId", min_length=3, max_length=255)
+    enabled: bool
+
+
+def _resolved_ha_client(settings: Settings) -> HomeAssistantClient:
+    return HomeAssistantClient(base_url=settings.home_assistant_url, token=settings.home_assistant_token)
+
+
+@router.get("/settings/calendar-entities", response_model=list[CalendarEntityPayload])
+async def integration_list_calendar_entities(
+    _token: IntegrationToken, session: Session, settings: AppSettings
+) -> list[CalendarEntityPayload]:
+    """Epic 5 Story 5.1: every HA ``calendar.*`` entity Kinward currently knows about,
+    cross-referenced against this household's enable/disable decision. Gated by the
+    integration bearer token alone, matching ``/settings/home-assistant-tool-policy``.
+    """
+    summary = await fetch_household_summary(session)
+    if summary is None:
+        raise _household_not_configured()
+    statuses = await list_calendar_entities(
+        session, household_id=summary.id, ha_client=_resolved_ha_client(settings)
+    )
+    return [CalendarEntityPayload.from_status(status) for status in statuses]
+
+
+@router.put("/settings/calendar-entities", response_model=CalendarEntityPayload)
+async def integration_set_calendar_entity(
+    body: SetCalendarEntityRequest, _token: IntegrationToken, session: Session
+) -> CalendarEntityPayload:
+    """Enable or disable one HA calendar entity for Kinward - independent per entity
+    (Story 5.1: "Calendar entities can be enabled or disabled for Kinward
+    independently")."""
+    summary = await fetch_household_summary(session)
+    if summary is None:
+        raise _household_not_configured()
+    record = await set_calendar_entity_enabled(
+        session, household_id=summary.id, entity_id=body.entity_id, enabled=body.enabled
+    )
+    await session.commit()
+    return CalendarEntityPayload(entity_id=record.entity_id, enabled=record.enabled, known_to_ha=True)
+
+
+class AttentionItemPayload(BaseModel):
+    id: str
+    change_type: str = Field(serialization_alias="changeType")
+    state: str
+    summary: str
+    entity_id: str = Field(serialization_alias="entityId")
+    event_starts_at: datetime | None = Field(default=None, serialization_alias="eventStartsAt")
+    created_at: datetime = Field(serialization_alias="createdAt")
+    updated_at: datetime = Field(serialization_alias="updatedAt")
+
+    @classmethod
+    def from_record(cls, record: AttentionItemRecord) -> AttentionItemPayload:
+        return cls(
+            id=record.id,
+            change_type=record.change_type,
+            state=record.state,
+            summary=record.summary,
+            entity_id=record.entity_id,
+            event_starts_at=record.event_starts_at,
+            created_at=record.created_at,
+            updated_at=record.updated_at,
+        )
+
+
+def _attention_item_not_found() -> HTTPException:
+    return HTTPException(status_code=404, detail={"code": "attention_item_not_found"})
+
+
+def _attention_item_invalid_transition(error: AttentionInvalidTransition) -> HTTPException:
+    return HTTPException(status_code=409, detail={"code": error.code, "message": error.message})
+
+
+@router.get("/calendar/attention", response_model=list[AttentionItemPayload])
+async def integration_list_attention_items(
+    _token: IntegrationToken, session: Session
+) -> list[AttentionItemPayload]:
+    """Every currently active/acknowledged/recently-resolved attention item (Epic 5
+    Story 5.3/5.4) - household-shared, non-private data, matching the ``GET /pets``/
+    ``GET /actions`` precedent for backing a coordinator-polled HA sensor.
+    """
+    summary = await fetch_household_summary(session)
+    if summary is None:
+        raise _household_not_configured()
+    items = await list_attention_items(session, household_id=summary.id)
+    return [AttentionItemPayload.from_record(item) for item in items]
+
+
+@router.post("/calendar/attention/{item_id}/acknowledge", response_model=AttentionItemPayload)
+async def integration_acknowledge_attention_item(
+    item_id: str, body: HaUserIdBody, _token: IntegrationToken, session: Session
+) -> AttentionItemPayload:
+    summary = await fetch_household_summary(session)
+    if summary is None:
+        raise _household_not_configured()
+    result = await acknowledge_attention_item(
+        session, household_id=summary.id, ha_user_id=body.ha_user_id, item_id=item_id
+    )
+    if isinstance(result, (Unmapped, AttentionItemNotFound)):
+        await session.rollback()
+        raise _attention_item_not_found()
+    if isinstance(result, AttentionInvalidTransition):
+        await session.rollback()
+        raise _attention_item_invalid_transition(result)
+    await session.commit()
+    return AttentionItemPayload.from_record(result)
+
+
+@router.post("/calendar/attention/{item_id}/dismiss", response_model=AttentionItemPayload)
+async def integration_dismiss_attention_item(
+    item_id: str, body: HaUserIdBody, _token: IntegrationToken, session: Session
+) -> AttentionItemPayload:
+    summary = await fetch_household_summary(session)
+    if summary is None:
+        raise _household_not_configured()
+    result = await dismiss_attention_item(
+        session, household_id=summary.id, ha_user_id=body.ha_user_id, item_id=item_id
+    )
+    if isinstance(result, (Unmapped, AttentionItemNotFound)):
+        await session.rollback()
+        raise _attention_item_not_found()
+    if isinstance(result, AttentionInvalidTransition):
+        await session.rollback()
+        raise _attention_item_invalid_transition(result)
+    await session.commit()
+    return AttentionItemPayload.from_record(result)

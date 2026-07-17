@@ -83,8 +83,8 @@ Status as of `implementationReviewDate` above; see [§8](#8-story-by-story-statu
 | 2 | Household members can speak or type to their private Kinward assistant through Assist with truthful lifecycle behavior. | **Built.** Mapping, conversation entity, cancellation, and topic CRUD all exist; the fallback-assistant privacy boundary (2.5) now has a dedicated regression test. |
 | 3 | The household and account graph is safely established and managed through backend workflows and HA-hosted configuration entry points. | **Done** for everything still in scope (invitations/local accounts were cut, not just deferred). |
 | 4 | Topics, memory, knowledge, and corrections remain private, inspectable, and portable across authorized HA interactions. | **Core lifecycle built.** Auto-extracting facts from a live conversation, and reclassifying a confirmed fact's sharing class, are not wired. |
-| 5 | Kinward produces useful briefings and calendar-aware attention without becoming a notification feed. | **Not started.** No calendar provider, briefing generation, change detection, or delivery policy exists yet — the largest fully greenfield epic. |
-| 6 | Meaningful actions and household coordination are approved, executed, reconciled, and recorded safely. | **v0 slice only.** Approval state machine covers HA-capability actions with no resource owner; the general multi-principal/quorum case (needed for cross-person actions like a calendar reschedule) and assistant-to-assistant coordination are unbuilt, and both are blocked on Epic 5. |
+| 5 | Kinward produces useful briefings and calendar-aware attention without becoming a notification feed. | **v0 built.** HA calendar entities are read directly (no per-person provider credentials - deferred to v1), meaningful-change detection is deterministic, attention items carry the full six-state lifecycle, the briefing is a live projection Assist also grounds on, and deduplicated HA notifications are delivered. No quiet-hours policy yet. |
+| 6 | Meaningful actions and household coordination are approved, executed, reconciled, and recorded safely. | **v0 slice only.** Approval state machine covers HA-capability actions with no resource owner; the general multi-principal/quorum case (needed for cross-person actions like a calendar reschedule) and assistant-to-assistant coordination are unbuilt, and both are blocked on Epic 5's v1 (person-owned calendars) specifically, not v0 (Epic 5 v0's calendars are household-shared, giving this case nothing to own yet). |
 | 7 | Home Assistant state and actions are used through policy-bound, observation-confirmed adapters. | **v0 read/write built.** No formal HA-resource mapping/versioning layer, no automation hooks (7.4), and completion still trusts a synchronous service-call response rather than a confirmed fresh observation. |
 | 8 | Administration, health, activity, and diagnostics are available without exposing protected content. | **Partial.** Health/diagnostics, most admin actions, and config-flow reauthentication all exist; there is still no read/query API for activity records (only writes). |
 | 8 | Administration, health, activity, and diagnostics are available without exposing protected content. | **Partial.** Health/diagnostics, most admin actions, and an authorized/filtered activity read API all exist; config-flow reauthentication is being implemented in a parallel pass (check its own PR for status). |
@@ -559,6 +559,117 @@ Use Home Assistant dashboards and notifications to surface prioritized household
 - Timezone, quiet periods, confidence fallback, privacy suppression, review opportunities, and interruption caps are deterministic.
 - HA notifications are an adapter; Kinward policy selects whether and what may be delivered.
 
+> **Superseded (2026-07-17, HA-native v0 scope):** Story 5.1's "private person-owned
+> calendars" (direct Google/Outlook-style credentials per person) is v1 scope, not
+> built. `_bmad-output/planning-artifacts/epic-5-briefings-calendar-awareness-proactive-attention.md`
+> is the authoritative v0 spec actually implemented: Kinward reads HA `calendar.*`
+> entities directly through a provider-neutral adapter (HA's existing all-or-nothing
+> calendar visibility model, no per-person credentials or ownership), with its own
+> Stories 5.1-5.6 superseding this section's four stories one-to-one in spirit
+> (read HA calendars; detect meaningful changes; create/maintain attention items;
+> generate the continuously current briefing; expose it through HA; deliver
+> deduplicated HA notifications).
+>
+> **Implemented (2026-07-17):** `domain/calendar_observation.py` (event
+> wrapping/location normalization) and `domain/calendar_change_detection.py`
+> (deterministic, LLM-free 5-minute time/overlap thresholds, back-to-back
+> different-location detection, RSVP-required predicate) are the pure detection
+> layer. `persistence/models.py` adds `CalendarEntityRecord` (per-entity
+> enable/disable), `CalendarEventObservationRecord` (last-known event snapshot,
+> regenerable from HA, diffed each sync pass), and `AttentionItemRecord` (the full
+> active/acknowledged/dismissed/resolved/expired/superseded state machine, one row
+> per logical condition via a `recurrence_key`, mirroring `knowledge_facts`'
+> dedup/dependents-invalidation precedent) - migration `013_calendar_attention`.
+> `application/calendar.py`'s `sync_household_calendars` (worker-driven, every
+> heartbeat via `worker.sync_calendars`) does the fetch/diff/create-or-update pass;
+> `application/briefing.py`'s `compute_briefing` is the read-only projection over
+> current attention items plus the soonest observed event, with a deterministic
+> fallback text summary (Story 5.4's "if an LLM is used for wording, it receives
+> policy-filtered structured facts only" - the same text also grounds
+> `application/conversation.py`'s system prompt so Assist can summarize it, per
+> Story 5.4's "the same structured briefing can be used by Assist"). Notification
+> delivery (`worker.deliver_attention_notifications`) posts a deduplicated
+> `persistent_notification.create` per newly-active/materially-changed item,
+> tracked via `notified_record_version` separately from lifecycle state - no
+> household quiet-hours setting exists yet, so time-of-day gating is not yet
+> built. API: `GET/PUT /api/v1/integration/settings/calendar-entities`,
+> `GET /api/v1/integration/calendar/attention`,
+> `POST .../calendar/attention/{id}/acknowledge`,
+> `POST .../calendar/attention/{id}/dismiss`; `/summary`'s
+> `briefing`/`attention`/`nextEvent` capabilities are now real rather than
+> `not-yet-implemented` stubs. HA integration: `sensor.kinward_attention` gained an
+> `items` attribute (bounded list, matching the `people`/`pets` sensor precedent);
+> new `kinward.generate_briefing`/`kinward.acknowledge_attention_item`/
+> `kinward.dismiss_attention_item` actions; `kinward-dashboard.yaml`'s Briefings
+> Card now renders active/acknowledged/resolved items distinctly with an explicit
+> empty state, built entirely from core `markdown` cards. Tests in
+> `test_calendar_observation.py`, `test_calendar_change_detection.py`,
+> `test_attention_item.py`, `test_calendar.py`, `test_briefing.py`, plus
+> extensions to `test_worker.py`, `test_integration_api.py`, `test_lifecycle.py`,
+> and `custom_components/kinward/tests/test_api_classification.py`.
+>
+> **v1 roadmap (not built, deliberately deferred per the epic-5 spec's own v1
+> section) — concrete seams to build against, so the next pass doesn't have to
+> rediscover them:**
+>
+> 1. **Direct Google Calendar / Microsoft Outlook connections.**
+>    `integrations/protocols.py::CalendarProvider` (`events()`/`propose_change()`)
+>    is the pre-existing, still-unimplemented Protocol this should fill in - v0
+>    deliberately bypassed it and read Home Assistant's `calendar.*` entities
+>    directly instead (`integrations/home_assistant.py`'s
+>    `list_calendar_entities()`/`calendar_events()`). v1 should give
+>    `application/calendar.py`'s `sync_household_calendars` a second event source
+>    behind the same `ObservedEvent` shape (`domain/calendar_observation.py`) -
+>    likely a `provider: str` field alongside `entity_id` so a synced event can be
+>    either `"home_assistant"` or `"google"`/`"microsoft"`, matching
+>    `domain/ha_observation.py::ObservedState.source`'s existing precedent for
+>    exactly this kind of provider-neutral tagging.
+> 2. **Person-owned calendar credentials and real per-person visibility.**
+>    `CalendarEntityRecord`/`CalendarEventObservationRecord`/`AttentionItemRecord`
+>    are all `classification="household-shared"` today, matching HA's all-or-
+>    nothing visibility model (epic-5 v0's explicit scope decision). A
+>    person-owned direct connection needs an `owner_person_id` column (nullable,
+>    `NULL` for the existing HA-sourced household-shared rows) plus an
+>    authorization check in `application/calendar.py`'s list/sync/acknowledge/
+>    dismiss functions - mirroring `knowledge_facts.owner_person_id` and
+>    `application/knowledge.py`'s `_find_owned()` ownership-scoping precedent,
+>    not a new pattern. "Private details do not enter shared HA entity state
+>    unless explicitly shared" (this epic's original Story 5.1) then governs what
+>    `sensor.kinward_attention`'s `items` attribute may include for a private
+>    calendar's events.
+> 3. **Preserve provider-native identity, change versions, attendee state.**
+>    `ObservedEvent`/`CalendarEventObservationRecord` currently key on
+>    `(entity_id, event_uid)` with no change-token/version field, since HA's
+>    calendar REST API exposes none. A direct provider integration should add a
+>    `change_token`/`etag`-shaped column so a sync pass can detect "this exact
+>    version was already processed" without re-diffing full event bodies -
+>    AD-08's "calendar freshness contract" (`ARCHITECTURE-SPINE.md`) already
+>    anticipates this; only HA's adapter was built to its lighter subset.
+> 4. **Provider push/webhooks over polling.** `worker.sync_calendars` runs on
+>    every worker heartbeat tick (`Settings.worker_heartbeat_interval_seconds`,
+>    default 5s) with no calendar-specific interval of its own - fine for a local
+>    HA poll, too aggressive for a rate-limited external API. v1 needs (a) a
+>    dedicated configurable polling interval, following the exact
+>    `AssistantPolicyRecord`/`HomeAssistantToolPolicyRecord` "one settings row per
+>    household, admin-editable via the options flow" pattern rather than a new
+>    concept, and (b) ideally a webhook receiver endpoint under
+>    `api/integration.py` (Google/Microsoft push notifications) that invalidates
+>    just the affected calendar and triggers an immediate targeted sync, with
+>    polling remaining as the fallback path exactly as the epic-5 spec specifies.
+> 5. **Real per-person edit/mutation capability.** `CalendarProvider.propose_change()`
+>    is already shaped for this (unused today - v0 is read-only). Wiring it should
+>    follow Epic 6/ADR-002's approval precedent: a calendar mutation proposed by
+>    one person against another person's private event is exactly the
+>    person-owned-resource approval case `ApprovalRecord.affected_person_id`
+>    was already provisioned for and still has zero producers
+>    (`application/pending_actions.py`'s docstring already names "a future
+>    calendar reschedule" as this case) - implement that populated case here
+>    rather than inventing a parallel approval path.
+> 6. **Kinward-controlled calendar dashboard/surface.** Still evidence-gated per
+>    `HA-NATIVE-ADDENDUM.md` and cross-cutting rule 12 - only worth building once
+>    real household usage of the v0 core-card Briefings Card shows a concrete
+>    limitation, not before.
+
 # Epic 6: Approvals, Actions, and Household Coordination
 
 ## Goal
@@ -611,7 +722,9 @@ Every meaningful external action is authorized, approved where required, submitt
 > **Implemented (2026-07-16), a different single-approver case than this story's own worked example:**
 > ADR-002 sec. 5's worked example (Lisa asks Bob to reschedule Marc's calendar event) needs a specific
 > `affected_person_id` who owns the resource and is the one notified/approving - that case is still
-> unbuilt (calendars are Epic 5, itself still placeholder). What *is* built is ADR-002 sec. 4's other
+> unbuilt (Epic 5 v0's calendars are household-shared, not person-owned, so there is no
+> resource-with-an-owner yet to reschedule; see Epic 5's "v1 roadmap" note, item 5, for the intended
+> hookup once person-owned calendars exist). What *is* built is ADR-002 sec. 4's other
 > case: HA device control has no per-resource owner (nobody "owns" the front door lock the way Marc
 > owns his calendar event), so *any* current household admin resolves it
 > (`domain/pending_action.can_resolve_approval`, cross-cutting rule 4's plural-admin model) rather than
@@ -1157,12 +1270,17 @@ No custom card, custom dashboard strategy, custom panel, or standalone frontend 
    `ActivityRecord` rows (written by `pending_actions.py`, `bootstrap.py`, `people_sync.py`,
    `layouts.py`, and `person_deletion.py`) with query-level person-scoped authorization for non-admins
    and the full household feed for admins.
-4. **Epic 5 (Stories 5.1–5.4)** — calendar connection, change detection, briefings, and delivery
-   policy. This is the largest remaining greenfield epic and the one still-unmet piece of the core
-   product promise ("useful briefings and calendar-aware attention").
+4. ~~**Epic 5 (Stories 5.1–5.6)**~~ — **v0 done (2026-07-17):** HA calendar entities are read
+   directly, meaningful-change detection is deterministic, attention items carry the full
+   six-state lifecycle, the briefing is a live projection Assist also grounds on, and
+   deduplicated HA notifications are delivered. See the epic body's "Implemented"/"v1 roadmap"
+   notes above and the Epic 5 table in §8 for the seams a v1 pass (direct Google/Outlook
+   connections, real per-person visibility, provider push) should build against.
 5. **Stories 6.2/6.3 remainder** — the person-owned-resource approval case (e.g. one person's
    assistant proposing a change to another person's calendar event) and assistant-to-assistant
-   coordination. Both are explicitly blocked on Epic 5 existing first.
+   coordination. Epic 5 v0's household-shared calendar model doesn't populate
+   `ApprovalRecord.affected_person_id` yet (no person-owned calendar exists to own the resource) -
+   this remains blocked on Epic 5's v1 person-owned-calendar work specifically, not v0.
 6. **Stories 7.1/7.4** — a real HA-resource mapping/versioning layer and automation hooks/events.
    Lower urgency than the above; can follow real usage rather than precede it.
 7. **Epic 9 Stories 9.1–9.3** — backup/restore/import. Intentionally deferred to v2 per the Epic 9
@@ -1182,17 +1300,23 @@ The first usable release is reached when:
 - [x] The Kinward dashboard shows HA person status and truthful Kinward summaries using core cards.
 - [x] One authorized user can submit a private assistant request through Assist.
 - [~] Backend, HA, model, memory, and knowledge degradation are shown separately via `health.py`'s
-      `CapabilityHealthSet`. **Calendar is not yet a distinct capability** — Epic 5 has no calendar
-      provider to have a degraded state at all.
+      `CapabilityHealthSet`. **Calendar still isn't a distinct capability there** — Epic 5 v0
+      deliberately rides on the existing `homeAssistant` capability rather than adding its own
+      (calendar-via-HA has no separate connection to degrade independently of HA itself); `/summary`'s
+      `briefing`/`attention`/`nextEvent` capabilities are real and correctly report
+      `intentionally-disabled`/`not-configured` when HA isn't connected, which is the truthful
+      degradation this criterion actually asks for. The remaining gap is `health.py`'s
+      `settings.calendar_provider` capability specifically, reserved for a future v1 direct
+      Google/Outlook connection and correctly still `intentionally-disabled` since none exists.
 - [~] Server-side privacy tests plausibly prove HA admin status cannot disclose another adult's private
       data — coverage is spread across `test_conversation.py`, `test_assistants.py`, and
       `test_people_admin.py`, but there is no single test named for this exact claim. Worth adding one
       dedicated regression test asserting it directly, given how load-bearing this invariant is.
 - [x] No standalone Kinward frontend is required.
 
-Net: six of eight criteria are met. The two gaps (calendar degradation, a dedicated admin-privacy
-regression test) both trace back to Epic 5 not existing yet and to a documentation/test-naming gap
-rather than a missing capability.
+Net: six of eight criteria are met. The calendar-degradation gap is now a v1 (per-person direct
+provider) concern rather than a missing v0 capability; the dedicated admin-privacy regression test
+gap remains a documentation/test-naming gap, unrelated to Epic 5.
 
 ## 8. Story-by-story status and remaining work (2026-07-17 review)
 
@@ -1251,22 +1375,30 @@ Legend: **Done** / **Partial** (gap noted) / **Not started** / **Deferred** (int
 
 ### Epic 5 — Briefings, Calendar Awareness, and Proactive Attention
 
+This table tracks the epic-5 spec's own Stories 5.1-5.6 (the authoritative v0 breakdown - see the
+"Superseded"/"Implemented"/"v1 roadmap" notes on the epic body above), not this section's
+original four-story outline.
+
 | Story | Status | Remaining work |
 | --- | --- | --- |
-| 5.1 Connect private person-owned calendars | **Not started** | No calendar provider/port exists at all. |
-| 5.2 Detect meaningful calendar changes | **Not started** | Depends on 5.1. |
-| 5.3 Generate prioritized briefings | **Not started** | Depends on 5.1/5.2. |
-| 5.4 Deliver at the least disruptive permitted level | **Not started** | Depends on 5.1–5.3. |
+| 5.1 Read Home Assistant calendar entities | **Done (v0, 2026-07-17)** | Direct person-owned Google/Outlook connections are v1 (see the epic body's "v1 roadmap" note, item 1-2). |
+| 5.2 Detect meaningful calendar changes | **Done (v0)** | `domain/calendar_change_detection.py` - deterministic, LLM-free. Attendee/change-version-aware detection needs a real provider (v1 item 3). |
+| 5.3 Create and maintain attention items | **Done (v0)** | Full six-state lifecycle (`AttentionItemRecord`), dedup via `recurrence_key`, supersession, auto-resolve/expire. Per-person ownership is v1 (item 2). |
+| 5.4 Generate the continuously current briefing | **Done (v0)** | `application/briefing.py`; deterministic fallback text also grounds Assist. No LLM-wording pass built (not required by the spec - deterministic text suffices for v0). |
+| 5.5 Expose the briefing through Home Assistant | **Done (v0)** | Real `/summary` capabilities, `sensor.kinward_attention`'s `items` attribute, extended Briefings Card on the core-card dashboard. A Kinward-controlled calendar dashboard/custom card remains evidence-gated (v1 item 6). |
+| 5.6 Deliver deduplicated Home Assistant notifications | **Done (v0)** | `worker.deliver_attention_notifications`; dedup via `notified_record_version`. No quiet-hours/interruption-policy setting exists yet - delivery isn't time-of-day gated. Provider push/webhooks are v1 (item 4). |
 
-This is the only epic with zero code against it. It's also the one piece of the original product
-promise ("useful briefings and calendar-aware attention") still entirely unmet.
+Epic 5 is no longer the one piece of the original product promise left entirely unmet - it now has
+a working v0 slice. The v1 roadmap note on the epic body above is the concrete next-step reference:
+direct Google/Outlook connections, real per-person visibility, provider-native change versions,
+push/webhook delivery, and calendar mutation via Epic 6's approval machinery.
 
 ### Epic 6 — Approvals, Actions, and Household Coordination
 
 | Story | Status | Remaining work |
 | --- | --- | --- |
 | 6.1 Meaningful-action state machine | **Partial** | v0 covers the capability-risk-tier case only (HA device control, no resource owner). The general multi-principal/quorum case is unbuilt; `cancelled` state has no producer yet. |
-| 6.2 General multi-principal approval | **Partial** | Only the no-owner HA-capability case is built. The person-owned-resource case (ADR-002's worked example: reschedule another person's calendar event) is unbuilt and blocked on Epic 5. |
+| 6.2 General multi-principal approval | **Partial** | Only the no-owner HA-capability case is built. The person-owned-resource case (ADR-002's worked example: reschedule another person's calendar event) is unbuilt - Epic 5 v0's calendars are household-shared, not person-owned, so this stays blocked on Epic 5's v1 direct-provider work specifically, not v0. |
 | 6.3 Bounded household coordination | **Not started** | Assistant-to-assistant delegation deliberately deferred until 6.1/6.2's general approval machinery exists. |
 | 6.4 Expose safe HA actions | Done | — (`kinward.request_action`/`approve_action`/`deny_action` services, `POST /api/v1/integration/actions`) |
 
@@ -1308,12 +1440,15 @@ promise ("useful briefings and calendar-aware attention") still entirely unmet.
 
 1. ~~Run the Story 1.7 trial~~ — **done (2026-07-17)**; see `docs/ha-native/household-trial.md`.
 3. One medium gap: the admin-privacy regression test (§7).
-4. One large greenfield epic: calendars and briefings (Epic 5) — nothing else in the backlog is
-   blocked *on* code that doesn't exist except this.
-5. One epic partially blocked *by* Epic 5: general approval/coordination (6.2/6.3) is lower-priority
-   and can trail real usage. Epic 7 (7.1–7.4) reached a v0 slice of every story as of 2026-07-17 -
-   remaining polish (options-flow UI surfacing for tool-policy/resource-labels, tiered
-   reference-resolution ranking, a persisted `recent_actions`/`active_timers` store) can also trail
-   real usage rather than blocking it.
+4. ~~One large greenfield epic: calendars and briefings (Epic 5)~~ — **v0 done (2026-07-17)**; see
+   the Epic 5 table above and the epic body's "v1 roadmap" note for what's left (direct
+   Google/Outlook connections, real per-person visibility, provider push/webhooks, calendar
+   mutation) - all deliberately deferred v1 scope, not gaps in the v0 slice.
+5. One epic partially blocked *by* Epic 5's v1 (not v0): general approval/coordination (6.2/6.3)
+   needs a person-owned calendar resource to exist before the person-owned-resource approval case
+   has anything to approve, so it stays lower-priority and can trail real usage. Epic 7 (7.1–7.4)
+   reached a v0 slice of every story as of 2026-07-17 - remaining polish (options-flow UI surfacing
+   for tool-policy/resource-labels, tiered reference-resolution ranking, a persisted
+   `recent_actions`/`active_timers` store) can also trail real usage rather than blocking it.
 6. Backup/restore/import (9.1–9.3) and evidence-gated extensions (Epic 10) are intentionally not
    next — revisit only after the above is running for real.

@@ -9,6 +9,8 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 import homeassistant.util.dt as dt_util
 
 from .api import (
+    AttentionItem,
+    AttentionItemsFailure,
     HaPerson,
     KinwardApiClient,
     PendingAction,
@@ -44,6 +46,7 @@ class KinwardDataUpdateCoordinator(DataUpdateCoordinator[SummarySuccess]):
         self.people: list[SyncedPerson] = []
         self.pets: list[Pet] = []
         self.pending_actions: list[PendingAction] = []
+        self.attention_items: list[AttentionItem] = []
 
     @property
     def client(self) -> KinwardApiClient:
@@ -90,10 +93,18 @@ class KinwardDataUpdateCoordinator(DataUpdateCoordinator[SummarySuccess]):
             return
         self.pending_actions = result
 
+    async def _async_fetch_attention_items(self) -> None:
+        result = await self._client.async_fetch_attention_items()
+        if isinstance(result, AttentionItemsFailure):
+            _LOGGER.warning("Kinward attention items fetch failed: %s", result.error)
+            return
+        self.attention_items = result
+
     async def _async_update_data(self) -> SummarySuccess:
         await self._async_sync_people()
         await self._async_fetch_pets()
         await self._async_fetch_pending_actions()
+        await self._async_fetch_attention_items()
         result = await self._client.async_fetch_summary()
         if isinstance(result, SummaryFailure):
             if result.error == "invalid_auth":

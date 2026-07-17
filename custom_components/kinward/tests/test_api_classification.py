@@ -7,8 +7,12 @@ from kinward.api import (
     AssistantActionFailure,
     AssistantPolicy,
     AssistantPolicyFailure,
+    AttentionItem,
+    AttentionItemsFailure,
     AttentionStatus,
     BriefingStatus,
+    CalendarEntitiesFailure,
+    CalendarEntity,
     ContextFailure,
     ContextSuccess,
     NextEventStatus,
@@ -31,6 +35,9 @@ from kinward.api import (
     classify_action_result_response,
     classify_assistant_action_response,
     classify_assistant_policy_response,
+    classify_attention_item_action_response,
+    classify_attention_items_response,
+    classify_calendar_entities_response,
     classify_context_response,
     classify_delete_assistant_response,
     classify_list_assistants_response,
@@ -39,6 +46,7 @@ from kinward.api import (
     classify_pets_response,
     classify_provider_settings_response,
     classify_send_message_response,
+    classify_set_calendar_entity_response,
     classify_summary_response,
     classify_sync_people_response,
 )
@@ -564,3 +572,124 @@ def test_approval_resolution_event_carries_approval_id_decision_and_outcome() ->
         EVENT_APPROVAL_RESOLVED,
         {"approval_id": "approval-1", "decision": "deny", "outcome": "denied"},
     )
+
+
+def _calendar_entity_payload(**overrides: object) -> dict[str, object]:
+    payload: dict[str, object] = {"entityId": "calendar.family", "enabled": True, "knownToHa": True}
+    payload.update(overrides)
+    return payload
+
+
+def test_classify_calendar_entities_response_success() -> None:
+    result = classify_calendar_entities_response(200, [_calendar_entity_payload()])
+    assert result == [CalendarEntity(entity_id="calendar.family", enabled=True, known_to_ha=True)]
+
+
+def test_classify_calendar_entities_response_empty_list() -> None:
+    assert classify_calendar_entities_response(200, []) == []
+
+
+def test_classify_calendar_entities_response_malformed_item_is_unknown() -> None:
+    assert classify_calendar_entities_response(200, [{"entityId": "calendar.family"}]) == (
+        CalendarEntitiesFailure("unknown")
+    )
+
+
+def test_classify_calendar_entities_response_invalid_auth() -> None:
+    assert classify_calendar_entities_response(401, []) == CalendarEntitiesFailure("invalid_auth")
+
+
+def test_classify_calendar_entities_response_household_not_configured() -> None:
+    assert classify_calendar_entities_response(409, []) == CalendarEntitiesFailure(
+        "household_not_configured"
+    )
+
+
+def test_classify_set_calendar_entity_response_success() -> None:
+    result = classify_set_calendar_entity_response(200, _calendar_entity_payload(enabled=False))
+    assert result == CalendarEntity(entity_id="calendar.family", enabled=False, known_to_ha=True)
+
+
+def test_classify_set_calendar_entity_response_failure_carries_the_code() -> None:
+    payload = {"detail": {"code": "invalid_entity_id"}}
+    result = classify_set_calendar_entity_response(422, payload)
+    assert result == ActionFailure(reason="invalid_entity_id")
+
+
+def _attention_item_payload(**overrides: object) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "id": "attention-1",
+        "changeType": "time_changed",
+        "state": "active",
+        "summary": "Time changed: Dentist is now 3:00 PM",
+        "entityId": "calendar.family",
+        "eventStartsAt": "2026-07-21T15:00:00+00:00",
+        "createdAt": "2026-07-17T12:00:00+00:00",
+        "updatedAt": "2026-07-17T12:05:00+00:00",
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_classify_attention_items_response_success() -> None:
+    result = classify_attention_items_response(200, [_attention_item_payload()])
+    assert result == [
+        AttentionItem(
+            id="attention-1",
+            change_type="time_changed",
+            state="active",
+            summary="Time changed: Dentist is now 3:00 PM",
+            entity_id="calendar.family",
+            event_starts_at="2026-07-21T15:00:00+00:00",
+            created_at="2026-07-17T12:00:00+00:00",
+            updated_at="2026-07-17T12:05:00+00:00",
+        )
+    ]
+
+
+def test_classify_attention_items_response_null_event_starts_at() -> None:
+    result = classify_attention_items_response(200, [_attention_item_payload(eventStartsAt=None)])
+    assert result == [
+        AttentionItem(
+            id="attention-1",
+            change_type="time_changed",
+            state="active",
+            summary="Time changed: Dentist is now 3:00 PM",
+            entity_id="calendar.family",
+            event_starts_at=None,
+            created_at="2026-07-17T12:00:00+00:00",
+            updated_at="2026-07-17T12:05:00+00:00",
+        )
+    ]
+
+
+def test_classify_attention_items_response_empty_list() -> None:
+    assert classify_attention_items_response(200, []) == []
+
+
+def test_classify_attention_items_response_malformed_item_is_unknown() -> None:
+    assert classify_attention_items_response(200, [{"id": "attention-1"}]) == AttentionItemsFailure(
+        "unknown"
+    )
+
+
+def test_classify_attention_items_response_invalid_auth() -> None:
+    assert classify_attention_items_response(401, []) == AttentionItemsFailure("invalid_auth")
+
+
+def test_classify_attention_items_response_household_not_configured() -> None:
+    assert classify_attention_items_response(409, []) == AttentionItemsFailure(
+        "household_not_configured"
+    )
+
+
+def test_classify_attention_item_action_response_success() -> None:
+    result = classify_attention_item_action_response(200, _attention_item_payload(state="acknowledged"))
+    assert isinstance(result, AttentionItem)
+    assert result.state == "acknowledged"
+
+
+def test_classify_attention_item_action_response_failure_carries_the_code() -> None:
+    payload = {"detail": {"code": "not_open"}}
+    result = classify_attention_item_action_response(409, payload)
+    assert result == ActionFailure(reason="not_open")

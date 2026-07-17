@@ -152,3 +152,39 @@ deny_action:
       required: true
       selector:
         text:
+
+generate_briefing:
+  name: Generate briefing
+  description: >-
+    Force a fresh read of the Kinward briefing now instead of waiting for the
+    next scheduled update. The briefing is continuously current, not built on
+    demand - this simply requests that read sooner.
+  fields: {}
+
+acknowledge_attention_item:
+  name: Acknowledge attention item
+  description: >-
+    Acknowledge a calendar attention item by id, as shown on
+    sensor.kinward_attention's items attribute. It stays visible but
+    de-emphasized until it resolves, is dismissed, or a materially new change
+    reactivates it.
+  fields:
+    item_id:
+      name: Item ID
+      description: The attention item's id, from sensor.kinward_attention.
+      required: true
+      selector:
+        text:
+
+dismiss_attention_item:
+  name: Dismiss attention item
+  description: >-
+    Dismiss a calendar attention item by id. It stays hidden unless the
+    underlying event changes materially again.
+  fields:
+    item_id:
+      name: Item ID
+      description: The attention item's id, from sensor.kinward_attention.
+      required: true
+      selector:
+        text:

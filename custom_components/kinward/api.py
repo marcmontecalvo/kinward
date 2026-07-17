@@ -669,6 +669,143 @@ def classify_action_result_response(status_code: int, payload: Any) -> ActionOut
     return ActionResult(outcome=outcome, approval_id=approval_id)
 
 
+@dataclass(frozen=True)
+class CalendarEntity:
+    """One HA ``calendar.*`` entity Kinward knows about (Epic 5 Story 5.1)."""
+
+    entity_id: str
+    enabled: bool
+    known_to_ha: bool
+
+
+@dataclass(frozen=True)
+class CalendarEntitiesFailure:
+    error: ConfigFlowErrorCode
+
+
+CalendarEntitiesResult = list[CalendarEntity] | CalendarEntitiesFailure
+
+
+def _calendar_entity_from(payload: Any) -> CalendarEntity | None:
+    if not isinstance(payload, dict):
+        return None
+    entity_id = payload.get("entityId")
+    enabled = payload.get("enabled")
+    known_to_ha = payload.get("knownToHa")
+    if not isinstance(entity_id, str) or not isinstance(enabled, bool) or not isinstance(known_to_ha, bool):
+        return None
+    return CalendarEntity(entity_id=entity_id, enabled=enabled, known_to_ha=known_to_ha)
+
+
+def classify_calendar_entities_response(status_code: int, payload: Any) -> CalendarEntitiesResult:
+    if status_code == 401:
+        return CalendarEntitiesFailure("invalid_auth")
+    if status_code == 409:
+        return CalendarEntitiesFailure("household_not_configured")
+    if status_code != 200 or not isinstance(payload, list):
+        return CalendarEntitiesFailure("unknown")
+    entities: list[CalendarEntity] = []
+    for item in payload:
+        entity = _calendar_entity_from(item)
+        if entity is None:
+            return CalendarEntitiesFailure("unknown")
+        entities.append(entity)
+    return entities
+
+
+def classify_set_calendar_entity_response(status_code: int, payload: Any) -> CalendarEntity | ActionFailure:
+    if status_code != 200:
+        return ActionFailure(reason=_error_reason(status_code, payload))
+    entity = _calendar_entity_from(payload)
+    if entity is None:
+        return ActionFailure(reason="malformed response")
+    return entity
+
+
+@dataclass(frozen=True)
+class AttentionItem:
+    """One calendar attention item (Epic 5 Story 5.3): a durable record that a
+    meaningful calendar condition may need notice or action.
+    """
+
+    id: str
+    change_type: str
+    state: str
+    summary: str
+    entity_id: str
+    event_starts_at: str | None
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True)
+class AttentionItemsFailure:
+    error: ConfigFlowErrorCode
+
+
+AttentionItemsResult = list[AttentionItem] | AttentionItemsFailure
+
+
+def _attention_item_from(payload: Any) -> AttentionItem | None:
+    if not isinstance(payload, dict):
+        return None
+    item_id = payload.get("id")
+    change_type = payload.get("changeType")
+    state = payload.get("state")
+    summary = payload.get("summary")
+    entity_id = payload.get("entityId")
+    created_at = payload.get("createdAt")
+    updated_at = payload.get("updatedAt")
+    event_starts_at = payload.get("eventStartsAt")
+    if (
+        not isinstance(item_id, str)
+        or not isinstance(change_type, str)
+        or not isinstance(state, str)
+        or not isinstance(summary, str)
+        or not isinstance(entity_id, str)
+        or not isinstance(created_at, str)
+        or not isinstance(updated_at, str)
+    ):
+        return None
+    if event_starts_at is not None and not isinstance(event_starts_at, str):
+        return None
+    return AttentionItem(
+        id=item_id,
+        change_type=change_type,
+        state=state,
+        summary=summary,
+        entity_id=entity_id,
+        event_starts_at=event_starts_at,
+        created_at=created_at,
+        updated_at=updated_at,
+    )
+
+
+def classify_attention_items_response(status_code: int, payload: Any) -> AttentionItemsResult:
+    if status_code == 401:
+        return AttentionItemsFailure("invalid_auth")
+    if status_code == 409:
+        return AttentionItemsFailure("household_not_configured")
+    if status_code != 200 or not isinstance(payload, list):
+        return AttentionItemsFailure("unknown")
+    items: list[AttentionItem] = []
+    for item_payload in payload:
+        item = _attention_item_from(item_payload)
+        if item is None:
+            return AttentionItemsFailure("unknown")
+        items.append(item)
+    return items
+
+
+def classify_attention_item_action_response(status_code: int, payload: Any) -> AttentionItem | ActionFailure:
+    if status_code != 200:
+        return ActionFailure(reason=_error_reason(status_code, payload))
+    item = _attention_item_from(payload)
+    if item is None:
+        return ActionFailure(reason="malformed response")
+    return item
+
+
 # Epic 7 Story 7.4: documented HA bus events for stable household intent - "purpose-specific
 # HA automation hooks" a household can build automations on top of (e.g. flash a light when
 # an approval is requested). Kept a fixed, minimal set rather than exposing every possible
@@ -992,3 +1129,57 @@ class KinwardApiClient:
         except (TimeoutError, aiohttp.ClientError):
             return ActionFailure(reason="cannot_connect")
         return classify_action_result_response(status, payload)
+
+    async def async_fetch_calendar_entities(self) -> CalendarEntitiesResult:
+        try:
+            status, payload = await self._request("GET", "/api/v1/integration/settings/calendar-entities")
+        except (TimeoutError, aiohttp.ClientError):
+            return CalendarEntitiesFailure("cannot_connect")
+        return classify_calendar_entities_response(status, payload)
+
+    async def async_set_calendar_entity(
+        self, *, entity_id: str, enabled: bool
+    ) -> CalendarEntity | ActionFailure:
+        body = {"entityId": entity_id, "enabled": enabled}
+        try:
+            status, payload = await self._request(
+                "PUT", "/api/v1/integration/settings/calendar-entities", json_body=body
+            )
+        except (TimeoutError, aiohttp.ClientError):
+            return ActionFailure(reason="cannot_connect")
+        return classify_set_calendar_entity_response(status, payload)
+
+    async def async_fetch_attention_items(self) -> AttentionItemsResult:
+        try:
+            status, payload = await self._request("GET", "/api/v1/integration/calendar/attention")
+        except (TimeoutError, aiohttp.ClientError):
+            return AttentionItemsFailure("cannot_connect")
+        return classify_attention_items_response(status, payload)
+
+    async def _async_resolve_attention_item(
+        self, *, ha_user_id: str, item_id: str, decision: Literal["acknowledge", "dismiss"]
+    ) -> AttentionItem | ActionFailure:
+        body = {"haUserId": ha_user_id}
+        try:
+            status, payload = await self._request(
+                "POST",
+                f"/api/v1/integration/calendar/attention/{quote(item_id)}/{decision}",
+                json_body=body,
+            )
+        except (TimeoutError, aiohttp.ClientError):
+            return ActionFailure(reason="cannot_connect")
+        return classify_attention_item_action_response(status, payload)
+
+    async def async_acknowledge_attention_item(
+        self, *, ha_user_id: str, item_id: str
+    ) -> AttentionItem | ActionFailure:
+        return await self._async_resolve_attention_item(
+            ha_user_id=ha_user_id, item_id=item_id, decision="acknowledge"
+        )
+
+    async def async_dismiss_attention_item(
+        self, *, ha_user_id: str, item_id: str
+    ) -> AttentionItem | ActionFailure:
+        return await self._async_resolve_attention_item(
+            ha_user_id=ha_user_id, item_id=item_id, decision="dismiss"
+        )

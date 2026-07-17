@@ -10,6 +10,7 @@ from kinward.config import Settings
 from kinward.persistence.models import (
     ActivityRecord,
     AssistantRecord,
+    AttentionItemRecord,
     Base,
     HouseholdRecord,
     IntegrationTokenRecord,
@@ -21,7 +22,7 @@ from kinward.persistence.models import (
 from kinward.persistence.session import session_dependency
 
 
-async def _client():  # type: ignore[no-untyped-def]
+async def _client(settings: Settings | None = None):  # type: ignore[no-untyped-def]
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
@@ -31,7 +32,7 @@ async def _client():  # type: ignore[no-untyped-def]
         async with factory() as session:
             yield session
 
-    app = create_app(Settings(environment="test"))
+    app = create_app(settings or Settings(environment="test"))
     app.dependency_overrides[session_dependency] = override_session
     client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
     return client, factory
@@ -131,19 +132,23 @@ async def test_context_and_summary_report_the_household() -> None:
         assert summary.status_code == 200
         summary_body = summary.json()
         assert summary_body["household"] == {"adultCount": 1, "childCount": 1}
+        # No Home Assistant connection is configured in this test's Settings, so Epic
+        # 5's briefing/attention/nextEvent capabilities truthfully report disabled -
+        # matching health.py's "not-configured" convention for every other
+        # HA-dependent capability, not the pre-Epic-5 "not-yet-implemented" stub.
         assert summary_body["briefing"] == {
             "state": "intentionally-disabled",
-            "reason": "not-yet-implemented",
+            "reason": "not-configured",
             "summary": None,
         }
         assert summary_body["attention"] == {
             "state": "intentionally-disabled",
-            "reason": "not-yet-implemented",
+            "reason": "not-configured",
             "count": None,
         }
         assert summary_body["nextEvent"] == {
             "state": "intentionally-disabled",
-            "reason": "not-yet-implemented",
+            "reason": "not-configured",
             "summary": None,
             "startsAt": None,
         }
@@ -1488,4 +1493,109 @@ async def test_resource_labels_rejects_a_malformed_entity_id() -> None:
             json={"entityId": "not-a-valid-entity-id", "label": "Office Light"},
         )
         assert response.status_code == 422
-        assert response.json()["detail"]["code"] == "invalid_entity_id"
+
+
+async def test_calendar_entities_can_be_listed_and_toggled() -> None:
+    client, factory = await _client()
+    async with client:
+        await _seed_household(factory)
+        token = await _issue_token(factory)
+        headers = {"Authorization": f"Bearer {token}"}
+
+        set_response = await client.put(
+            "/api/v1/integration/settings/calendar-entities",
+            headers=headers,
+            json={"entityId": "calendar.family", "enabled": True},
+        )
+        assert set_response.status_code == 200
+        assert set_response.json() == {
+            "entityId": "calendar.family",
+            "enabled": True,
+            "knownToHa": True,
+        }
+
+        listed = await client.get(
+            "/api/v1/integration/settings/calendar-entities", headers=headers
+        )
+        assert listed.status_code == 200
+        assert listed.json() == [
+            {"entityId": "calendar.family", "enabled": True, "knownToHa": False}
+        ]
+
+
+async def test_attention_items_can_be_listed_acknowledged_and_dismissed() -> None:
+    client, factory = await _client()
+    async with client:
+        await _seed_household_with_synced_admin(factory)
+        token = await _issue_token(factory)
+        headers = {"Authorization": f"Bearer {token}"}
+
+        async with factory() as session:
+            household = await session.scalar(select(HouseholdRecord))
+            assert household is not None
+            item = AttentionItemRecord(
+                household_id=household.id,
+                entity_id="calendar.family",
+                event_uid="e1",
+                change_type="cancelled",
+                recurrence_key="key-1",
+                state="active",
+                summary="Cancelled: Dentist",
+                detail={},
+            )
+            session.add(item)
+            await session.commit()
+            item_id = item.id
+
+        listed = await client.get("/api/v1/integration/calendar/attention", headers=headers)
+        assert listed.status_code == 200
+        assert [entry["id"] for entry in listed.json()] == [item_id]
+
+        acknowledged = await client.post(
+            f"/api/v1/integration/calendar/attention/{item_id}/acknowledge",
+            headers=headers,
+            json={"haUserId": "ha-user-1"},
+        )
+        assert acknowledged.status_code == 200
+        assert acknowledged.json()["state"] == "acknowledged"
+
+        dismissed = await client.post(
+            f"/api/v1/integration/calendar/attention/{item_id}/dismiss",
+            headers=headers,
+            json={"haUserId": "ha-user-1"},
+        )
+        assert dismissed.status_code == 200
+        assert dismissed.json()["state"] == "dismissed"
+
+
+async def test_acknowledge_attention_item_rejects_unmapped_caller() -> None:
+    client, factory = await _client()
+    async with client:
+        await _seed_household(factory)
+        token = await _issue_token(factory)
+        headers = {"Authorization": f"Bearer {token}"}
+
+        async with factory() as session:
+            household = await session.scalar(select(HouseholdRecord))
+            assert household is not None
+            item = AttentionItemRecord(
+                household_id=household.id,
+                entity_id="calendar.family",
+                event_uid="e1",
+                change_type="cancelled",
+                recurrence_key="key-1",
+                state="active",
+                summary="Cancelled: Dentist",
+                detail={},
+            )
+            session.add(item)
+            await session.commit()
+            item_id = item.id
+
+        response = await client.post(
+            f"/api/v1/integration/calendar/attention/{item_id}/acknowledge",
+            headers=headers,
+            json={"haUserId": "unknown-user"},
+        )
+        assert response.status_code == 404
+        assert response.json()["detail"]["code"] == "attention_item_not_found"

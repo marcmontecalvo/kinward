@@ -35,6 +35,9 @@ lifecycle decision fails the test suite rather than shipping unclassified.
 | approval | `approvals` | system-operational | yes | no | restore | retain with household audit history |
 | home_assistant_tool_policy | `home_assistant_tool_policy` | household-shared | yes | no | quarantine | delete with household |
 | home_assistant_resource_label | `home_assistant_resource_labels` | household-shared | yes | no | quarantine | delete with household |
+| calendar_entity | `calendar_entities` | household-shared | yes | no | quarantine | delete with household |
+| calendar_event_observation | `calendar_event_observations` | household-shared | no | no | regenerate | delete with household; regenerated from Home Assistant on next sync |
+| attention_item | `attention_items` | household-shared | yes | no | quarantine | delete with household; may reappear from Home Assistant sync if the condition still exists |
 
 Field meanings:
 
@@ -63,6 +66,16 @@ not in this table: a `pending` row gets a fixed 30-day `expires_at` at
 creation (`application/knowledge.py`'s `PENDING_OBSERVATION_EXPIRY_DAYS`),
 enforced by the worker's periodic `expire_due_observations` pass - the one
 concrete per-class expiry decision referenced in Story 9.4's notes.
+
+`attention_item` rows likewise carry their own state machine (`state`:
+`active`/`acknowledged`/`dismissed`/`resolved`/`expired`/`superseded`) rather
+than splitting across taxonomy keys - every state shares the same
+backup/import/restore/deletion disposition, and disposal is driven by the
+calendar sync worker pass (auto-resolve/auto-expire), not by an admin action.
+`calendar_event_observation` rows are the one genuinely regenerable cache in
+this table: they hold no information Home Assistant doesn't already have, so
+restoring a backup never restores them verbatim - the next sync pass rebuilds
+them from a fresh HA read (AD-08's calendar freshness contract).
 
 ## Tracked gaps
 
