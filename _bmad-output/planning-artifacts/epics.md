@@ -83,7 +83,7 @@ Status as of `implementationReviewDate` above; see [§8](#8-story-by-story-statu
 | 2 | Household members can speak or type to their private Kinward assistant through Assist with truthful lifecycle behavior. | **Built.** Mapping, conversation entity, cancellation, and topic CRUD all exist; the fallback-assistant privacy boundary (2.5) now has a dedicated regression test. |
 | 3 | The household and account graph is safely established and managed through backend workflows and HA-hosted configuration entry points. | **Done** for everything still in scope (invitations/local accounts were cut, not just deferred). |
 | 4 | Topics, memory, knowledge, and corrections remain private, inspectable, and portable across authorized HA interactions. | **Core lifecycle built.** Auto-extracting facts from a live conversation, and reclassifying a confirmed fact's sharing class, are not wired. |
-| 5 | Kinward produces useful briefings and calendar-aware attention without becoming a notification feed. | **Not started.** No calendar provider, briefing generation, change detection, or delivery policy exists yet — the largest fully greenfield epic. |
+| 5 | Kinward produces useful briefings and calendar-aware attention without becoming a notification feed. | **v0 built.** HA calendar entities are read directly (no per-person provider credentials - deferred to v1), meaningful-change detection is deterministic, attention items carry the full six-state lifecycle, the briefing is a live projection Assist also grounds on, and deduplicated HA notifications are delivered. No quiet-hours policy yet. |
 | 6 | Meaningful actions and household coordination are approved, executed, reconciled, and recorded safely. | **v0 slice only.** Approval state machine covers HA-capability actions with no resource owner; the general multi-principal/quorum case (needed for cross-person actions like a calendar reschedule) and assistant-to-assistant coordination are unbuilt, and both are blocked on Epic 5. |
 | 7 | Home Assistant state and actions are used through policy-bound, observation-confirmed adapters. | **v0 read/write built.** No formal HA-resource mapping/versioning layer, no automation hooks (7.4), and completion still trusts a synchronous service-call response rather than a confirmed fresh observation. |
 | 8 | Administration, health, activity, and diagnostics are available without exposing protected content. | **Partial.** Health/diagnostics, most admin actions, and config-flow reauthentication all exist; there is still no read/query API for activity records (only writes). |
@@ -558,6 +558,55 @@ Use Home Assistant dashboards and notifications to surface prioritized household
 - Milestone C is limited to calendar-change ambient or briefing delivery.
 - Timezone, quiet periods, confidence fallback, privacy suppression, review opportunities, and interruption caps are deterministic.
 - HA notifications are an adapter; Kinward policy selects whether and what may be delivered.
+
+> **Superseded (2026-07-17, HA-native v0 scope):** Story 5.1's "private person-owned
+> calendars" (direct Google/Outlook-style credentials per person) is v1 scope, not
+> built. `_bmad-output/planning-artifacts/epic-5-briefings-calendar-awareness-proactive-attention.md`
+> is the authoritative v0 spec actually implemented: Kinward reads HA `calendar.*`
+> entities directly through a provider-neutral adapter (HA's existing all-or-nothing
+> calendar visibility model, no per-person credentials or ownership), with its own
+> Stories 5.1-5.6 superseding this section's four stories one-to-one in spirit
+> (read HA calendars; detect meaningful changes; create/maintain attention items;
+> generate the continuously current briefing; expose it through HA; deliver
+> deduplicated HA notifications).
+>
+> **Implemented (2026-07-17):** `domain/calendar_observation.py` (event
+> wrapping/location normalization) and `domain/calendar_change_detection.py`
+> (deterministic, LLM-free 5-minute time/overlap thresholds, back-to-back
+> different-location detection, RSVP-required predicate) are the pure detection
+> layer. `persistence/models.py` adds `CalendarEntityRecord` (per-entity
+> enable/disable), `CalendarEventObservationRecord` (last-known event snapshot,
+> regenerable from HA, diffed each sync pass), and `AttentionItemRecord` (the full
+> active/acknowledged/dismissed/resolved/expired/superseded state machine, one row
+> per logical condition via a `recurrence_key`, mirroring `knowledge_facts`'
+> dedup/dependents-invalidation precedent) - migration `013_calendar_attention`.
+> `application/calendar.py`'s `sync_household_calendars` (worker-driven, every
+> heartbeat via `worker.sync_calendars`) does the fetch/diff/create-or-update pass;
+> `application/briefing.py`'s `compute_briefing` is the read-only projection over
+> current attention items plus the soonest observed event, with a deterministic
+> fallback text summary (Story 5.4's "if an LLM is used for wording, it receives
+> policy-filtered structured facts only" - the same text also grounds
+> `application/conversation.py`'s system prompt so Assist can summarize it, per
+> Story 5.4's "the same structured briefing can be used by Assist"). Notification
+> delivery (`worker.deliver_attention_notifications`) posts a deduplicated
+> `persistent_notification.create` per newly-active/materially-changed item,
+> tracked via `notified_record_version` separately from lifecycle state - no
+> household quiet-hours setting exists yet, so time-of-day gating is not yet
+> built. API: `GET/PUT /api/v1/integration/settings/calendar-entities`,
+> `GET /api/v1/integration/calendar/attention`,
+> `POST .../calendar/attention/{id}/acknowledge`,
+> `POST .../calendar/attention/{id}/dismiss`; `/summary`'s
+> `briefing`/`attention`/`nextEvent` capabilities are now real rather than
+> `not-yet-implemented` stubs. HA integration: `sensor.kinward_attention` gained an
+> `items` attribute (bounded list, matching the `people`/`pets` sensor precedent);
+> new `kinward.generate_briefing`/`kinward.acknowledge_attention_item`/
+> `kinward.dismiss_attention_item` actions; `kinward-dashboard.yaml`'s Briefings
+> Card now renders active/acknowledged/resolved items distinctly with an explicit
+> empty state, built entirely from core `markdown` cards. Tests in
+> `test_calendar_observation.py`, `test_calendar_change_detection.py`,
+> `test_attention_item.py`, `test_calendar.py`, `test_briefing.py`, plus
+> extensions to `test_worker.py`, `test_integration_api.py`, `test_lifecycle.py`,
+> and `custom_components/kinward/tests/test_api_classification.py`.
 
 # Epic 6: Approvals, Actions, and Household Coordination
 

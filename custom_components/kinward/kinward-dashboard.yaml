@@ -43,10 +43,34 @@ views:
               {{ states('sensor.kinward_briefing')
                  if states('sensor.kinward_briefing') not in ['unknown', 'unavailable']
                  else 'No briefing yet.' }}
-          - type: entities
-            title: Attention
-            entities:
-              - sensor.kinward_attention
+
+      - type: grid
+        cards:
+          - type: heading
+            heading: Attention
+          # Epic 5 Story 5.5's Briefings Card: refreshes automatically whenever
+          # sensor.kinward_attention updates (no separate polling loop of its own),
+          # shows the highest-priority items first (already ordered that way by the
+          # backend), distinguishes active/acknowledged/recently-resolved items, and
+          # has an explicit empty state - all from one core markdown card.
+          - type: markdown
+            content: |-
+              {% set items = state_attr('sensor.kinward_attention', 'items') %}
+              {% if states('sensor.kinward_attention') in ['unknown', 'unavailable'] %}
+              Attention status is currently unavailable.
+              {% elif not items %}
+              Nothing needs your attention right now.
+              {% else %}
+              {% for item in items %}
+              {% if item.state == 'resolved' %}
+              ✅ ~~{{ item.summary }}~~ (resolved)
+              {% elif item.state == 'acknowledged' %}
+              👁️ {{ item.summary }} (acknowledged)
+              {% else %}
+              ⚠️ **{{ item.summary }}**
+              {% endif %}
+              {% endfor %}
+              {% endif %}
           - type: tile
             entity: conversation.kinward
             name: Talk to Kinward

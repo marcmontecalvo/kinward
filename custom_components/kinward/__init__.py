@@ -52,6 +52,7 @@ REQUEST_ACTION_SCHEMA = vol.Schema(
     }
 )
 RESOLVE_ACTION_SCHEMA = vol.Schema({vol.Required("approval_id"): cv.string})
+RESOLVE_ATTENTION_ITEM_SCHEMA = vol.Schema({vol.Required("item_id"): cv.string})
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -253,8 +254,71 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             )
             hass.bus.async_fire(event.event_type, event.data)
 
+    async def _handle_acknowledge_attention_item(call: ServiceCall) -> None:
+        """Acknowledge a calendar attention item by id, as shown on
+        ``sensor.kinward_attention``'s ``items`` attribute - it stays visible but
+        de-emphasized until it resolves, is dismissed, or a materially new change
+        reactivates it (Epic 5 Story 5.3).
+        """
+        ha_user_id = call.context.user_id
+        if not ha_user_id:
+            raise ServiceValidationError(
+                "kinward.acknowledge_attention_item must be called by an authenticated user."
+            )
+        for stored_coordinator in hass.data.get(DOMAIN, {}).values():
+            result = await stored_coordinator.client.async_acknowledge_attention_item(
+                ha_user_id=ha_user_id, item_id=call.data["item_id"]
+            )
+            if isinstance(result, ActionFailure):
+                raise ServiceValidationError(result.reason)
+            await stored_coordinator.async_request_refresh()
+
+    async def _handle_dismiss_attention_item(call: ServiceCall) -> None:
+        """Dismiss a calendar attention item by id - hidden unless the underlying
+        event changes materially again (Epic 5 Story 5.3)."""
+        ha_user_id = call.context.user_id
+        if not ha_user_id:
+            raise ServiceValidationError(
+                "kinward.dismiss_attention_item must be called by an authenticated user."
+            )
+        for stored_coordinator in hass.data.get(DOMAIN, {}).values():
+            result = await stored_coordinator.client.async_dismiss_attention_item(
+                ha_user_id=ha_user_id, item_id=call.data["item_id"]
+            )
+            if isinstance(result, ActionFailure):
+                raise ServiceValidationError(result.reason)
+            await stored_coordinator.async_request_refresh()
+
+    async def _handle_generate_briefing(_call: ServiceCall) -> None:
+        """Force a fresh read of the Kinward briefing now.
+
+        The briefing (Epic 5 Story 5.4) is a continuously current projection, not
+        something built on demand - there is nothing to "generate" beyond the next
+        scheduled poll would already do. This action exists so household automations
+        can request that read now rather than waiting up to
+        ``DEFAULT_UPDATE_INTERVAL`` (matches ``kinward.refresh``'s behavior exactly).
+        """
+        for stored_coordinator in hass.data.get(DOMAIN, {}).values():
+            await stored_coordinator.async_request_refresh()
+
     if not hass.services.has_service(DOMAIN, "refresh"):
         hass.services.async_register(DOMAIN, "refresh", _handle_refresh)
+    if not hass.services.has_service(DOMAIN, "generate_briefing"):
+        hass.services.async_register(DOMAIN, "generate_briefing", _handle_generate_briefing)
+    if not hass.services.has_service(DOMAIN, "acknowledge_attention_item"):
+        hass.services.async_register(
+            DOMAIN,
+            "acknowledge_attention_item",
+            _handle_acknowledge_attention_item,
+            schema=RESOLVE_ATTENTION_ITEM_SCHEMA,
+        )
+    if not hass.services.has_service(DOMAIN, "dismiss_attention_item"):
+        hass.services.async_register(
+            DOMAIN,
+            "dismiss_attention_item",
+            _handle_dismiss_attention_item,
+            schema=RESOLVE_ATTENTION_ITEM_SCHEMA,
+        )
     if not hass.services.has_service(DOMAIN, "create_assistant"):
         hass.services.async_register(
             DOMAIN, "create_assistant", _handle_create_assistant, schema=CREATE_ASSISTANT_SCHEMA
@@ -302,4 +366,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             hass.services.async_remove(DOMAIN, "request_action")
             hass.services.async_remove(DOMAIN, "approve_action")
             hass.services.async_remove(DOMAIN, "deny_action")
+            hass.services.async_remove(DOMAIN, "generate_briefing")
+            hass.services.async_remove(DOMAIN, "acknowledge_attention_item")
+            hass.services.async_remove(DOMAIN, "dismiss_attention_item")
     return unloaded

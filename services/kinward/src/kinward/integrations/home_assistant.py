@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from kinward.integrations.base import IntegrationClient
@@ -77,6 +78,43 @@ class HomeAssistantClient:
         )
         if result is None:
             return None
+        return result if isinstance(result, list) else []
+
+    async def list_calendar_entities(self) -> list[str]:
+        """Every ``calendar.*`` entity currently known to HA (Epic 5 Story 5.1: "Kinward
+        reads configured Home Assistant calendar entities through a provider-neutral
+        calendar adapter"). Filters the same ``/api/states`` read every other Kinward
+        HA-state consumer already uses, rather than a second endpoint - HA has no
+        calendar-specific "list calendars" REST route beyond that.
+        """
+        states = await self.states()
+        return [
+            entity_id
+            for state in states
+            if isinstance(entity_id := state.get("entity_id"), str) and entity_id.startswith("calendar.")
+        ]
+
+    async def calendar_events(
+        self, entity_id: str, *, start: datetime, end: datetime
+    ) -> list[dict[str, Any]]:
+        """Events for one calendar entity in ``[start, end)`` via HA's
+        ``GET /api/calendars/{entity_id}`` REST route.
+
+        Returns ``[]`` when disabled or on any request failure - a calendar sync pass
+        that can't currently read a calendar simply treats it as having no events this
+        pass, rather than raising; staleness is judged by the caller comparing against
+        the previous successful observation, same as every other HA read in this
+        module.
+        """
+        if not self.enabled:
+            return []
+        result = await self.client.request_json(
+            "GET",
+            f"/api/calendars/{entity_id}",
+            fallback=[],
+            headers=self._headers(),
+            params={"start": start.isoformat(), "end": end.isoformat()},
+        )
         return result if isinstance(result, list) else []
 
     async def render_template(

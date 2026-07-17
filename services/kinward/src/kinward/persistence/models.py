@@ -469,6 +469,117 @@ class KnowledgeFactRecord(Base):
     classification: Mapped[str] = mapped_column(String(32), default="private-person", nullable=False)
 
 
+class CalendarEntityRecord(Base):
+    """Which Home Assistant ``calendar.*`` entities Kinward reads (Epic 5 Story 5.1:
+    "Calendar entities can be enabled or disabled for Kinward independently").
+
+    A row exists only once an entity has been explicitly enabled or disabled -
+    absence means "not yet decided," treated as disabled by default so a newly
+    discovered HA calendar isn't silently synced before a household chooses to
+    include it.
+    """
+
+    __tablename__ = "calendar_entities"
+    __table_args__ = (
+        UniqueConstraint("household_id", "entity_id", name="uq_calendar_entities_entity"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    household_id: Mapped[str] = mapped_column(ForeignKey("households.id", ondelete="CASCADE"), nullable=False)
+    entity_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    record_version: Mapped[int] = mapped_column(default=1, nullable=False)
+    classification: Mapped[str] = mapped_column(String(32), default="household-shared", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now, nullable=False)
+
+
+class CalendarEventObservationRecord(Base):
+    """The last-known snapshot of one HA calendar event (Epic 5 Story 5.1's retained
+    fields: entity identity, event identity, observed time, start/end, title,
+    location, status, RSVP, freshness).
+
+    This is Kinward's only memory of "what the event used to look like" - every sync
+    pass diffs freshly-read HA calendar state against these rows
+    (``domain/calendar_change_detection.py``) to decide whether a change is meaningful,
+    then overwrites the row with the new snapshot. It is a cache of HA's own data, not
+    an independent source of truth (AD-08's calendar freshness contract) - safe to
+    regenerate by resyncing, never backed up as durable content.
+    """
+
+    __tablename__ = "calendar_event_observations"
+    __table_args__ = (
+        UniqueConstraint(
+            "household_id", "entity_id", "event_uid", name="uq_calendar_event_observation"
+        ),
+        Index("ix_calendar_event_observations_household", "household_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    household_id: Mapped[str] = mapped_column(ForeignKey("households.id", ondelete="CASCADE"), nullable=False)
+    entity_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    event_uid: Mapped[str] = mapped_column(String(300), nullable=False)
+    summary: Mapped[str] = mapped_column(String(500), nullable=False)
+    location: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    ends_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    all_day: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    rsvp_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    record_version: Mapped[int] = mapped_column(default=1, nullable=False)
+    classification: Mapped[str] = mapped_column(String(32), default="household-shared", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
+
+
+class AttentionItemRecord(Base):
+    """A durable record that a meaningful calendar condition may need notice or action
+    (Epic 5 Core Concepts). One row per logical calendar condition
+    (``recurrence_key``) - repeated sync observation of the same condition updates
+    this row rather than creating a duplicate.
+
+    ``superseded_by_id`` preserves history when a materially different newer change
+    replaces this item, mirroring ``knowledge_facts``' dependents-invalidation
+    approach to lineage rather than deleting the superseded row.
+    """
+
+    __tablename__ = "attention_items"
+    __table_args__ = (
+        CheckConstraint(
+            "state IN ('active', 'acknowledged', 'dismissed', 'resolved', 'expired', 'superseded')",
+            name="ck_attention_items_state",
+        ),
+        CheckConstraint(
+            "change_type IN "
+            "('cancelled', 'time_changed', 'location_changed', 'overlap', 'back_to_back', 'rsvp_required')",
+            name="ck_attention_items_change_type",
+        ),
+        Index("ix_attention_items_household_state", "household_id", "state"),
+        Index("ix_attention_items_recurrence", "household_id", "recurrence_key"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    household_id: Mapped[str] = mapped_column(ForeignKey("households.id", ondelete="CASCADE"), nullable=False)
+    entity_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    event_uid: Mapped[str] = mapped_column(String(300), nullable=False)
+    change_type: Mapped[str] = mapped_column(String(24), nullable=False)
+    recurrence_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    state: Mapped[str] = mapped_column(String(16), default="active", nullable=False)
+    summary: Mapped[str] = mapped_column(String(500), nullable=False)
+    detail: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    event_starts_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    superseded_by_id: Mapped[str | None] = mapped_column(
+        ForeignKey("attention_items.id", ondelete="SET NULL"), nullable=True
+    )
+    record_version: Mapped[int] = mapped_column(default=1, nullable=False)
+    classification: Mapped[str] = mapped_column(String(32), default="household-shared", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now, nullable=False)
+    acknowledged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    notified_record_version: Mapped[int | None] = mapped_column(nullable=True)
+
+
 class BootstrapAttemptRecord(Base):
     __tablename__ = "bootstrap_attempts"
 

@@ -11,6 +11,7 @@ from kinward.config import Settings
 from kinward.integrations.home_assistant import HomeAssistantClient
 from kinward.persistence.models import (
     ActivityRecord,
+    AttentionItemRecord,
     Base,
     HouseholdRecord,
     KnowledgeFactRecord,
@@ -20,9 +21,11 @@ from kinward.persistence.models import (
 from kinward.worker import (
     RECONCILIATION_GIVE_UP_AFTER,
     check_readiness,
+    deliver_attention_notifications,
     expire_pending_observations,
     reconcile_unknown_activity,
     record_heartbeat,
+    sync_calendars,
 )
 
 
@@ -229,6 +232,157 @@ async def test_reconcile_unknown_activity_gives_up_past_the_reconciliation_windo
         assert activity.outcome == "failed"
         assert activity.detail["reconciliation"] == "gave_up"
     await engine.dispose()
+
+
+async def test_sync_calendars_reports_none_without_a_household() -> None:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    result = await sync_calendars(factory, settings=Settings(_env_file=None))
+    assert result is None
+    await engine.dispose()
+
+
+async def test_sync_calendars_reports_zero_entities_when_none_are_enabled() -> None:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    async with factory() as session:
+        await _seeded_household(session)
+        await session.commit()
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[])
+
+    client = HomeAssistantClient(
+        base_url="http://ha.invalid", token="fake-token", transport=httpx.MockTransport(handler)
+    )
+    result = await sync_calendars(factory, settings=Settings(_env_file=None), ha_client=client)
+    assert result is not None
+    assert result.entities_synced == 0
+    await engine.dispose()
+
+
+def _notification_ha_client(*, accept: bool) -> HomeAssistantClient:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/services/persistent_notification/create":
+            return httpx.Response(200, json=[]) if accept else httpx.Response(500)
+        return httpx.Response(404)
+
+    return HomeAssistantClient(
+        base_url="http://ha.invalid", token="fake-token", transport=httpx.MockTransport(handler)
+    )
+
+
+async def test_deliver_attention_notifications_marks_delivered_items_notified() -> None:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    async with factory() as session:
+        household = await _seeded_household(session)
+        item = AttentionItemRecord(
+            household_id=household.id,
+            entity_id="calendar.family",
+            event_uid="e1",
+            change_type="cancelled",
+            recurrence_key="key-1",
+            state="active",
+            summary="Cancelled: Dentist",
+            detail={},
+        )
+        session.add(item)
+        await session.commit()
+        item_id = item.id
+
+    delivered = await deliver_attention_notifications(
+        factory, settings=Settings(_env_file=None), ha_client=_notification_ha_client(accept=True)
+    )
+    assert delivered == 1
+
+    async with factory() as session:
+        item = await session.get(AttentionItemRecord, item_id)
+        assert item is not None
+        assert item.notified_record_version == item.record_version
+        assert item.last_notified_at is not None
+
+
+async def test_deliver_attention_notifications_does_not_mark_delivered_on_ha_failure() -> None:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    async with factory() as session:
+        household = await _seeded_household(session)
+        item = AttentionItemRecord(
+            household_id=household.id,
+            entity_id="calendar.family",
+            event_uid="e1",
+            change_type="cancelled",
+            recurrence_key="key-1",
+            state="active",
+            summary="Cancelled: Dentist",
+            detail={},
+        )
+        session.add(item)
+        await session.commit()
+        item_id = item.id
+
+    delivered = await deliver_attention_notifications(
+        factory, settings=Settings(_env_file=None), ha_client=_notification_ha_client(accept=False)
+    )
+    assert delivered == 0
+
+    async with factory() as session:
+        item = await session.get(AttentionItemRecord, item_id)
+        assert item is not None
+        assert item.notified_record_version is None
+
+
+async def test_deliver_attention_notifications_skips_acknowledged_and_dismissed_items() -> None:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    async with factory() as session:
+        household = await _seeded_household(session)
+        session.add_all(
+            [
+                AttentionItemRecord(
+                    household_id=household.id,
+                    entity_id="calendar.family",
+                    event_uid="e1",
+                    change_type="cancelled",
+                    recurrence_key="key-1",
+                    state="acknowledged",
+                    summary="Cancelled: Dentist",
+                    detail={},
+                ),
+                AttentionItemRecord(
+                    household_id=household.id,
+                    entity_id="calendar.family",
+                    event_uid="e2",
+                    change_type="cancelled",
+                    recurrence_key="key-2",
+                    state="dismissed",
+                    summary="Cancelled: Piano",
+                    detail={},
+                ),
+            ]
+        )
+        await session.commit()
+
+    delivered = await deliver_attention_notifications(
+        factory, settings=Settings(_env_file=None), ha_client=_notification_ha_client(accept=True)
+    )
+    assert delivered == 0
 
 
 async def test_reconcile_unknown_activity_skips_rows_with_no_deterministic_expected_state() -> None:

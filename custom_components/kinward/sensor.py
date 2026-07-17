@@ -74,6 +74,14 @@ class KinwardBriefingSensor(KinwardEntity, SensorEntity):
 
 
 class KinwardAttentionSensor(KinwardEntity, SensorEntity):
+    """Calendar attention items requiring notice or action (Epic 5 Story 5.3/5.5).
+
+    ``items`` carries every currently active/acknowledged/recently-resolved item so
+    the dashboard can distinguish them, matching the bounded-detail-in-attributes
+    precedent already used by ``KinwardPeopleSensor``/``KinwardPendingApprovalsSensor``
+    rather than a large nested payload.
+    """
+
     _attr_translation_key = "attention"
     _attr_state_class = SensorStateClass.MEASUREMENT
 
@@ -87,11 +95,25 @@ class KinwardAttentionSensor(KinwardEntity, SensorEntity):
         return data.attention.count if data else None
 
     @property
-    def extra_state_attributes(self) -> dict[str, str | None] | None:
+    def extra_state_attributes(self) -> dict[str, object] | None:
         data = self.coordinator.data
         if data is None:
             return None
-        return {"capability_state": data.attention.state, "reason": data.attention.reason}
+        return {
+            "capability_state": data.attention.state,
+            "reason": data.attention.reason,
+            "items": [
+                {
+                    "id": item.id,
+                    "change_type": item.change_type,
+                    "state": item.state,
+                    "summary": item.summary,
+                    "entity_id": item.entity_id,
+                    "event_starts_at": item.event_starts_at,
+                }
+                for item in self.coordinator.attention_items
+            ],
+        }
 
 
 class KinwardNextEventSensor(KinwardEntity, SensorEntity):

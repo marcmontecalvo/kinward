@@ -9,6 +9,12 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.exc import SQLAlchemyError
 
+from kinward.application.calendar import (
+    SyncSummary,
+    list_items_needing_notification,
+    mark_attention_item_notified,
+    sync_household_calendars,
+)
 from kinward.application.household_summary import fetch_household_summary
 from kinward.application.knowledge import expire_due_observations
 from kinward.application.provider_settings import get_or_create_provider_settings
@@ -173,6 +179,79 @@ async def reconcile_unknown_activity(
         return resolved_count
 
 
+async def sync_calendars(
+    factory: async_sessionmaker[AsyncSession],
+    *,
+    settings: Settings,
+    ha_client: HomeAssistantClient | None = None,
+    now: datetime | None = None,
+) -> SyncSummary | None:
+    """Fetch enabled HA calendar entities and detect/track meaningful changes (Epic 5
+    Story 5.2/5.3). One deployment serves one household, so there's at most one
+    household's calendars to sync each pass - "Kinward responds to Home Assistant
+    calendar updates without requiring its own dashboard polling schedule" refers to
+    the HA dashboard card, not this backend sync, which still has to poll HA itself
+    since HA gives Kinward no calendar-change webhook/push today.
+    """
+    async with factory() as session:
+        summary = await fetch_household_summary(session)
+        if summary is None:
+            return None
+        resolved_ha_client = ha_client or HomeAssistantClient(
+            base_url=settings.home_assistant_url, token=settings.home_assistant_token
+        )
+        result = await sync_household_calendars(
+            session, household_id=summary.id, ha_client=resolved_ha_client, now=now
+        )
+        await session.commit()
+        return result
+
+
+async def deliver_attention_notifications(
+    factory: async_sessionmaker[AsyncSession],
+    *,
+    settings: Settings,
+    ha_client: HomeAssistantClient | None = None,
+    now: datetime | None = None,
+) -> int:
+    """Push a deduplicated Home Assistant notification for each newly-active or
+    materially-changed attention item (Epic 5 Story 5.6). Delivery is best-effort and
+    never gates the attention item's own truth/lifecycle state - a failed
+    ``persistent_notification.create`` call simply leaves the item eligible to be
+    retried next pass rather than marking anything as delivered. There is no
+    household quiet-hours setting yet (v0 scope: no existing quiet-period
+    infrastructure to hook into), so delivery is not yet time-of-day gated beyond the
+    dedup/freshness rules already enforced by ``list_items_needing_notification``.
+    """
+    delivered_at = now or datetime.now(UTC)
+    async with factory() as session:
+        summary = await fetch_household_summary(session)
+        if summary is None:
+            return 0
+        resolved_ha_client = ha_client or HomeAssistantClient(
+            base_url=settings.home_assistant_url, token=settings.home_assistant_token
+        )
+        items = await list_items_needing_notification(session, household_id=summary.id)
+        delivered = 0
+        for item in items:
+            result = await resolved_ha_client.call_service(
+                domain="persistent_notification",
+                service="create",
+                data={
+                    "notification_id": f"kinward-attention-{item.id}",
+                    "title": "Kinward calendar update",
+                    "message": item.summary,
+                },
+            )
+            if result is not None:
+                await mark_attention_item_notified(
+                    session, item_id=item.id, record_version=item.record_version, now=delivered_at
+                )
+                delivered += 1
+        await session.commit()
+        return delivered
+
+
 async def run_worker(settings: Settings) -> None:
     engine = create_async_engine(settings.database_url, pool_pre_ping=True)
     factory = async_sessionmaker(engine, expire_on_commit=False)
@@ -189,6 +268,14 @@ async def run_worker(settings: Settings) -> None:
                 pass
             try:
                 await reconcile_unknown_activity(factory, settings=settings)
+            except SQLAlchemyError:
+                pass
+            try:
+                await sync_calendars(factory, settings=settings)
+            except SQLAlchemyError:
+                pass
+            try:
+                await deliver_attention_notifications(factory, settings=settings)
             except SQLAlchemyError:
                 pass
             await asyncio.sleep(settings.worker_heartbeat_interval_seconds)

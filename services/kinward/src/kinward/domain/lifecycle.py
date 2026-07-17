@@ -49,6 +49,23 @@ BOOTSTRAP_RECORD_LIFECYCLES: dict[str, RecordLifecycle] = {
     "home_assistant_resource_label": RecordLifecycle(
         "household-shared", True, False, "quarantine", "delete with household"
     ),
+    "calendar_entity": RecordLifecycle(
+        "household-shared", True, False, "quarantine", "delete with household"
+    ),
+    "calendar_event_observation": RecordLifecycle(
+        "household-shared",
+        False,
+        False,
+        "regenerate",
+        "delete with household; regenerated from Home Assistant on next sync",
+    ),
+    "attention_item": RecordLifecycle(
+        "household-shared",
+        True,
+        False,
+        "quarantine",
+        "delete with household; may reappear from Home Assistant sync if the condition still exists",
+    ),
 }
 
 # Maps each persisted SQLAlchemy table (kinward.persistence.models) to the
@@ -74,6 +91,9 @@ TABLE_LIFECYCLE_KEYS: dict[str, tuple[str, ...]] = {
     "approvals": ("approval",),
     "home_assistant_tool_policy": ("home_assistant_tool_policy",),
     "home_assistant_resource_labels": ("home_assistant_resource_label",),
+    "calendar_entities": ("calendar_entity",),
+    "calendar_event_observations": ("calendar_event_observation",),
+    "attention_items": ("attention_item",),
 }
 
 # Persisted tables with no lifecycle entry yet. A table lands here only with an
