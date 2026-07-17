@@ -56,6 +56,7 @@ from kinward.application.knowledge import (
     delete_fact,
     list_confirmed_facts,
     list_pending_observations,
+    reclassify_fact,
     reject_observation,
 )
 from kinward.application.pending_actions import (
@@ -966,6 +967,11 @@ class CorrectFactRequest(BaseModel):
     confidence: float | None = Field(default=None, ge=0.0, le=1.0)
 
 
+class ReclassifyFactRequest(BaseModel):
+    ha_user_id: str = Field(alias="haUserId", min_length=1, max_length=64)
+    privacy: Literal["household", "personal", "sensitive"]
+
+
 def _fact_not_found() -> HTTPException:
     return HTTPException(status_code=404, detail={"code": "knowledge_fact_not_found"})
 
@@ -1071,6 +1077,35 @@ async def integration_correct_fact(
         fact_id=fact_id,
         value=body.value,
         confidence=body.confidence,
+    )
+    if isinstance(result, (Unmapped, FactNotFound)):
+        await session.rollback()
+        raise _fact_not_found()
+    if isinstance(result, NotConfirmed):
+        await session.rollback()
+        raise _fact_not_confirmed()
+    if isinstance(result, ProviderUnavailable):
+        await session.rollback()
+        raise _provider_unavailable()
+    await session.commit()
+    return KnowledgeFactPayload.from_record(result)
+
+
+@router.patch("/knowledge/facts/{fact_id}/reclassify", response_model=KnowledgeFactPayload)
+async def integration_reclassify_fact(
+    fact_id: str, body: ReclassifyFactRequest, _token: IntegrationToken, session: Session
+) -> KnowledgeFactPayload:
+    """Change a confirmed fact's sharing class - owner-unilateral, per Story 4.4."""
+    summary = await fetch_household_summary(session)
+    if summary is None:
+        raise _household_not_configured()
+    provider = await _knowledge_provider(session, household_id=summary.id)
+    result = await reclassify_fact(
+        session,
+        provider,
+        ha_user_id=body.ha_user_id,
+        fact_id=fact_id,
+        privacy=body.privacy,
     )
     if isinstance(result, (Unmapped, FactNotFound)):
         await session.rollback()

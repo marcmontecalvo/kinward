@@ -141,3 +141,35 @@ async def test_llm_wiki_provider_proposes_fact() -> None:
     )
     assert fact.value == "tea"
     assert fact.status == "proposed"
+
+
+async def test_llm_wiki_provider_reclassifies_fact_visibility() -> None:
+    seen_bodies: list[dict[str, object]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(
+                200,
+                json={
+                    "key": "person.favorite_drink",
+                    "value": {"subject": "person", "predicate": "favorite_drink", "value": "tea"},
+                    "status": "confirmed",
+                    "visibility": "personal",
+                    "confidence": 0.8,
+                    "provenance": [],
+                },
+            )
+        body = json.loads(request.content)
+        seen_bodies.append(body)
+        return httpx.Response(200, json=body)
+
+    provider = LlmWikiKnowledgeProvider(
+        base_url="http://wiki.invalid",
+        transport=httpx.MockTransport(handler),
+    )
+    fact = await provider.reclassify_fact(
+        fact_id="kinward_house::person.favorite_drink", privacy="household"
+    )
+    assert fact is not None
+    assert fact.privacy == "household"
+    assert seen_bodies[0]["visibility"] == "household"

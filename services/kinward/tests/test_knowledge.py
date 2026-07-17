@@ -25,6 +25,7 @@ from kinward.application.knowledge import (
     list_confirmed_facts,
     list_pending_observations,
     propose_observation,
+    reclassify_fact,
     reject_observation,
 )
 from kinward.llm.contracts import ModelMessage, ModelReply
@@ -78,6 +79,10 @@ class FakeKnowledgeProvider:
     async def retire_fact(self, *, fact_id: str) -> bool:
         self.calls.append(("retire_fact", {"fact_id": fact_id}))
         return self.retire_result
+
+    async def reclassify_fact(self, *, fact_id: str, privacy: str) -> KnowledgeFact | None:
+        self.calls.append(("reclassify_fact", {"fact_id": fact_id, "privacy": privacy}))
+        return self.facts.get(fact_id)
 
     async def provenance(self, *, fact_id: str) -> list[str]:
         return []
@@ -374,6 +379,53 @@ async def test_correct_fact_only_applies_to_a_confirmed_fact() -> None:
 
         result = await correct_fact(
             session, provider, ha_user_id="ha-user-1", fact_id=pending.id, value="green tea"
+        )
+        assert isinstance(result, NotConfirmed)
+
+
+async def test_reclassify_fact_updates_privacy_and_the_provider_body() -> None:
+    factory = await _factory()
+    async with factory() as session:
+        household, person = await _seed_person(session)
+        provider = FakeKnowledgeProvider()
+        pending = await _propose(session, provider, household, person)
+        await session.commit()
+        assert isinstance(pending, KnowledgeFactRecord)
+        confirmed = await confirm_observation(
+            session, provider, ha_user_id="ha-user-1", fact_id=pending.id
+        )
+        await session.commit()
+        assert isinstance(confirmed, KnowledgeFactRecord)
+        assert confirmed.privacy == "personal"
+
+        reclassified = await reclassify_fact(
+            session,
+            provider,
+            ha_user_id="ha-user-1",
+            fact_id=confirmed.id,
+            privacy="household",
+        )
+        await session.commit()
+
+        assert isinstance(reclassified, KnowledgeFactRecord)
+        assert reclassified.privacy == "household"
+        assert (
+            "reclassify_fact",
+            {"fact_id": "fake-fact-1", "privacy": "household"},
+        ) in provider.calls
+
+
+async def test_reclassify_fact_only_applies_to_a_confirmed_fact() -> None:
+    factory = await _factory()
+    async with factory() as session:
+        household, person = await _seed_person(session)
+        provider = FakeKnowledgeProvider()
+        pending = await _propose(session, provider, household, person)
+        await session.commit()
+        assert isinstance(pending, KnowledgeFactRecord)
+
+        result = await reclassify_fact(
+            session, provider, ha_user_id="ha-user-1", fact_id=pending.id, privacy="household"
         )
         assert isinstance(result, NotConfirmed)
 

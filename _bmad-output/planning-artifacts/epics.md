@@ -79,7 +79,7 @@ Status as of `implementationReviewDate` above; see [§8](#8-story-by-story-statu
 
 | Epic | Outcome | Status |
 | --- | --- | --- |
-| 1 | A healthy Kinward backend and HA 2026.7.2 integration can be installed and used today. | **Built.** Only the manual day-one trial (1.7) is still outstanding. |
+| 1 | A healthy Kinward backend and HA 2026.7.2 integration can be installed and used today. | **Built and verified.** The manual day-one trial (1.7) ran end-to-end on 2026-07-17; two defects were found (one fixed, one deferred to Epic 9) — see `docs/ha-native/household-trial.md`. |
 | 2 | Household members can speak or type to their private Kinward assistant through Assist with truthful lifecycle behavior. | **Built.** Mapping, conversation entity, cancellation, and topic CRUD all exist; the fallback-assistant privacy boundary (2.5) now has a dedicated regression test. |
 | 3 | The household and account graph is safely established and managed through backend workflows and HA-hosted configuration entry points. | **Done** for everything still in scope (invitations/local accounts were cut, not just deferred). |
 | 4 | Topics, memory, knowledge, and corrections remain private, inspectable, and portable across authorized HA interactions. | **Core lifecycle built.** Auto-extracting facts from a live conversation, and reclassifying a confirmed fact's sharing class, are not wired. |
@@ -507,13 +507,18 @@ Provide useful continuity without allowing optional memory systems or inferred k
 > `DELETE /knowledge/facts/{id}`. Tests in `tests/test_knowledge.py` and
 > `tests/test_integration_api.py`.
 >
-> **Not yet built:** "reclassify" (changing a confirmed fact's `privacy`
-> sharing class after the fact) has no dedicated operation - `correct_fact`
-> only revises `value`/`confidence` today, matching what the acceptance
-> criteria call "correct"; reclassification would need its own authorization
-> question (can an owner widen their own fact from personal to
-> household-shared unilaterally?) not answered by this pass. Retention
-> disposition for this table is documented in
+> **Implemented (2026-07-17), reclassify:** the authorization question was
+> resolved as owner-unilateral in either direction - nothing in the codebase
+> reads `privacy` to gate rendering or access today, so widening
+> personal -> household carries the same risk as any other self-owned
+> correction (`correct_fact`, `delete_fact` are equally unilateral). Added
+> `application/knowledge.py`'s `reclassify_fact` (owner-only, confirmed-only,
+> patches the provider body via a new `KnowledgeStoreProvider.reclassify_fact`
+> method implemented in both `LlmWikiKnowledgeProvider` and
+> `NullKnowledgeStoreProvider`) and API
+> `PATCH /knowledge/facts/{id}/reclassify`. Tests in `tests/test_knowledge.py`,
+> `tests/test_memory_providers.py`, and `tests/test_integration_api.py`.
+> Retention disposition for this table is documented in
 > `docs/architecture/data-retention.md` (`knowledge_fact` lifecycle entry).
 
 ### Story 4.5: Degrade memory and knowledge truthfully
@@ -1072,9 +1077,11 @@ No custom card, custom dashboard strategy, custom panel, or standalone frontend 
 
 ## 6a. Current execution queue (2026-07-17)
 
-1. **Story 1.7** — run the actual same-day household trial. Nothing else blocks it; every dependency
-   it lists (integration, entry, entities, one summary, refresh, one conversational request, truthful
-   offline behavior) already exists in code and just needs to be exercised for real.
+1. ~~**Story 1.7**~~ — **done (2026-07-17):** the same-day household trial ran end-to-end through a
+   real browser session against the live `--profile ha` stack. See `docs/ha-native/household-trial.md`
+   for the full log; one defect (dashboard roster tables rendering as raw text) was found and fixed,
+   one (stale-person count drift in `sensor.kinward_household_status`) was found and deferred to
+   Epic 9's real-removal work.
 2. ~~**Story 8.1 remainder**~~ — **done (2026-07-17):** `config_flow.py` gained
    `async_step_reauth`/`async_step_reauth_confirm`, triggered automatically by a new
    `ConfigEntryAuthFailed` raised from the coordinator on `invalid_auth`. A rotated/expired backend
@@ -1144,7 +1151,7 @@ Legend: **Done** / **Partial** (gap noted) / **Not started** / **Deferred** (int
 | 1.4 Kinward custom integration and config flow | Done | — |
 | 1.5 Initial safe entity set | Done | — |
 | 1.6 First core-card dashboard | Done | — |
-| 1.7 Verify the same-day usable slice | **Not started** | Run the actual manual trial end-to-end and record defects/missing-UI needs. Everything it depends on already exists. |
+| 1.7 Verify the same-day usable slice | **Done (2026-07-17)** | Manual browser trial run end-to-end; see `docs/ha-native/household-trial.md`. One defect fixed (dashboard roster tables), one deferred to Epic 9 (stale-person count drift). |
 
 ### Epic 2 — Private Assistant Through Home Assistant Assist
 
@@ -1172,7 +1179,7 @@ Legend: **Done** / **Partial** (gap noted) / **Not started** / **Deferred** (int
 | 4.1 Persist authorized topics and context | Done | — |
 | 4.2 Separate private memory and household-shared knowledge | Done | — (Honcho + LLM-wiki providers wired) |
 | 4.3 Manage inferred observations | Done | — (`propose`/`confirm`/`reject`/expire lifecycle plus the `extract_candidate_observations` structured-extraction step now wired into `handle_conversation_request`) |
-| 4.4 Inspect, correct, reclassify, and delete durable facts | **Partial** | Inspect/correct/delete are built. Reclassifying a *confirmed* fact's sharing class after the fact has no operation — needs an authorization decision (can an owner unilaterally widen personal → household-shared?) before it can be built. |
+| 4.4 Inspect, correct, reclassify, and delete durable facts | Done | — (`application/knowledge.reclassify_fact`, owner-unilateral both directions; `PATCH /knowledge/facts/{id}/reclassify`) |
 | 4.5 Degrade memory and knowledge truthfully | Done | — (`health.py` `CapabilityHealthSet` covers model/memory/knowledge separately) |
 
 ### Epic 5 — Briefings, Calendar Awareness, and Proactive Attention
@@ -1232,7 +1239,7 @@ promise ("useful briefings and calendar-aware attention") still entirely unmet.
 
 ### Roll-up: what's actually left to reach a fuller release
 
-1. Run the Story 1.7 trial (process step, not code — unblocks everything else being validated for real).
+1. ~~Run the Story 1.7 trial~~ — **done (2026-07-17)**; see `docs/ha-native/household-trial.md`.
 3. One medium gap: the admin-privacy regression test (§7).
 4. One large greenfield epic: calendars and briefings (Epic 5) — nothing else in the backlog is
    blocked *on* code that doesn't exist except this.
