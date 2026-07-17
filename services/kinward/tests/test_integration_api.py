@@ -8,6 +8,7 @@ from kinward.app import create_app
 from kinward.application.integration_tokens import create_token, revoke_token
 from kinward.config import Settings
 from kinward.persistence.models import (
+    ActivityRecord,
     AssistantRecord,
     Base,
     HouseholdRecord,
@@ -1321,3 +1322,62 @@ async def test_approval_workflow_requires_admin_and_round_trips() -> None:
         assert missing.json()["detail"]["code"] == "approval_not_found"
 
         _ = admin_id
+
+
+async def test_activity_endpoint_filters_by_caller_role() -> None:
+    client, factory = await _client()
+    async with client:
+        await _seed_household(factory)
+        token = await _issue_token(factory)
+        headers = {"Authorization": f"Bearer {token}"}
+        _assistant_id, admin_id = await _sync_owner_and_admin(client, headers)
+        people = (await client.get("/api/v1/integration/people", headers=headers)).json()
+        owner_id = next(p["id"] for p in people if p["displayName"] == "Marc")
+
+        async with factory() as session:
+            household_id = (await session.scalars(select(HouseholdRecord.id))).one()
+            session.add_all(
+                [
+                    ActivityRecord(
+                        household_id=household_id,
+                        person_id=owner_id,
+                        summary="Marc's own action",
+                        outcome="executed",
+                        detail={},
+                    ),
+                    ActivityRecord(
+                        household_id=household_id,
+                        person_id=admin_id,
+                        summary="Lisa's own action",
+                        outcome="executed",
+                        detail={},
+                    ),
+                ]
+            )
+            await session.commit()
+
+        owner_view = await client.get(
+            "/api/v1/integration/activity?haUserId=ha-user-marc", headers=headers
+        )
+        assert owner_view.status_code == 200
+        owner_summaries = {item["summary"] for item in owner_view.json()}
+        assert "Marc's own action" in owner_summaries
+        assert "Lisa's own action" not in owner_summaries
+
+        admin_view = await client.get(
+            "/api/v1/integration/activity?haUserId=ha-user-lisa", headers=headers
+        )
+        assert admin_view.status_code == 200
+        admin_summaries = {item["summary"] for item in admin_view.json()}
+        assert {"Marc's own action", "Lisa's own action"} <= admin_summaries
+
+        unmapped_view = await client.get(
+            "/api/v1/integration/activity?haUserId=ha-user-stranger", headers=headers
+        )
+        assert unmapped_view.status_code == 200
+        assert unmapped_view.json() == []
+
+        bounds_rejected = await client.get(
+            "/api/v1/integration/activity?haUserId=ha-user-marc&limit=0", headers=headers
+        )
+        assert bounds_rejected.status_code == 422
