@@ -497,13 +497,18 @@ Provide useful continuity without allowing optional memory systems or inferred k
 > `DELETE /knowledge/facts/{id}`. Tests in `tests/test_knowledge.py` and
 > `tests/test_integration_api.py`.
 >
-> **Not yet built:** "reclassify" (changing a confirmed fact's `privacy`
-> sharing class after the fact) has no dedicated operation - `correct_fact`
-> only revises `value`/`confidence` today, matching what the acceptance
-> criteria call "correct"; reclassification would need its own authorization
-> question (can an owner widen their own fact from personal to
-> household-shared unilaterally?) not answered by this pass. Retention
-> disposition for this table is documented in
+> **Implemented (2026-07-17), reclassify:** the authorization question was
+> resolved as owner-unilateral in either direction - nothing in the codebase
+> reads `privacy` to gate rendering or access today, so widening
+> personal -> household carries the same risk as any other self-owned
+> correction (`correct_fact`, `delete_fact` are equally unilateral). Added
+> `application/knowledge.py`'s `reclassify_fact` (owner-only, confirmed-only,
+> patches the provider body via a new `KnowledgeStoreProvider.reclassify_fact`
+> method implemented in both `LlmWikiKnowledgeProvider` and
+> `NullKnowledgeStoreProvider`) and API
+> `PATCH /knowledge/facts/{id}/reclassify`. Tests in `tests/test_knowledge.py`,
+> `tests/test_memory_providers.py`, and `tests/test_integration_api.py`.
+> Retention disposition for this table is documented in
 > `docs/architecture/data-retention.md` (`knowledge_fact` lifecycle entry).
 
 ### Story 4.5: Degrade memory and knowledge truthfully
@@ -1162,7 +1167,7 @@ Legend: **Done** / **Partial** (gap noted) / **Not started** / **Deferred** (int
 | 4.1 Persist authorized topics and context | Done | — |
 | 4.2 Separate private memory and household-shared knowledge | Done | — (Honcho + LLM-wiki providers wired) |
 | 4.3 Manage inferred observations | **Partial** | Core lifecycle (`propose`/`confirm`/`reject`/expire) is built, but nothing in the conversation flow actually calls `propose_observation` — no structured-extraction step exists yet, so the feature is unreachable end-to-end. |
-| 4.4 Inspect, correct, reclassify, and delete durable facts | **Partial** | Inspect/correct/delete are built. Reclassifying a *confirmed* fact's sharing class after the fact has no operation — needs an authorization decision (can an owner unilaterally widen personal → household-shared?) before it can be built. |
+| 4.4 Inspect, correct, reclassify, and delete durable facts | Done | — (`application/knowledge.reclassify_fact`, owner-unilateral both directions; `PATCH /knowledge/facts/{id}/reclassify`) |
 | 4.5 Degrade memory and knowledge truthfully | Done | — (`health.py` `CapabilityHealthSet` covers model/memory/knowledge separately) |
 
 ### Epic 5 — Briefings, Calendar Awareness, and Proactive Attention
