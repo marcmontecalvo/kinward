@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 import voluptuous as vol
@@ -90,6 +91,54 @@ class KinwardConfigFlow(ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="user", data_schema=STEP_USER_SCHEMA, errors=errors
+        )
+
+    async def async_step_reauth(
+        self, entry_data: Mapping[str, Any]
+    ) -> ConfigFlowResult:
+        """Entered automatically when the coordinator sees a rejected token
+        (``ConfigEntryAuthFailed`` in coordinator.py) or from the entry's own
+        "Reauthenticate" action. Only asks for a new token - base URL is
+        unchanged, since a rotated backend token is the only credential that
+        expires here.
+        """
+        return await self.async_step_reauth_confirm()
+
+    async def async_step_reauth_confirm(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        errors: dict[str, str] = {}
+        reauth_entry = self._get_reauth_entry()
+
+        if user_input is not None:
+            token = user_input[CONF_TOKEN]
+            session = async_get_clientsession(self.hass)
+            client = KinwardApiClient(
+                session, base_url=reauth_entry.data[CONF_BASE_URL], token=token
+            )
+            result = await client.async_fetch_context()
+
+            if isinstance(result, ContextSuccess):
+                if result.household_id != reauth_entry.unique_id:
+                    return self.async_abort(reason="wrong_household")
+                return self.async_update_reload_and_abort(
+                    reauth_entry, data={**reauth_entry.data, CONF_TOKEN: token}
+                )
+
+            if isinstance(result, ContextFailure):
+                errors["base"] = result.error
+
+        return self.async_show_form(
+            step_id="reauth_confirm",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_TOKEN): selector.TextSelector(
+                        selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)
+                    ),
+                }
+            ),
+            errors=errors,
+            description_placeholders={"base_url": reauth_entry.data[CONF_BASE_URL]},
         )
 
 

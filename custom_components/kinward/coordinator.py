@@ -4,6 +4,7 @@ from datetime import datetime
 import logging
 
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 import homeassistant.util.dt as dt_util
 
@@ -95,6 +96,8 @@ class KinwardDataUpdateCoordinator(DataUpdateCoordinator[SummarySuccess]):
         await self._async_fetch_pending_actions()
         result = await self._client.async_fetch_summary()
         if isinstance(result, SummaryFailure):
+            if result.error == "invalid_auth":
+                raise ConfigEntryAuthFailed(result.error)
             raise UpdateFailed(result.error)
         self.last_success_at = dt_util.utcnow()
         return result
