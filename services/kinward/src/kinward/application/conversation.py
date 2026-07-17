@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Literal
 
 from sqlalchemy import select
@@ -13,8 +15,11 @@ from kinward.application.operational_context import (
     resolve_recent_timer,
 )
 from kinward.application.provider_settings import get_or_create_provider_settings
+from kinward.application.resource_labels import get_resource_label_overrides
 from kinward.config import Settings, get_settings
 from kinward.domain.assistant_access import can_address_assistant
+from kinward.domain.ha_observation import ObservedState, is_current, observe_states
+from kinward.domain.household_resource_labels import resolve_label
 from kinward.integrations.home_assistant import HomeAssistantClient
 from kinward.llm.contracts import ModelMessage, ModelProvider
 from kinward.llm.factory import model_provider as build_model_provider
@@ -116,29 +121,48 @@ async def _prior_turns(session: AsyncSession, *, topic_id: str) -> list[TopicTur
     return list(turns)
 
 
-def _home_state_summary(states: list[dict[str, object]]) -> str | None:
+LabelResolver = Callable[[str], str]
+
+
+def _home_state_summary(
+    observed_states: list[ObservedState], *, now: datetime, label_for: LabelResolver
+) -> str | None:
+    """Household-language entity/state lines for the model's grounding context - current
+    entities only (Story 7.1: "ordinary outputs use household language").
+
+    An entity that is unavailable or whose observation has gone stale (Story 7.2: "unavailable
+    or stale state cannot be represented as current") is left out of the summary rather than
+    reported with a possibly-misleading state value; the omission count is surfaced instead so
+    the assistant can honestly say it can't see something rather than staying silent about it.
+    """
     lines: list[str] = []
-    for entity in states:
-        entity_id = entity.get("entity_id")
-        state = entity.get("state")
-        if not isinstance(entity_id, str) or not isinstance(state, str):
+    omitted = 0
+    for observed in observed_states:
+        if not is_current(observed, now=now):
+            omitted += 1
             continue
-        lines.append(f"{entity_id}: {state}")
-    if not lines:
+        lines.append(f"{label_for(observed.entity_id)}: {observed.state}")
+    if not lines and not omitted:
         return None
     lines.sort()
-    return "\n".join(lines[:MAX_HOME_STATE_ENTITIES])
+    summary = "\n".join(lines[:MAX_HOME_STATE_ENTITIES])
+    if omitted:
+        note = f"({omitted} additional entities omitted: unavailable or state not currently fresh.)"
+        summary = f"{summary}\n{note}" if summary else note
+    return summary
 
 
-def _recent_reference_note(recent_device: EntityResolution, recent_timer: EntityResolution) -> str | None:
+def _recent_reference_note(
+    recent_device: EntityResolution, recent_timer: EntityResolution, *, label_for: LabelResolver
+) -> str | None:
     lines: list[str] = []
     if isinstance(recent_device, ResolvedEntity):
         lines.append(
-            f"Most recently changed light/switch: {recent_device.entity_id} is "
+            f"Most recently changed light/switch: {label_for(recent_device.entity_id)} is "
             f"{recent_device.state} (changed {recent_device.last_changed})."
         )
     if isinstance(recent_timer, ResolvedEntity):
-        lines.append(f"Currently active timer: {recent_timer.entity_id}.")
+        lines.append(f"Currently active timer: {label_for(recent_timer.entity_id)}.")
     if not lines:
         return None
     return "\n".join(lines)
@@ -257,14 +281,30 @@ async def handle_conversation_request(
     recent_reference_note: str | None = None
     if resolved_ha_client.enabled:
         home_state_raw = await resolved_ha_client.states()
-        home_state = _home_state_summary(home_state_raw)
+        observed_at = datetime.now(timezone.utc)
+        observed_states = observe_states(home_state_raw, observed_at=observed_at)
+        label_overrides = await get_resource_label_overrides(
+            session, household_id=person.household_id
+        )
+        attributes_by_entity = {observed.entity_id: observed.attributes for observed in observed_states}
+
+        def label_for(entity_id: str) -> str:
+            return resolve_label(
+                entity_id,
+                override=label_overrides.get(entity_id),
+                attributes=attributes_by_entity.get(entity_id),
+            )
+
+        home_state = _home_state_summary(observed_states, now=observed_at, label_for=label_for)
         recent_device = await resolve_recent_device(
             resolved_ha_client, states=home_state_raw, device_id=device_id
         )
         recent_timer = await resolve_recent_timer(
             resolved_ha_client, states=home_state_raw, device_id=device_id
         )
-        recent_reference_note = _recent_reference_note(recent_device, recent_timer)
+        recent_reference_note = _recent_reference_note(
+            recent_device, recent_timer, label_for=label_for
+        )
 
     memory_hits = await memory.recall(
         household_id=person.household_id,

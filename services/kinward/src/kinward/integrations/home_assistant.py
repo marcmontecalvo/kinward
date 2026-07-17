@@ -30,6 +30,25 @@ class HomeAssistantClient:
         )
         return result if isinstance(result, list) else []
 
+    async def get_state(self, entity_id: str) -> dict[str, Any] | None:
+        """A single entity's fresh state, for post-submission confirmation (Epic 7 Story 7.3's
+        "completion requires a fresh matching HA observation").
+
+        Returns ``None`` when disabled, on any request failure, or when HA has no such entity -
+        ``request_json``'s ``fallback=None`` collapses all of these the same way ``call_service``
+        already does; callers here only need "did a fresh reading confirm it" vs. not, not why a
+        reading is unavailable.
+        """
+        if not self.enabled:
+            return None
+        result = await self.client.request_json(
+            "GET",
+            f"/api/states/{entity_id}",
+            fallback=None,
+            headers=self._headers(),
+        )
+        return result if isinstance(result, dict) else None
+
     async def call_service(
         self,
         *,

@@ -480,6 +480,115 @@ async def test_home_assistant_state_is_folded_into_the_system_prompt_when_enable
         assert "light.kitchen: on" in system_prompt
 
 
+async def test_home_state_prefers_an_admin_label_override_over_the_raw_entity_id() -> None:
+    """Story 7.1: 'ordinary outputs use household language' - the model's grounding
+    context shows the admin-set label, not the raw HA entity id, once one exists."""
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[{"entity_id": "light.office", "state": "on"}])
+
+    ha_client = HomeAssistantClient(
+        base_url="http://ha.invalid", token="fake-token", transport=httpx.MockTransport(handler)
+    )
+
+    factory = await _factory()
+    async with factory() as session:
+        household, _person = await _seed_mapped_person(session)
+        from kinward.application.resource_labels import set_resource_label
+
+        await set_resource_label(
+            session, household_id=household.id, entity_id="light.office", label="Office Light"
+        )
+        await session.commit()
+
+        model = RecordingModelProvider()
+        result = await handle_conversation_request(
+            session,
+            ha_user_id="ha-user-1",
+            text="is the office light on?",
+            conversation_id=None,
+            language="en",
+            model=model,
+            ha_client=ha_client,
+        )
+        await session.commit()
+        assert isinstance(result, Completed)
+        system_prompt, _messages = model.calls[0]
+        assert "Office Light: on" in system_prompt
+        assert "light.office: on" not in system_prompt
+
+
+async def test_home_state_falls_back_to_ha_friendly_name_without_an_override() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "entity_id": "light.office",
+                    "state": "on",
+                    "attributes": {"friendly_name": "Office Light"},
+                }
+            ],
+        )
+
+    ha_client = HomeAssistantClient(
+        base_url="http://ha.invalid", token="fake-token", transport=httpx.MockTransport(handler)
+    )
+
+    factory = await _factory()
+    async with factory() as session:
+        await _seed_mapped_person(session)
+        model = RecordingModelProvider()
+        result = await handle_conversation_request(
+            session,
+            ha_user_id="ha-user-1",
+            text="is the office light on?",
+            conversation_id=None,
+            language="en",
+            model=model,
+            ha_client=ha_client,
+        )
+        await session.commit()
+        assert isinstance(result, Completed)
+        system_prompt, _messages = model.calls[0]
+        assert "Office Light: on" in system_prompt
+
+
+async def test_unavailable_entities_are_omitted_from_the_prompt_not_reported_as_current() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json=[
+                {"entity_id": "light.kitchen", "state": "on"},
+                {"entity_id": "light.office", "state": "unavailable"},
+            ],
+        )
+
+    ha_client = HomeAssistantClient(
+        base_url="http://ha.invalid", token="fake-token", transport=httpx.MockTransport(handler)
+    )
+
+    factory = await _factory()
+    async with factory() as session:
+        await _seed_mapped_person(session)
+        model = RecordingModelProvider()
+        result = await handle_conversation_request(
+            session,
+            ha_user_id="ha-user-1",
+            text="is the office light on?",
+            conversation_id=None,
+            language="en",
+            model=model,
+            ha_client=ha_client,
+        )
+        await session.commit()
+        assert isinstance(result, Completed)
+        system_prompt, _messages = model.calls[0]
+        assert "light.kitchen: on" in system_prompt
+        assert "light.office" not in system_prompt
+        assert "1 additional entities omitted" in system_prompt
+
+
 async def test_home_assistant_state_is_absent_from_the_prompt_when_not_configured() -> None:
     ha_client = HomeAssistantClient(base_url=None, token=None)
 

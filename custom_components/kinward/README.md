@@ -156,6 +156,26 @@ to the household's tool policy; `kinward.approve_action` /
 `sensor.kinward_pending_approvals`). See `services.yaml` for full field
 documentation of every service.
 
+## Events
+
+Kinward fires three HA bus events for stable household-intent outcomes of the
+action/approval services above - build automations on these instead of
+polling `sensor.kinward_pending_approvals` for a change. Event data is always
+limited to the structural HA target (domain/service/entity_id) plus
+correlation ids - never the free-text `explanation` a person supplied, and
+never a person identifier, so an automation trace never leaks private
+household content.
+
+| Event | Fired when | Data |
+|---|---|---|
+| `kinward_action_executed` | `kinward.request_action` ran immediately (no approval was needed) | `domain`, `service`, `entity_id` |
+| `kinward_approval_requested` | `kinward.request_action` created a pending approval instead of running immediately | `approval_id`, `domain`, `service`, `entity_id` |
+| `kinward_approval_resolved` | `kinward.approve_action` / `kinward.deny_action` resolved a pending approval - `outcome` is `executed` if an approval actually ran | `approval_id`, `decision` (`approve`/`deny`), `outcome` |
+
+Generic entity-state automation triggers (`state`, `numeric_state`, and so on
+against any entity Kinward controls) remain fully available and unaffected -
+these events are additive, not a replacement.
+
 ## Diagnostics
 
 Download diagnostics from the integration's device page to get a redacted

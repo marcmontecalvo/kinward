@@ -42,6 +42,14 @@ from kinward.api import (
     classify_summary_response,
     classify_sync_people_response,
 )
+from kinward.api import (
+    EVENT_ACTION_EXECUTED,
+    EVENT_APPROVAL_REQUESTED,
+    EVENT_APPROVAL_RESOLVED,
+    BusEvent,
+    action_outcome_event,
+    approval_resolution_event,
+)
 
 
 def _context_payload(**overrides: object) -> dict[str, object]:
@@ -509,4 +517,50 @@ def test_classify_action_result_response_unexpected_status_is_unknown() -> None:
     assert classify_action_result_response(500, {}) == ActionFailure(reason="unexpected status 500")
     assert classify_action_result_response(200, "not-a-dict") == ActionFailure(
         reason="unexpected status 200"
+    )
+
+
+def test_action_outcome_event_fires_executed_with_no_private_details() -> None:
+    result = ActionResult(outcome="executed", approval_id=None)
+    event = action_outcome_event(result, domain="light", service="turn_off", entity_id="light.office")
+    assert event == BusEvent(
+        EVENT_ACTION_EXECUTED,
+        {"domain": "light", "service": "turn_off", "entity_id": "light.office"},
+    )
+
+
+def test_action_outcome_event_fires_approval_requested_with_the_approval_id() -> None:
+    result = ActionResult(outcome="pending_approval", approval_id="approval-1")
+    event = action_outcome_event(result, domain="lock", service="unlock", entity_id="lock.front_door")
+    assert event == BusEvent(
+        EVENT_APPROVAL_REQUESTED,
+        {
+            "approval_id": "approval-1",
+            "domain": "lock",
+            "service": "unlock",
+            "entity_id": "lock.front_door",
+        },
+    )
+
+
+def test_action_outcome_event_is_none_for_denied_or_failed_outcomes() -> None:
+    denied = ActionResult(outcome="denied", approval_id=None)
+    failed = ActionResult(outcome="failed", approval_id=None)
+    assert action_outcome_event(denied, domain="lock", service="unlock", entity_id="lock.front_door") is None
+    assert action_outcome_event(failed, domain="light", service="turn_off", entity_id="light.office") is None
+
+
+def test_approval_resolution_event_carries_approval_id_decision_and_outcome() -> None:
+    result = ActionResult(outcome="executed", approval_id=None)
+    event = approval_resolution_event(result, approval_id="approval-1", decision="approve")
+    assert event == BusEvent(
+        EVENT_APPROVAL_RESOLVED,
+        {"approval_id": "approval-1", "decision": "approve", "outcome": "executed"},
+    )
+
+    denied_result = ActionResult(outcome="denied", approval_id=None)
+    deny_event = approval_resolution_event(denied_result, approval_id="approval-1", decision="deny")
+    assert deny_event == BusEvent(
+        EVENT_APPROVAL_RESOLVED,
+        {"approval_id": "approval-1", "decision": "deny", "outcome": "denied"},
     )

@@ -13,9 +13,18 @@ from kinward.application.household_summary import fetch_household_summary
 from kinward.application.knowledge import expire_due_observations
 from kinward.application.provider_settings import get_or_create_provider_settings
 from kinward.config import Settings, get_settings
+from kinward.domain.expected_state import expected_state_for
 from kinward.health import CORE_WORKER_NAME, EXPECTED_SCHEMA_REVISION
+from kinward.integrations.home_assistant import HomeAssistantClient
 from kinward.memory.factory import knowledge_store_provider
-from kinward.persistence.models import OutboxMessageRecord, WorkerHeartbeatRecord
+from kinward.persistence.models import ActivityRecord, OutboxMessageRecord, WorkerHeartbeatRecord
+
+# Story 7.3: "ambiguous or missing observations preserve unknown state until
+# reconciliation." Past this age, a confirmation is unlikely to ever land (the HA
+# session that submitted it is long gone) - the row resolves to "failed" instead of
+# staying "unknown" forever, matching the ApprovalRecord fail-closed precedent for
+# every other unconfirmable case.
+RECONCILIATION_GIVE_UP_AFTER = timedelta(hours=1)
 
 
 class WorkerNotReadyError(RuntimeError):
@@ -92,6 +101,78 @@ async def expire_pending_observations(factory: async_sessionmaker[AsyncSession])
         return count
 
 
+def _aware(value: datetime) -> datetime:
+    """SQLite round-trips ``DateTime(timezone=True)`` values as naive - same normalization
+    ``application/pending_actions.py`` applies before comparing against an aware ``datetime``.
+    """
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value
+
+
+async def reconcile_unknown_activity(
+    factory: async_sessionmaker[AsyncSession],
+    *,
+    settings: Settings,
+    ha_client: HomeAssistantClient | None = None,
+    now: datetime | None = None,
+) -> int:
+    """Resolve ``ActivityRecord`` rows left at outcome ``"unknown"`` by Story 7.3's
+    expected-state confirmation (``application/pending_actions._submit_and_confirm``) -
+    "ambiguous or missing observations preserve unknown state until reconciliation."
+
+    Every such row's ``detail`` carries the original ``domain``/``service``/``entity_id`` -
+    a fresh ``get_state`` read that now matches the service's expected end state
+    (``domain/expected_state.py``) resolves the row to ``"completed"``; one still unconfirmed
+    past ``RECONCILIATION_GIVE_UP_AFTER`` resolves to ``"failed"`` instead of retrying forever.
+    A row for a service with no deterministic expected state (nothing to confirm against) is
+    left untouched. One deployment serves one household, so a single HA client covers every
+    row in a pass.
+    """
+    resolved_at = now or datetime.now(UTC)
+    async with factory() as session:
+        rows = list(
+            await session.scalars(select(ActivityRecord).where(ActivityRecord.outcome == "unknown"))
+        )
+        if not rows:
+            return 0
+        resolved_ha_client = ha_client or HomeAssistantClient(
+            base_url=settings.home_assistant_url, token=settings.home_assistant_token
+        )
+        resolved_count = 0
+        for activity in rows:
+            detail = activity.detail if isinstance(activity.detail, dict) else {}
+            domain = detail.get("domain")
+            service = detail.get("service")
+            entity_id = detail.get("entity_id")
+            if not isinstance(domain, str) or not isinstance(service, str) or not isinstance(
+                entity_id, str
+            ):
+                continue
+            expected_state = expected_state_for(domain=domain, service=service)
+            if expected_state is None:
+                continue
+
+            if resolved_at - _aware(activity.occurred_at) > RECONCILIATION_GIVE_UP_AFTER:
+                activity.outcome = "failed"
+                activity.detail = {**detail, "reconciliation": "gave_up"}
+                resolved_count += 1
+                continue
+
+            observed = await resolved_ha_client.get_state(entity_id)
+            observed_state = observed.get("state") if observed else None
+            if observed_state == expected_state:
+                activity.outcome = "completed"
+                activity.detail = {
+                    **detail,
+                    "observed_state": observed_state,
+                    "reconciliation": "confirmed",
+                }
+                resolved_count += 1
+        await session.commit()
+        return resolved_count
+
+
 async def run_worker(settings: Settings) -> None:
     engine = create_async_engine(settings.database_url, pool_pre_ping=True)
     factory = async_sessionmaker(engine, expire_on_commit=False)
@@ -104,6 +185,10 @@ async def run_worker(settings: Settings) -> None:
             await record_heartbeat(factory)
             try:
                 await expire_pending_observations(factory)
+            except SQLAlchemyError:
+                pass
+            try:
+                await reconcile_unknown_activity(factory, settings=settings)
             except SQLAlchemyError:
                 pass
             await asyncio.sleep(settings.worker_heartbeat_interval_seconds)

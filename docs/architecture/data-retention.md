@@ -34,6 +34,7 @@ lifecycle decision fails the test suite rather than shipping unclassified.
 | knowledge_fact | `knowledge_facts` | private-person | yes | no | quarantine | confirm/reject/expiry/deletion disposes the row; cascades with owner deletion |
 | approval | `approvals` | system-operational | yes | no | restore | retain with household audit history |
 | home_assistant_tool_policy | `home_assistant_tool_policy` | household-shared | yes | no | quarantine | delete with household |
+| home_assistant_resource_label | `home_assistant_resource_labels` | household-shared | yes | no | quarantine | delete with household |
 
 Field meanings:
 

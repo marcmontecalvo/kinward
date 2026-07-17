@@ -21,6 +21,7 @@ from kinward.application.pending_actions import (
     resolve_pending_action,
     update_tool_policy,
 )
+from kinward.domain.expected_state import expected_state_for
 from kinward.domain.pending_action import ApprovalResolutionError
 from kinward.integrations.home_assistant import HomeAssistantClient
 from kinward.persistence.models import (
@@ -71,8 +72,52 @@ async def _seed(session):  # type: ignore[no-untyped-def]
 
 
 def _ok_ha_client(*, entity_id: str = "light.office") -> HomeAssistantClient:
+    """An HA double that accepts every service call and, on the follow-up confirmation read,
+    reports the entity as having reached whichever state that service is expected to leave it
+    in (``domain/expected_state.py``) - i.e. every action fully confirms as completed."""
+    last_expected: dict[str, str] = {}
+
     def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path.startswith("/api/services/"):
+            _, _, _, domain, service = path.split("/", 4)
+            expected = expected_state_for(domain=domain, service=service)
+            if expected is not None:
+                last_expected["state"] = expected
+            return httpx.Response(200, json=[{"entity_id": entity_id, "state": expected or "off"}])
+        if path == f"/api/states/{entity_id}":
+            return httpx.Response(
+                200, json={"entity_id": entity_id, "state": last_expected.get("state", "off")}
+            )
         return httpx.Response(200, json=[{"entity_id": entity_id, "state": "off"}])
+
+    return HomeAssistantClient(
+        base_url="http://ha.invalid", token="fake-token", transport=httpx.MockTransport(handler)
+    )
+
+
+def _mismatched_confirmation_ha_client(*, entity_id: str = "light.office") -> HomeAssistantClient:
+    """Service calls succeed, but the follow-up confirmation read reports a state that never
+    matches what was expected - simulates an ambiguous/untrustworthy post-submission read."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.startswith("/api/services/"):
+            return httpx.Response(200, json=[{"entity_id": entity_id, "state": "unknown"}])
+        return httpx.Response(200, json={"entity_id": entity_id, "state": "unknown"})
+
+    return HomeAssistantClient(
+        base_url="http://ha.invalid", token="fake-token", transport=httpx.MockTransport(handler)
+    )
+
+
+def _missing_confirmation_ha_client(*, entity_id: str = "light.office") -> HomeAssistantClient:
+    """Service calls succeed, but the follow-up confirmation read finds nothing (a malformed/
+    non-dict response, same as HA returning no such entity)."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.startswith("/api/services/"):
+            return httpx.Response(200, json=[{"entity_id": entity_id, "state": "on"}])
+        return httpx.Response(200, json=[])
 
     return HomeAssistantClient(
         base_url="http://ha.invalid", token="fake-token", transport=httpx.MockTransport(handler)
@@ -110,6 +155,97 @@ async def test_allowed_capability_executes_immediately() -> None:
         activity = (await session.scalars(select(ActivityRecord))).one()
         assert activity.outcome == "completed"
         assert activity.detail["entity_id"] == "light.office"
+
+
+async def test_confirmation_mismatch_reports_failed_with_unknown_activity_outcome() -> None:
+    """Story 7.3: 'completion requires a fresh matching HA observation.' HA accepted the
+    service call, but the follow-up read never shows the expected state - the ApprovalRecord
+    fail-closes to Failed (no 'unknown' value to hold the ambiguity), while the ActivityRecord
+    keeps the true 'unknown' outcome for the async reconciliation job to resolve later."""
+    factory = await _factory()
+    async with factory() as session:
+        household, owner, _admin, assistant = await _seed(session)
+        result = await request_action(
+            session,
+            household_id=household.id,
+            ha_user_id="ha-user-marc",
+            assistant_id=assistant.id,
+            domain="light",
+            service="turn_off",
+            entity_id="light.office",
+            data=None,
+            explanation="Turning off the office light.",
+            ha_client=_mismatched_confirmation_ha_client(),
+        )
+        await session.commit()
+        assert isinstance(result, Failed)
+
+        activity = (await session.scalars(select(ActivityRecord))).one()
+        assert activity.outcome == "unknown"
+        assert activity.detail["expected_state"] == "off"
+        assert activity.detail["observed_state"] == "unknown"
+        assert activity.detail["reason"] == "observation_mismatch"
+
+
+async def test_confirmation_read_unavailable_reports_failed_with_unknown_activity_outcome() -> None:
+    factory = await _factory()
+    async with factory() as session:
+        household, owner, _admin, assistant = await _seed(session)
+        result = await request_action(
+            session,
+            household_id=household.id,
+            ha_user_id="ha-user-marc",
+            assistant_id=assistant.id,
+            domain="light",
+            service="turn_off",
+            entity_id="light.office",
+            data=None,
+            explanation="Turning off the office light.",
+            ha_client=_missing_confirmation_ha_client(),
+        )
+        await session.commit()
+        assert isinstance(result, Failed)
+
+        activity = (await session.scalars(select(ActivityRecord))).one()
+        assert activity.outcome == "unknown"
+        assert activity.detail["observed_state"] is None
+        assert activity.detail["reason"] == "observation_unavailable"
+
+
+async def test_service_without_a_deterministic_expected_state_skips_confirmation() -> None:
+    """A 'toggle' service has no fixed expected end state - completion falls back to 'a
+    non-None call_service response is sufficient evidence', matching the pre-Story-7.3-gap
+    behavior; no confirmation read is ever attempted."""
+    factory = await _factory()
+    async with factory() as session:
+        household, owner, _admin, assistant = await _seed(session)
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path.startswith("/api/states/"):
+                raise AssertionError("no expected state for toggle - confirmation must be skipped")
+            return httpx.Response(200, json=[{"entity_id": "switch.office", "state": "on"}])
+
+        result = await request_action(
+            session,
+            household_id=household.id,
+            ha_user_id="ha-user-marc",
+            assistant_id=assistant.id,
+            domain="switch",
+            service="toggle",
+            entity_id="switch.office",
+            data=None,
+            explanation="Toggling the office switch.",
+            ha_client=HomeAssistantClient(
+                base_url="http://ha.invalid",
+                token="fake-token",
+                transport=httpx.MockTransport(handler),
+            ),
+        )
+        await session.commit()
+        assert isinstance(result, Executed)
+
+        activity = (await session.scalars(select(ActivityRecord))).one()
+        assert activity.outcome == "completed"
 
 
 async def test_denied_capability_is_denied_and_never_calls_home_assistant() -> None:
