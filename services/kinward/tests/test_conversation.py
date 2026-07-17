@@ -702,6 +702,121 @@ async def test_household_mode_allows_addressing_another_persons_assistant_with_a
         assert guest_topic.assistant_id == owner_topic.assistant_id == nova.id
 
 
+async def _seed_household_fallback_assistant(session, household):  # type: ignore[no-untyped-def]
+    fallback = AssistantRecord(
+        household_id=household.id,
+        owner_person_id=None,
+        name="Kinward",
+        kind="household-fallback",
+        classification="household-shared",
+        access_mode="household",
+    )
+    session.add(fallback)
+    await session.commit()
+    return fallback
+
+
+async def test_household_fallback_assistant_never_leaks_a_persons_private_memory_into_its_context() -> None:
+    """Story 2.5: a shared-display/resolved caller addressing the ownerless household
+    fallback assistant must get only household-safe context - never another (or their
+    own) private-assistant memory. Isolation is structural, keyed by (person, assistant)
+    session id, so this seeds real private-sounding content and proves it never crosses
+    into the fallback assistant's session for either the owner or a different person.
+    """
+    factory = await _factory()
+    async with factory() as session:
+        household, person_one = await _seed_mapped_person(session)
+        person_two = await _add_other_mapped_person(
+            session, household, ha_person_id="ha-person-2", ha_user_id="ha-user-2"
+        )
+        atlas = await _get_assistant(session, owner_person_id=person_one.id)
+        fallback = await _seed_household_fallback_assistant(session, household)
+
+        private_session_id = HonchoMemoryProvider.session_id(person_one.id, atlas.id)
+        fallback_session_for_person_one = HonchoMemoryProvider.session_id(person_one.id, fallback.id)
+        fallback_session_for_person_two = HonchoMemoryProvider.session_id(person_two.id, fallback.id)
+
+        seen_paths: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen_paths.append(request.url.path)
+            if request.url.path.endswith("/search"):
+                if private_session_id in request.url.path:
+                    return httpx.Response(
+                        200,
+                        json={"items": [{"id": "m1", "content": "Allergic to peanuts", "score": 0.9}]},
+                    )
+                return httpx.Response(200, json={"items": []})
+            return httpx.Response(201, json={"items": [{"id": "m2"}]})
+
+        memory = HonchoMemoryProvider(base_url="http://honcho.invalid", transport=httpx.MockTransport(handler))
+
+        # Sanity check: the person's own conversation with their own assistant does see
+        # their private memory - proves the mock actually grounds the prompt when asked.
+        own_model = RecordingModelProvider()
+        own_result = await handle_conversation_request(
+            session,
+            ha_user_id="ha-user-1",
+            text="what should I avoid eating?",
+            conversation_id=None,
+            language="en",
+            model=own_model,
+            memory_provider=memory,
+        )
+        await session.commit()
+        assert isinstance(own_result, Completed)
+        assert private_session_id in seen_paths[-1]
+        own_prompt, _own_messages = own_model.calls[0]
+        assert "Allergic to peanuts" in own_prompt
+
+        # The same person, explicitly addressing the shared household-fallback
+        # assistant, is a different (person, assistant) session and must not see
+        # their own private memory folded into the prompt.
+        seen_paths.clear()
+        fallback_model_owner = RecordingModelProvider()
+        fallback_result_owner = await handle_conversation_request(
+            session,
+            ha_user_id="ha-user-1",
+            text="what should I avoid eating?",
+            conversation_id=None,
+            language="en",
+            assistant_id=fallback.id,
+            model=fallback_model_owner,
+            memory_provider=memory,
+        )
+        await session.commit()
+        assert isinstance(fallback_result_owner, Completed)
+        assert any(fallback_session_for_person_one in path for path in seen_paths)
+        assert not any(private_session_id in path for path in seen_paths)
+        fallback_prompt_owner, _fallback_messages_owner = fallback_model_owner.calls[0]
+        assert "Allergic to peanuts" not in fallback_prompt_owner
+
+        # A different resolved person - standing in for a shared-display/kiosk request
+        # with no assistant of its own - addressing the same fallback assistant also
+        # gets only its own (empty) household-safe context, never person one's memory.
+        seen_paths.clear()
+        fallback_model_other = RecordingModelProvider()
+        fallback_result_other = await handle_conversation_request(
+            session,
+            ha_user_id="ha-user-2",
+            text="what should I avoid eating?",
+            conversation_id=None,
+            language="en",
+            assistant_id=fallback.id,
+            model=fallback_model_other,
+            memory_provider=memory,
+        )
+        await session.commit()
+        assert isinstance(fallback_result_other, Completed)
+        assert any(fallback_session_for_person_two in path for path in seen_paths)
+        assert not any(private_session_id in path for path in seen_paths)
+        fallback_prompt_other, _fallback_messages_other = fallback_model_other.calls[0]
+        assert "Allergic to peanuts" not in fallback_prompt_other
+
+        # The two fallback conversations are themselves isolated topics.
+        assert fallback_result_owner.conversation_id != fallback_result_other.conversation_id
+
+
 async def test_allowlist_mode_allows_only_listed_people() -> None:
     factory = await _factory()
     async with factory() as session:
