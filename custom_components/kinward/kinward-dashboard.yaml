@@ -67,7 +67,7 @@ views:
             heading: Household roster
           - type: markdown
             title: People
-            content: >-
+            content: |-
               {% set people = state_attr('sensor.kinward_people', 'people') %}
               {% if people %}
               | Name | Role | HA login |
@@ -80,7 +80,7 @@ views:
               {% endif %}
           - type: markdown
             title: Pets
-            content: >-
+            content: |-
               {% set pets = state_attr('sensor.kinward_pets', 'pets') %}
               {% if pets %}
               | Name | Species |
