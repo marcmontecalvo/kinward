@@ -9,8 +9,12 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.exc import SQLAlchemyError
 
+from kinward.application.household_summary import fetch_household_summary
+from kinward.application.knowledge import expire_due_observations
+from kinward.application.provider_settings import get_or_create_provider_settings
 from kinward.config import Settings, get_settings
 from kinward.health import CORE_WORKER_NAME, EXPECTED_SCHEMA_REVISION
+from kinward.memory.factory import knowledge_store_provider
 from kinward.persistence.models import OutboxMessageRecord, WorkerHeartbeatRecord
 
 
@@ -69,6 +73,25 @@ async def check_readiness(settings: Settings) -> bool:
             await engine.dispose()
 
 
+async def expire_pending_observations(factory: async_sessionmaker[AsyncSession]) -> int:
+    """Dispose every pending inferred observation past its fixed 30-day expiry (AD-25).
+
+    One deployment serves one household, so there's at most one household's
+    provider settings to resolve each pass.
+    """
+    async with factory() as session:
+        summary = await fetch_household_summary(session)
+        if summary is None:
+            return 0
+        provider_settings = await get_or_create_provider_settings(session, household_id=summary.id)
+        provider = knowledge_store_provider(
+            backend=provider_settings.knowledge_backend, url=provider_settings.llm_wiki_url
+        )
+        count = await expire_due_observations(session, provider)
+        await session.commit()
+        return count
+
+
 async def run_worker(settings: Settings) -> None:
     engine = create_async_engine(settings.database_url, pool_pre_ping=True)
     factory = async_sessionmaker(engine, expire_on_commit=False)
@@ -79,6 +102,10 @@ async def run_worker(settings: Settings) -> None:
     try:
         while True:
             await record_heartbeat(factory)
+            try:
+                await expire_pending_observations(factory)
+            except SQLAlchemyError:
+                pass
             await asyncio.sleep(settings.worker_heartbeat_interval_seconds)
     finally:
         await engine.dispose()

@@ -446,11 +446,61 @@ Provide useful continuity without allowing optional memory systems or inferred k
 - Pending observations cannot become durable facts or influence future assistance as facts without authorized explicit confirmation.
 - Ownership, correction, confirmation, rejection, fixed expiry, recurrence suppression, dependency invalidation, backup, and restore are deterministic.
 
+> **Implemented (2026-07-16), core lifecycle:** a new `knowledge_facts` table
+> (migration `010_knowledge_facts`) is the Kinward-side control layer over
+> `KnowledgeStoreProvider` bodies that AD-25 describes - the provider methods
+> (`propose_fact`/`confirm_fact`/`revise_fact`/`retire_fact`) already existed
+> unwired; nothing called them. `application/knowledge.py` now does:
+> `propose_observation` (creates a `pending` row with a fixed 30-day
+> `expires_at`, suppresses re-proposal of evidence identical to something
+> already rejected via a `recurrence_key` hash); `confirm_observation`/
+> `reject_observation` (owner-only, fail closed on anyone else); a worker pass
+> (`expire_pending_observations`, wired into `run_worker`'s loop) disposes
+> anything past its fixed expiry. Disposal (`reject`/`expire`/`delete`) marks
+> `deletion_status: deletion_pending` rather than `none` when the provider
+> can't confirm its body is gone, and cascades to invalidate any other fact
+> whose `depends_on` names it - `depends_on` isn't populated by anything yet
+> (no feature derives one fact from another today), so this cascade is
+> structurally ready but currently vacuous, tested directly rather than via a
+> real producer. API: `GET /knowledge/observations`,
+> `POST /knowledge/observations/{id}/confirm`,
+> `POST /knowledge/observations/{id}/reject`. Tests in `tests/test_knowledge.py`,
+> `tests/test_worker.py`, `tests/test_integration_api.py`.
+>
+> **Not yet built:** nothing calls `propose_observation` in production - the
+> conversation flow doesn't extract candidate facts from a reply and propose
+> them (that needs a structured-extraction step this pass doesn't add; see
+> Story 4.2's note). Backup/restore survival is out of scope until Stories
+> 9.1-9.3 exist (deferred to v2, per the Epic 9 goal note).
+
 ### Story 4.4: Inspect, correct, reclassify, and delete durable facts
 
 - Users can inspect and correct authorized facts about themselves.
 - Every fact records source category, timestamp, sharing class, confirmation state, confidence, and lineage.
 - Narrowing, revocation, expiry, source-version invalidation, downstream clearing, and external deletion-pending behavior are enforced.
+
+> **Implemented (2026-07-16), core lifecycle:** built on the same
+> `knowledge_facts` table as Story 4.3 above - a confirmed row already records
+> source system, creation/confirmation timestamps, `privacy` (sharing class),
+> `confidence`, and `record_version`; `provenance()` on the provider remains
+> the lineage source of truth (unchanged, already implemented in
+> `LlmWikiKnowledgeProvider`, not duplicated locally).
+> `application/knowledge.py`'s `correct_fact` (owner-only, confirmed-only,
+> revises the provider body) and `delete_fact` (disposes with the same
+> deletion-pending/dependents-invalidation behavior as Story 4.3's reject/
+> expire) cover "correct" and "delete." API:
+> `GET /knowledge/facts`, `PATCH /knowledge/facts/{id}`,
+> `DELETE /knowledge/facts/{id}`. Tests in `tests/test_knowledge.py` and
+> `tests/test_integration_api.py`.
+>
+> **Not yet built:** "reclassify" (changing a confirmed fact's `privacy`
+> sharing class after the fact) has no dedicated operation - `correct_fact`
+> only revises `value`/`confidence` today, matching what the acceptance
+> criteria call "correct"; reclassification would need its own authorization
+> question (can an owner widen their own fact from personal to
+> household-shared unilaterally?) not answered by this pass. Retention
+> disposition for this table is documented in
+> `docs/architecture/data-retention.md` (`knowledge_fact` lifecycle entry).
 
 ### Story 4.5: Degrade memory and knowledge truthfully
 

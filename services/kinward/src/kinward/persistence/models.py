@@ -396,6 +396,52 @@ class ProviderSettingsRecord(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now, nullable=False)
 
 
+class KnowledgeFactRecord(Base):
+    """Kinward-side control/authorization/lifecycle row over a knowledge provider's body (AD-25).
+
+    Tracks a fact through ``pending`` (inspection-only inferred observation, fixed
+    30-day expiry) -> ``confirmed`` (durable fact) -> ``rejected``/``expired``/``deleted``
+    (disposed; body removed or removal requested). ``deletion_status`` is a separate
+    axis for when an external provider cannot delete its body immediately.
+    """
+
+    __tablename__ = "knowledge_facts"
+    __table_args__ = (
+        CheckConstraint(
+            "knowledge_state IN ('pending', 'confirmed', 'rejected', 'expired', 'deleted')",
+            name="ck_knowledge_facts_state",
+        ),
+        CheckConstraint(
+            "deletion_status IN ('none', 'deletion_pending', 'externally_retained')",
+            name="ck_knowledge_facts_deletion_status",
+        ),
+        Index("ix_knowledge_facts_owner_state", "owner_person_id", "knowledge_state"),
+        Index("ix_knowledge_facts_recurrence", "household_id", "recurrence_key"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    household_id: Mapped[str] = mapped_column(ForeignKey("households.id", ondelete="CASCADE"), nullable=False)
+    owner_person_id: Mapped[str] = mapped_column(ForeignKey("people.id", ondelete="CASCADE"), nullable=False)
+    subject: Mapped[str] = mapped_column(String(200), nullable=False)
+    predicate: Mapped[str] = mapped_column(String(200), nullable=False)
+    value: Mapped[Any] = mapped_column(JSON, nullable=False)
+    privacy: Mapped[str] = mapped_column(String(16), nullable=False)
+    source_system: Mapped[str] = mapped_column(String(80), nullable=False)
+    source_version: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    confidence: Mapped[float] = mapped_column(Float, default=1.0, nullable=False)
+    recurrence_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    knowledge_state: Mapped[str] = mapped_column(String(16), default="pending", nullable=False)
+    deletion_status: Mapped[str] = mapped_column(String(20), default="none", nullable=False)
+    depends_on: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    external_fact_id: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    disposed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    record_version: Mapped[int] = mapped_column(default=1, nullable=False)
+    classification: Mapped[str] = mapped_column(String(32), default="private-person", nullable=False)
+
+
 class BootstrapAttemptRecord(Base):
     __tablename__ = "bootstrap_attempts"
 

@@ -23,6 +23,7 @@ def test_every_bootstrap_record_has_explicit_lifecycle_metadata() -> None:
         "layout_activation_attempt",
         "provider_settings",
         "assistant_policy",
+        "knowledge_fact",
         "approval",
         "home_assistant_tool_policy",
     }

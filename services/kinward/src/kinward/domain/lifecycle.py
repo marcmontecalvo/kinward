@@ -33,6 +33,13 @@ BOOTSTRAP_RECORD_LIFECYCLES: dict[str, RecordLifecycle] = {
     "assistant_policy": RecordLifecycle(
         "household-shared", True, False, "quarantine", "delete with household"
     ),
+    "knowledge_fact": RecordLifecycle(
+        "private-person",
+        True,
+        False,
+        "quarantine",
+        "confirm/reject/expiry/deletion disposes the row; cascades with owner deletion",
+    ),
     "approval": RecordLifecycle(
         "system-operational", True, False, "restore", "retain with household audit history"
     ),
@@ -60,6 +67,7 @@ TABLE_LIFECYCLE_KEYS: dict[str, tuple[str, ...]] = {
     "layout_activation_attempts": ("layout_activation_attempt",),
     "provider_settings": ("provider_settings",),
     "assistant_policy": ("assistant_policy",),
+    "knowledge_facts": ("knowledge_fact",),
     "approvals": ("approval",),
     "home_assistant_tool_policy": ("home_assistant_tool_policy",),
 }

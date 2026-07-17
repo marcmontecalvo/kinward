@@ -40,6 +40,19 @@ from kinward.application.conversation import (
     list_topics,
     update_topic,
 )
+from kinward.application.knowledge import Disposed as KnowledgeDisposed
+from kinward.application.knowledge import (
+    FactNotFound,
+    NotConfirmed,
+    NotPending,
+    ProviderUnavailable,
+    confirm_observation,
+    correct_fact,
+    delete_fact,
+    list_confirmed_facts,
+    list_pending_observations,
+    reject_observation,
+)
 from kinward.application.pending_actions import (
     ApprovalNotFound,
     CapabilityDenied,
@@ -67,11 +80,14 @@ from kinward.application.provider_settings import (
 )
 from kinward.config import Settings
 from kinward.domain.pending_action import ApprovalResolutionError
+from kinward.memory.contracts import KnowledgeStoreProvider
+from kinward.memory.factory import knowledge_store_provider
 from kinward.persistence.models import (
     ApprovalRecord,
     AssistantPolicyRecord,
     AssistantRecord,
     HomeAssistantToolPolicyRecord,
+    KnowledgeFactRecord,
     PersonRecord,
     ProviderSettingsRecord,
     TopicRecord,
@@ -900,6 +916,186 @@ async def integration_update_provider_settings(
     )
     await session.commit()
     return ProviderSettingsPayload.from_record(settings)
+
+
+class KnowledgeFactPayload(BaseModel):
+    id: str
+    subject: str
+    predicate: str
+    value: Any
+    privacy: str
+    knowledge_state: str = Field(serialization_alias="knowledgeState")
+    deletion_status: str = Field(serialization_alias="deletionStatus")
+    confidence: float
+    source_system: str = Field(serialization_alias="sourceSystem")
+    created_at: datetime = Field(serialization_alias="createdAt")
+    expires_at: datetime | None = Field(serialization_alias="expiresAt")
+    confirmed_at: datetime | None = Field(serialization_alias="confirmedAt")
+
+    @classmethod
+    def from_record(cls, record: KnowledgeFactRecord) -> KnowledgeFactPayload:
+        return cls(
+            id=record.id,
+            subject=record.subject,
+            predicate=record.predicate,
+            value=record.value,
+            privacy=record.privacy,
+            knowledge_state=record.knowledge_state,
+            deletion_status=record.deletion_status,
+            confidence=record.confidence,
+            source_system=record.source_system,
+            created_at=record.created_at,
+            expires_at=record.expires_at,
+            confirmed_at=record.confirmed_at,
+        )
+
+
+class HaUserIdBody(BaseModel):
+    ha_user_id: str = Field(alias="haUserId", min_length=1, max_length=64)
+
+
+class CorrectFactRequest(BaseModel):
+    ha_user_id: str = Field(alias="haUserId", min_length=1, max_length=64)
+    value: Any
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+
+
+def _fact_not_found() -> HTTPException:
+    return HTTPException(status_code=404, detail={"code": "knowledge_fact_not_found"})
+
+
+def _fact_not_pending() -> HTTPException:
+    return HTTPException(status_code=409, detail={"code": "knowledge_fact_not_pending"})
+
+
+def _fact_not_confirmed() -> HTTPException:
+    return HTTPException(status_code=409, detail={"code": "knowledge_fact_not_confirmed"})
+
+
+def _provider_unavailable() -> HTTPException:
+    return HTTPException(status_code=409, detail={"code": "knowledge_provider_unavailable"})
+
+
+async def _knowledge_provider(session: AsyncSession, *, household_id: str) -> KnowledgeStoreProvider:
+    provider_settings = await get_or_create_provider_settings(session, household_id=household_id)
+    return knowledge_store_provider(
+        backend=provider_settings.knowledge_backend, url=provider_settings.llm_wiki_url
+    )
+
+
+@router.get("/knowledge/observations", response_model=list[KnowledgeFactPayload])
+async def integration_list_pending_observations(
+    ha_user_id: HaUserIdQuery, _token: IntegrationToken, session: Session
+) -> list[KnowledgeFactPayload]:
+    """A person's own pending inferred observations only (AD-25) - fails closed to an
+
+    empty list for an unmapped caller rather than a distinct error, same as every
+    other own-data listing endpoint.
+    """
+    result = await list_pending_observations(session, ha_user_id=ha_user_id)
+    if isinstance(result, Unmapped):
+        return []
+    return [KnowledgeFactPayload.from_record(record) for record in result]
+
+
+@router.post("/knowledge/observations/{fact_id}/confirm", response_model=KnowledgeFactPayload)
+async def integration_confirm_observation(
+    fact_id: str, body: HaUserIdBody, _token: IntegrationToken, session: Session
+) -> KnowledgeFactPayload:
+    summary = await fetch_household_summary(session)
+    if summary is None:
+        raise _household_not_configured()
+    provider = await _knowledge_provider(session, household_id=summary.id)
+    result = await confirm_observation(session, provider, ha_user_id=body.ha_user_id, fact_id=fact_id)
+    if isinstance(result, (Unmapped, FactNotFound)):
+        await session.rollback()
+        raise _fact_not_found()
+    if isinstance(result, NotPending):
+        await session.rollback()
+        raise _fact_not_pending()
+    if isinstance(result, ProviderUnavailable):
+        await session.rollback()
+        raise _provider_unavailable()
+    await session.commit()
+    return KnowledgeFactPayload.from_record(result)
+
+
+@router.post("/knowledge/observations/{fact_id}/reject", status_code=status.HTTP_204_NO_CONTENT)
+async def integration_reject_observation(
+    fact_id: str, body: HaUserIdBody, _token: IntegrationToken, session: Session
+) -> None:
+    summary = await fetch_household_summary(session)
+    if summary is None:
+        raise _household_not_configured()
+    provider = await _knowledge_provider(session, household_id=summary.id)
+    result = await reject_observation(session, provider, ha_user_id=body.ha_user_id, fact_id=fact_id)
+    if isinstance(result, (Unmapped, FactNotFound)):
+        await session.rollback()
+        raise _fact_not_found()
+    if isinstance(result, NotPending):
+        await session.rollback()
+        raise _fact_not_pending()
+    assert isinstance(result, KnowledgeDisposed)
+    await session.commit()
+
+
+@router.get("/knowledge/facts", response_model=list[KnowledgeFactPayload])
+async def integration_list_confirmed_facts(
+    ha_user_id: HaUserIdQuery, _token: IntegrationToken, session: Session
+) -> list[KnowledgeFactPayload]:
+    """A person's own confirmed durable facts only - inspection per Story 4.4."""
+    result = await list_confirmed_facts(session, ha_user_id=ha_user_id)
+    if isinstance(result, Unmapped):
+        return []
+    return [KnowledgeFactPayload.from_record(record) for record in result]
+
+
+@router.patch("/knowledge/facts/{fact_id}", response_model=KnowledgeFactPayload)
+async def integration_correct_fact(
+    fact_id: str, body: CorrectFactRequest, _token: IntegrationToken, session: Session
+) -> KnowledgeFactPayload:
+    summary = await fetch_household_summary(session)
+    if summary is None:
+        raise _household_not_configured()
+    provider = await _knowledge_provider(session, household_id=summary.id)
+    result = await correct_fact(
+        session,
+        provider,
+        ha_user_id=body.ha_user_id,
+        fact_id=fact_id,
+        value=body.value,
+        confidence=body.confidence,
+    )
+    if isinstance(result, (Unmapped, FactNotFound)):
+        await session.rollback()
+        raise _fact_not_found()
+    if isinstance(result, NotConfirmed):
+        await session.rollback()
+        raise _fact_not_confirmed()
+    if isinstance(result, ProviderUnavailable):
+        await session.rollback()
+        raise _provider_unavailable()
+    await session.commit()
+    return KnowledgeFactPayload.from_record(result)
+
+
+@router.delete("/knowledge/facts/{fact_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def integration_delete_fact(
+    fact_id: str, ha_user_id: HaUserIdQuery, _token: IntegrationToken, session: Session
+) -> None:
+    summary = await fetch_household_summary(session)
+    if summary is None:
+        raise _household_not_configured()
+    provider = await _knowledge_provider(session, household_id=summary.id)
+    result = await delete_fact(session, provider, ha_user_id=ha_user_id, fact_id=fact_id)
+    if isinstance(result, (Unmapped, FactNotFound)):
+        await session.rollback()
+        raise _fact_not_found()
+    if isinstance(result, NotConfirmed):
+        await session.rollback()
+        raise _fact_not_confirmed()
+    assert isinstance(result, KnowledgeDisposed)
+    await session.commit()
 
 
 class ToolPolicyPayload(BaseModel):

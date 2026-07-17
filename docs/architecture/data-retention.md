@@ -31,6 +31,7 @@ lifecycle decision fails the test suite rather than shipping unclassified.
 | layout_activation_attempt | `layout_activation_attempts` | system-operational | yes | no | restore | retain with layout audit history |
 | provider_settings | `provider_settings` | household-shared | yes | no | quarantine | delete with household |
 | assistant_policy | `assistant_policy` | household-shared | yes | no | quarantine | delete with household |
+| knowledge_fact | `knowledge_facts` | private-person | yes | no | quarantine | confirm/reject/expiry/deletion disposes the row; cascades with owner deletion |
 | approval | `approvals` | system-operational | yes | no | restore | retain with household audit history |
 | home_assistant_tool_policy | `home_assistant_tool_policy` | household-shared | yes | no | quarantine | delete with household |
 
@@ -52,6 +53,15 @@ Field meanings:
 `person` vs. `child` and `primary_assistant` vs. `fallback_assistant` are the
 same table distinguished by a row field (`profile_kind`, `kind`), not by
 table - see `TABLE_LIFECYCLE_KEYS`.
+
+`knowledge_fact` rows carry their own state machine (`knowledge_state`:
+`pending`/`confirmed`/`rejected`/`expired`/`deleted`) rather than splitting
+across taxonomy keys, since every state shares the same backup/import/restore/
+deletion disposition. AD-25's numeric retention rule lives on the row itself,
+not in this table: a `pending` row gets a fixed 30-day `expires_at` at
+creation (`application/knowledge.py`'s `PENDING_OBSERVATION_EXPIRY_DAYS`),
+enforced by the worker's periodic `expire_due_observations` pass - the one
+concrete per-class expiry decision referenced in Story 9.4's notes.
 
 ## Tracked gaps
 
