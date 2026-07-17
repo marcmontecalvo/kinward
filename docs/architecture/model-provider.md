@@ -45,10 +45,11 @@ Each turn folds three optional context sources into the system prompt before cal
   can yet act on a device or timer (see that doc's "what remains out of scope").
 - Conversational memory recall from the configured memory backend.
 - Household fact search from the configured knowledge backend.
-
-Writing new facts from a conversation (knowledge *proposal*, not search) is not wired here -
-that requires structured extraction and confirmation policy (epics.md Stories 4.3/4.4), which
-remains unbuilt.
+- Writing new facts from a conversation: a second, best-effort model call extracts durable
+  personal facts from the caller's message as structured JSON and proposes each as a `pending`
+  observation (`application/knowledge.py`'s `extract_candidate_observations`/`propose_observation`,
+  see epics.md Story 4.3) - confirmation remains a separate, explicit owner action (Story 4.3's
+  `confirm_observation`).
 
 ## Replacement boundary
 

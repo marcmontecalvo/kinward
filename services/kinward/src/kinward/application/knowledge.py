@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -10,12 +11,101 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from kinward.application.authorization import resolve_person
 from kinward.application.conversation import Unmapped
+from kinward.llm.contracts import ModelMessage, ModelProvider
 from kinward.memory.contracts import KnowledgeStoreProvider, PrivacyLevel
 from kinward.persistence.models import KnowledgeFactRecord
 
 PENDING_OBSERVATION_EXPIRY_DAYS = 30
+CONVERSATION_INFERENCE_SOURCE = "conversation-inference"
+MAX_EXTRACTED_OBSERVATIONS = 3
+_PRIVACY_LEVELS = frozenset({"household", "personal", "sensitive"})
 
 _TERMINAL_STATES = frozenset({"rejected", "expired", "deleted"})
+
+_EXTRACTION_SYSTEM_PROMPT = """You extract durable personal facts worth remembering about {person_name} \
+from a single message they sent to their household assistant.
+
+Only extract facts that are:
+- Stated directly by {person_name} about themselves (preferences, routines, relationships, plans) - not \
+questions, small talk, or facts about other people.
+- Likely to remain true for weeks or longer - not one-off requests or transient state.
+
+Respond with ONLY a JSON object, no other text, matching this shape:
+{{"observations": [{{"subject": string, "predicate": string, "value": string, \
+"privacy": "household" | "personal" | "sensitive", "confidence": number between 0 and 1}}]}}
+
+Use "{person_name}" as the subject for facts about the speaker themself. Use "sensitive" privacy for \
+health, financial, or otherwise highly personal facts, "household" for facts every household member may \
+see, and "personal" otherwise. If nothing is worth remembering, respond with {{"observations": []}}."""
+
+
+@dataclass(frozen=True)
+class CandidateObservation:
+    subject: str
+    predicate: str
+    value: str
+    privacy: str
+    confidence: float
+
+
+def _parse_candidate_observations(raw: str) -> list[CandidateObservation]:
+    try:
+        payload = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return []
+    if not isinstance(payload, dict):
+        return []
+    items = payload.get("observations")
+    if not isinstance(items, list):
+        return []
+
+    candidates: list[CandidateObservation] = []
+    for item in items[:MAX_EXTRACTED_OBSERVATIONS]:
+        if not isinstance(item, dict):
+            continue
+        subject, predicate, value, privacy = (
+            item.get("subject"),
+            item.get("predicate"),
+            item.get("value"),
+            item.get("privacy"),
+        )
+        if not isinstance(subject, str) or not subject.strip():
+            continue
+        if not isinstance(predicate, str) or not predicate.strip():
+            continue
+        if not isinstance(value, str) or not value.strip():
+            continue
+        if privacy not in _PRIVACY_LEVELS:
+            continue
+        confidence = item.get("confidence", 1.0)
+        if not isinstance(confidence, (int, float)) or isinstance(confidence, bool):
+            confidence = 1.0
+        candidates.append(
+            CandidateObservation(
+                subject=subject.strip(),
+                predicate=predicate.strip(),
+                value=value.strip(),
+                privacy=privacy,
+                confidence=max(0.0, min(1.0, float(confidence))),
+            )
+        )
+    return candidates
+
+
+async def extract_candidate_observations(
+    model: ModelProvider, *, person_display_name: str, message_text: str
+) -> list[CandidateObservation]:
+    """Ask the model to pull durable personal facts out of a single user message (Story 4.3).
+
+    Best-effort: the model provider itself never raises on transport failure (it degrades to
+    ``MODEL_UNAVAILABLE_RESPONSE``), and any reply that isn't well-formed JSON simply yields no
+    candidates - a bad or unavailable extraction call must never block the conversation turn.
+    """
+    reply = await model.generate_reply(
+        system_prompt=_EXTRACTION_SYSTEM_PROMPT.format(person_name=person_display_name),
+        messages=[ModelMessage(role="user", content=message_text)],
+    )
+    return _parse_candidate_observations(reply.content)
 
 
 @dataclass(frozen=True)

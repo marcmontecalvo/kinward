@@ -319,6 +319,33 @@ async def handle_conversation_request(
             ],
         )
 
+    if resolved_model.name != "none" and knowledge.name != "none":
+        # Deferred import: application.knowledge imports Unmapped from this module, so a
+        # top-level import here would be circular.
+        from kinward.application.knowledge import (
+            CONVERSATION_INFERENCE_SOURCE,
+            extract_candidate_observations,
+            propose_observation,
+        )
+
+        candidates = await extract_candidate_observations(
+            resolved_model, person_display_name=person.display_name, message_text=text
+        )
+        for candidate in candidates:
+            await propose_observation(
+                session,
+                knowledge,
+                household_id=person.household_id,
+                owner_person_id=person_id,
+                assistant_id=assistant.id,
+                subject=candidate.subject,
+                predicate=candidate.predicate,
+                value=candidate.value,
+                privacy=candidate.privacy,
+                source_system=CONVERSATION_INFERENCE_SOURCE,
+                confidence=candidate.confidence,
+            )
+
     return Completed(conversation_id=topic.id, response_text=reply.content)
 
 
