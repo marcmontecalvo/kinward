@@ -32,6 +32,8 @@ lifecycle decision fails the test suite rather than shipping unclassified.
 | provider_settings | `provider_settings` | household-shared | yes | no | quarantine | delete with household |
 | assistant_policy | `assistant_policy` | household-shared | yes | no | quarantine | delete with household |
 | knowledge_fact | `knowledge_facts` | private-person | yes | no | quarantine | confirm/reject/expiry/deletion disposes the row; cascades with owner deletion |
+| approval | `approvals` | system-operational | yes | no | restore | retain with household audit history |
+| home_assistant_tool_policy | `home_assistant_tool_policy` | household-shared | yes | no | quarantine | delete with household |
 
 Field meanings:
 
@@ -68,7 +70,6 @@ reasoned, not silent drift - see `UNCLASSIFIED_TABLES` in `lifecycle.py`:
 
 | Table | Why it's unclassified |
 |---|---|
-| `approvals` | Epic 6 approval/meaningful-action machinery - schema exists, zero call sites yet. Classify once that machinery lands. |
 | `memory_index` | Pivot-era addition; retention not yet decided. |
 | `worker_heartbeats` | Pivot-era addition; retention not yet decided. |
 | `integration_tokens` | Pivot-era addition; retention not yet decided. |
@@ -76,9 +77,12 @@ reasoned, not silent drift - see `UNCLASSIFIED_TABLES` in `lifecycle.py`:
 | `topic_turns` | Pivot-era addition; retention not yet decided. |
 
 See `_bmad-output/planning-artifacts/epics.md` Story 9.4 for the broader
-context: blocker-preservation checks for this taxonomy are blocked on Epic 6's
-approval machinery, which has no call sites yet. Backup/restore-survival
-verification is deferred to v2 alongside Stories 9.1-9.3 (backup/restore/import)
-themselves, which have no implementation and are out of v1 scope. This
-document and its enforcement test are the piece of Story 9.4 that doesn't
-depend on either.
+context: blocker-preservation checks for this taxonomy still need Epic 6's
+approval machinery to cover the general multi-principal/quorum case (Story
+6.2) - the v0 capability-risk-tier slice that landed alongside this table's
+classification only covers HA device-control approvals, not an arbitrary
+resource-affecting action a deletion could need to block on. Backup/restore-
+survival verification is deferred to v2 alongside Stories 9.1-9.3 (backup/
+restore/import) themselves, which have no implementation and are out of v1
+scope. This document and its enforcement test are the piece of Story 9.4 that
+doesn't depend on either.

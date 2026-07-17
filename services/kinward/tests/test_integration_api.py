@@ -1148,3 +1148,176 @@ async def test_invalid_access_mode_is_rejected_via_api() -> None:
         )
         assert response.status_code == 422
         assert response.json()["detail"]["code"] == "invalid_access_mode"
+
+
+async def _sync_owner_and_admin(client, headers):  # type: ignore[no-untyped-def]
+    """Sync a non-admin owner and a household admin, returning (owner_assistant_id, admin_person_id)."""
+    await client.put(
+        "/api/v1/integration/people/sync",
+        headers=headers,
+        json=[
+            {"haPersonId": "ha-person-marc", "haUserId": "ha-user-marc", "displayName": "Marc"},
+            {
+                "haPersonId": "ha-person-lisa",
+                "haUserId": "ha-user-lisa",
+                "displayName": "Lisa",
+                "isAdmin": True,
+            },
+        ],
+    )
+    people = (await client.get("/api/v1/integration/people", headers=headers)).json()
+    admin_id = next(p["id"] for p in people if p["displayName"] == "Lisa")
+    assistants = (
+        await client.get("/api/v1/integration/assistants?haUserId=ha-user-marc", headers=headers)
+    ).json()
+    return assistants[0]["id"], admin_id
+
+
+async def test_request_action_denies_a_default_deny_capability() -> None:
+    client, factory = await _client()
+    async with client:
+        await _seed_household(factory)
+        token = await _issue_token(factory)
+        headers = {"Authorization": f"Bearer {token}"}
+        assistant_id, _admin_id = await _sync_owner_and_admin(client, headers)
+
+        response = await client.post(
+            "/api/v1/integration/actions",
+            headers=headers,
+            json={
+                "haUserId": "ha-user-marc",
+                "assistantId": assistant_id,
+                "domain": "lock",
+                "service": "unlock",
+                "entityId": "lock.front_door",
+                "explanation": "Let the dog walker in.",
+            },
+        )
+        assert response.status_code == 200
+        assert response.json()["outcome"] == "denied"
+
+
+async def test_request_action_rejects_a_domain_mismatched_entity() -> None:
+    client, factory = await _client()
+    async with client:
+        await _seed_household(factory)
+        token = await _issue_token(factory)
+        headers = {"Authorization": f"Bearer {token}"}
+        assistant_id, _admin_id = await _sync_owner_and_admin(client, headers)
+
+        response = await client.post(
+            "/api/v1/integration/actions",
+            headers=headers,
+            json={
+                "haUserId": "ha-user-marc",
+                "assistantId": assistant_id,
+                "domain": "light",
+                "service": "turn_off",
+                "entityId": "switch.office",
+                "explanation": "x",
+            },
+        )
+        assert response.status_code == 422
+        assert response.json()["detail"]["code"] == "invalid_target"
+
+
+async def test_request_action_allow_path_reports_failed_when_ha_is_unconfigured() -> None:
+    """The test app has no Home Assistant URL configured - a capability that
+
+    defaults to allow still routes end to end (permission check, activity record)
+    but can't actually submit anything, so it truthfully reports "failed" rather
+    than silently succeeding.
+    """
+    client, factory = await _client()
+    async with client:
+        await _seed_household(factory)
+        token = await _issue_token(factory)
+        headers = {"Authorization": f"Bearer {token}"}
+        assistant_id, _admin_id = await _sync_owner_and_admin(client, headers)
+
+        response = await client.post(
+            "/api/v1/integration/actions",
+            headers=headers,
+            json={
+                "haUserId": "ha-user-marc",
+                "assistantId": assistant_id,
+                "domain": "light",
+                "service": "turn_off",
+                "entityId": "light.office",
+                "explanation": "x",
+            },
+        )
+        assert response.status_code == 200
+        assert response.json()["outcome"] == "failed"
+
+
+async def test_approval_workflow_requires_admin_and_round_trips() -> None:
+    client, factory = await _client()
+    async with client:
+        await _seed_household(factory)
+        token = await _issue_token(factory)
+        headers = {"Authorization": f"Bearer {token}"}
+        assistant_id, admin_id = await _sync_owner_and_admin(client, headers)
+
+        policy = await client.patch(
+            "/api/v1/integration/settings/home-assistant-tool-policy",
+            headers=headers,
+            json={"permissions": {"control_locks": "approval_required"}},
+        )
+        assert policy.status_code == 200
+        assert policy.json()["permissions"]["control_locks"] == "approval_required"
+
+        requested = await client.post(
+            "/api/v1/integration/actions",
+            headers=headers,
+            json={
+                "haUserId": "ha-user-marc",
+                "assistantId": assistant_id,
+                "domain": "lock",
+                "service": "unlock",
+                "entityId": "lock.front_door",
+                "explanation": "Let the dog walker in.",
+            },
+        )
+        assert requested.status_code == 200
+        body = requested.json()
+        assert body["outcome"] == "pending_approval"
+        approval_id = body["approvalId"]
+
+        pending = await client.get("/api/v1/integration/actions", headers=headers)
+        assert pending.status_code == 200
+        assert [item["id"] for item in pending.json()] == [approval_id]
+
+        forbidden = await client.post(
+            f"/api/v1/integration/actions/{approval_id}/approve",
+            headers=headers,
+            json={"haUserId": "ha-user-marc"},
+        )
+        assert forbidden.status_code == 403
+        assert forbidden.json()["detail"]["code"] == "admin_required"
+
+        resolved = await client.post(
+            f"/api/v1/integration/actions/{approval_id}/deny",
+            headers=headers,
+            json={"haUserId": "ha-user-lisa"},
+        )
+        assert resolved.status_code == 200
+        assert resolved.json()["outcome"] == "denied"
+
+        again = await client.post(
+            f"/api/v1/integration/actions/{approval_id}/deny",
+            headers=headers,
+            json={"haUserId": "ha-user-lisa"},
+        )
+        assert again.status_code == 409
+        assert again.json()["detail"]["code"] == "not_pending"
+
+        missing = await client.post(
+            "/api/v1/integration/actions/does-not-exist/approve",
+            headers=headers,
+            json={"haUserId": "ha-user-lisa"},
+        )
+        assert missing.status_code == 404
+        assert missing.json()["detail"]["code"] == "approval_not_found"
+
+        _ = admin_id

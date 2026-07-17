@@ -40,6 +40,12 @@ BOOTSTRAP_RECORD_LIFECYCLES: dict[str, RecordLifecycle] = {
         "quarantine",
         "confirm/reject/expiry/deletion disposes the row; cascades with owner deletion",
     ),
+    "approval": RecordLifecycle(
+        "system-operational", True, False, "restore", "retain with household audit history"
+    ),
+    "home_assistant_tool_policy": RecordLifecycle(
+        "household-shared", True, False, "quarantine", "delete with household"
+    ),
 }
 
 # Maps each persisted SQLAlchemy table (kinward.persistence.models) to the
@@ -62,6 +68,8 @@ TABLE_LIFECYCLE_KEYS: dict[str, tuple[str, ...]] = {
     "provider_settings": ("provider_settings",),
     "assistant_policy": ("assistant_policy",),
     "knowledge_facts": ("knowledge_fact",),
+    "approvals": ("approval",),
+    "home_assistant_tool_policy": ("home_assistant_tool_policy",),
 }
 
 # Persisted tables with no lifecycle entry yet. A table lands here only with an
@@ -71,10 +79,6 @@ TABLE_LIFECYCLE_KEYS: dict[str, tuple[str, ...]] = {
 # without adding it to TABLE_LIFECYCLE_KEYS or here fails
 # tests/test_lifecycle.py.
 UNCLASSIFIED_TABLES: dict[str, str] = {
-    "approvals": (
-        "Epic 6 approval/meaningful-action machinery - schema exists, zero call "
-        "sites yet; classify once that machinery lands"
-    ),
     "memory_index": "pivot-era addition; retention not yet decided",
     "worker_heartbeats": "pivot-era addition; retention not yet decided",
     "integration_tokens": "pivot-era addition; retention not yet decided",

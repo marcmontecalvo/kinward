@@ -7,8 +7,8 @@ body immediately. The body itself continues to live with the configured
 KnowledgeStoreProvider (llm_wiki); this table is the authorization/expiry/
 recurrence-suppression/dependents-invalidation control layer on top of it.
 
-Revision ID: 010_knowledge_facts
-Revises: 009_assistant_access_modes
+Revision ID: 011_knowledge_facts
+Revises: 010_meaningful_action_approvals
 Create Date: 2026-07-16
 """
 
@@ -17,8 +17,8 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "010_knowledge_facts"
-down_revision: str | None = "009_assistant_access_modes"
+revision: str = "011_knowledge_facts"
+down_revision: str | None = "010_meaningful_action_approvals"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

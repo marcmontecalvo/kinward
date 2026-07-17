@@ -36,16 +36,28 @@ class HomeAssistantClient:
         domain: str,
         service: str,
         data: dict[str, Any],
-    ) -> list[dict[str, Any]]:
+    ) -> list[dict[str, Any]] | None:
+        """Submit an HA service call, returning HA's changed-states response - or
+        ``None`` if the call never went through (disabled, circuit open, network/HTTP
+        error).
+
+        This distinction matters (Epic 7 Story 7.3, cross-cutting rule 9: "HA action
+        success means submitted"): a non-``None`` result - even an empty list - means
+        HA accepted and processed the call, while ``None`` means it never left this
+        process. Callers must not conflate the two the way this method's read-only
+        sibling ``states()`` safely can (a read has no side effect to lose track of).
+        """
         if not self.enabled:
-            return []
+            return None
         result = await self.client.request_json(
             "POST",
             f"/api/services/{domain}/{service}",
-            fallback=[],
+            fallback=None,
             headers=self._headers(),
             json=data,
         )
+        if result is None:
+            return None
         return result if isinstance(result, list) else []
 
     async def render_template(

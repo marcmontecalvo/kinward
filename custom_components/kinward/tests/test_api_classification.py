@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from kinward.api import (
+    ActionFailure,
+    ActionResult,
     Assistant,
     AssistantActionFailure,
     AssistantPolicy,
@@ -11,6 +13,8 @@ from kinward.api import (
     ContextSuccess,
     NextEventStatus,
     PeopleFailure,
+    PendingAction,
+    PendingActionsFailure,
     Person,
     Pet,
     PetsFailure,
@@ -24,11 +28,13 @@ from kinward.api import (
     SyncedPerson,
     SyncPeopleFailure,
     SyncPeopleSuccess,
+    classify_action_result_response,
     classify_assistant_action_response,
     classify_assistant_policy_response,
     classify_context_response,
     classify_delete_assistant_response,
     classify_list_assistants_response,
+    classify_pending_actions_response,
     classify_people_response,
     classify_pets_response,
     classify_provider_settings_response,
@@ -426,3 +432,81 @@ def test_classify_delete_assistant_response_failure_carries_the_code() -> None:
     payload = {"detail": {"code": "last_assistant"}}
     result = classify_delete_assistant_response(409, payload)
     assert result == AssistantActionFailure(reason="last_assistant")
+
+
+def _pending_action_payload(**overrides: object) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "id": "approval-1",
+        "requestedByPersonId": "person-1",
+        "action": "home_assistant.lock.unlock",
+        "explanation": "Let the dog walker in.",
+        "domain": "lock",
+        "service": "unlock",
+        "entityId": "lock.front_door",
+        "createdAt": "2026-07-16T12:00:00+00:00",
+        "expiresAt": "2026-07-17T12:00:00+00:00",
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_classify_pending_actions_response_success() -> None:
+    result = classify_pending_actions_response(200, [_pending_action_payload()])
+    assert result == [
+        PendingAction(
+            id="approval-1",
+            requested_by_person_id="person-1",
+            action="home_assistant.lock.unlock",
+            explanation="Let the dog walker in.",
+            domain="lock",
+            service="unlock",
+            entity_id="lock.front_door",
+            created_at="2026-07-16T12:00:00+00:00",
+            expires_at="2026-07-17T12:00:00+00:00",
+        )
+    ]
+
+
+def test_classify_pending_actions_response_empty_list() -> None:
+    assert classify_pending_actions_response(200, []) == []
+
+
+def test_classify_pending_actions_response_malformed_item_is_unknown() -> None:
+    assert classify_pending_actions_response(200, [{"id": "approval-1"}]) == PendingActionsFailure(
+        "unknown"
+    )
+
+
+def test_classify_pending_actions_response_invalid_auth() -> None:
+    assert classify_pending_actions_response(401, []) == PendingActionsFailure("invalid_auth")
+
+
+def test_classify_pending_actions_response_household_not_configured() -> None:
+    assert classify_pending_actions_response(409, []) == PendingActionsFailure(
+        "household_not_configured"
+    )
+
+
+def test_classify_action_result_response_executed() -> None:
+    result = classify_action_result_response(200, {"outcome": "executed"})
+    assert result == ActionResult(outcome="executed", approval_id=None)
+
+
+def test_classify_action_result_response_pending_approval_carries_the_id() -> None:
+    result = classify_action_result_response(
+        200, {"outcome": "pending_approval", "approvalId": "approval-1"}
+    )
+    assert result == ActionResult(outcome="pending_approval", approval_id="approval-1")
+
+
+def test_classify_action_result_response_denied_carries_the_reason() -> None:
+    payload = {"detail": {"code": "admin_required", "message": "Only a household administrator may resolve this."}}
+    result = classify_action_result_response(403, payload)
+    assert result == ActionFailure(reason="Only a household administrator may resolve this.")
+
+
+def test_classify_action_result_response_unexpected_status_is_unknown() -> None:
+    assert classify_action_result_response(500, {}) == ActionFailure(reason="unexpected status 500")
+    assert classify_action_result_response(200, "not-a-dict") == ActionFailure(
+        reason="unexpected status 200"
+    )

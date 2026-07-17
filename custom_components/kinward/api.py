@@ -561,6 +561,114 @@ def classify_provider_settings_response(status_code: int, payload: Any) -> Provi
     return settings
 
 
+@dataclass(frozen=True)
+class PendingAction:
+    """A currently-pending meaningful action awaiting admin approval (Epic 6; ADR-002 sec. 5)."""
+
+    id: str
+    requested_by_person_id: str
+    action: str
+    explanation: str
+    domain: str
+    service: str
+    entity_id: str
+    created_at: str
+    expires_at: str | None
+
+
+@dataclass(frozen=True)
+class PendingActionsFailure:
+    error: ConfigFlowErrorCode
+
+
+PendingActionsResult = list[PendingAction] | PendingActionsFailure
+
+
+@dataclass(frozen=True)
+class ActionResult:
+    """The outcome of requesting or resolving an action: ``executed``, ``denied``,
+    ``pending_approval``, or ``failed`` - see ``application.pending_actions`` for
+    what each means.
+    """
+
+    outcome: str
+    approval_id: str | None = None
+
+
+@dataclass(frozen=True)
+class ActionFailure:
+    reason: str
+
+
+ActionOutcomeResult = ActionResult | ActionFailure
+
+
+def _pending_action_from(payload: Any) -> PendingAction | None:
+    if not isinstance(payload, dict):
+        return None
+    action_id = payload.get("id")
+    requested_by_person_id = payload.get("requestedByPersonId")
+    action = payload.get("action")
+    explanation = payload.get("explanation")
+    domain = payload.get("domain")
+    service = payload.get("service")
+    entity_id = payload.get("entityId")
+    created_at = payload.get("createdAt")
+    expires_at = payload.get("expiresAt")
+    if (
+        not isinstance(action_id, str)
+        or not isinstance(requested_by_person_id, str)
+        or not isinstance(action, str)
+        or not isinstance(explanation, str)
+        or not isinstance(domain, str)
+        or not isinstance(service, str)
+        or not isinstance(entity_id, str)
+        or not isinstance(created_at, str)
+    ):
+        return None
+    if expires_at is not None and not isinstance(expires_at, str):
+        return None
+    return PendingAction(
+        id=action_id,
+        requested_by_person_id=requested_by_person_id,
+        action=action,
+        explanation=explanation,
+        domain=domain,
+        service=service,
+        entity_id=entity_id,
+        created_at=created_at,
+        expires_at=expires_at,
+    )
+
+
+def classify_pending_actions_response(status_code: int, payload: Any) -> PendingActionsResult:
+    if status_code == 401:
+        return PendingActionsFailure("invalid_auth")
+    if status_code == 409:
+        return PendingActionsFailure("household_not_configured")
+    if status_code != 200 or not isinstance(payload, list):
+        return PendingActionsFailure("unknown")
+    actions: list[PendingAction] = []
+    for item in payload:
+        action = _pending_action_from(item)
+        if action is None:
+            return PendingActionsFailure("unknown")
+        actions.append(action)
+    return actions
+
+
+def classify_action_result_response(status_code: int, payload: Any) -> ActionOutcomeResult:
+    if status_code != 200 or not isinstance(payload, dict):
+        return ActionFailure(reason=_error_reason(status_code, payload))
+    outcome = payload.get("outcome")
+    if not isinstance(outcome, str):
+        return ActionFailure(reason="malformed response")
+    approval_id = payload.get("approvalId")
+    if approval_id is not None and not isinstance(approval_id, str):
+        return ActionFailure(reason="malformed response")
+    return ActionResult(outcome=outcome, approval_id=approval_id)
+
+
 class KinwardApiClient:
     """Thin async wrapper; all response interpretation lives in the pure classify_* functions."""
 
@@ -772,3 +880,56 @@ class KinwardApiClient:
         except (TimeoutError, aiohttp.ClientError):
             return AssistantActionFailure(reason="cannot_connect")
         return classify_assistant_action_response(status, payload)
+
+    async def async_request_action(
+        self,
+        *,
+        ha_user_id: str,
+        assistant_id: str,
+        domain: str,
+        service: str,
+        entity_id: str,
+        explanation: str,
+        data: dict[str, Any] | None = None,
+    ) -> ActionOutcomeResult:
+        """Ask Kinward to submit (or, if the household's tool policy requires it,
+        queue for admin approval) an HA service call (Epic 7 Story 7.3).
+        """
+        body: dict[str, Any] = {
+            "haUserId": ha_user_id,
+            "assistantId": assistant_id,
+            "domain": domain,
+            "service": service,
+            "entityId": entity_id,
+            "explanation": explanation,
+        }
+        if data is not None:
+            body["data"] = data
+        try:
+            status, payload = await self._request(
+                "POST", "/api/v1/integration/actions", json_body=body
+            )
+        except (TimeoutError, aiohttp.ClientError):
+            return ActionFailure(reason="cannot_connect")
+        return classify_action_result_response(status, payload)
+
+    async def async_list_pending_actions(self) -> PendingActionsResult:
+        try:
+            status, payload = await self._request("GET", "/api/v1/integration/actions")
+        except (TimeoutError, aiohttp.ClientError):
+            return PendingActionsFailure("cannot_connect")
+        return classify_pending_actions_response(status, payload)
+
+    async def async_resolve_action(
+        self, *, approval_id: str, ha_user_id: str, decision: str
+    ) -> ActionOutcomeResult:
+        body = {"haUserId": ha_user_id}
+        try:
+            status, payload = await self._request(
+                "POST",
+                f"/api/v1/integration/actions/{quote(approval_id)}/{decision}",
+                json_body=body,
+            )
+        except (TimeoutError, aiohttp.ClientError):
+            return ActionFailure(reason="cannot_connect")
+        return classify_action_result_response(status, payload)

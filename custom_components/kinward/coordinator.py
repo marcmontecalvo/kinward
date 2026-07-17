@@ -10,6 +10,8 @@ import homeassistant.util.dt as dt_util
 from .api import (
     HaPerson,
     KinwardApiClient,
+    PendingAction,
+    PendingActionsFailure,
     Pet,
     PetsFailure,
     SummaryFailure,
@@ -40,6 +42,7 @@ class KinwardDataUpdateCoordinator(DataUpdateCoordinator[SummarySuccess]):
         self.last_success_at: datetime | None = None
         self.people: list[SyncedPerson] = []
         self.pets: list[Pet] = []
+        self.pending_actions: list[PendingAction] = []
 
     @property
     def client(self) -> KinwardApiClient:
@@ -79,9 +82,17 @@ class KinwardDataUpdateCoordinator(DataUpdateCoordinator[SummarySuccess]):
             return
         self.pets = result.pets
 
+    async def _async_fetch_pending_actions(self) -> None:
+        result = await self._client.async_list_pending_actions()
+        if isinstance(result, PendingActionsFailure):
+            _LOGGER.warning("Kinward pending actions fetch failed: %s", result.error)
+            return
+        self.pending_actions = result
+
     async def _async_update_data(self) -> SummarySuccess:
         await self._async_sync_people()
         await self._async_fetch_pets()
+        await self._async_fetch_pending_actions()
         result = await self._client.async_fetch_summary()
         if isinstance(result, SummaryFailure):
             raise UpdateFailed(result.error)

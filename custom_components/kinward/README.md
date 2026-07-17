@@ -39,6 +39,18 @@ for a step-by-step household trial covering everything below end to end.
   unbuilt access-control design, not a label flip.
 - Does not manage Home Assistant `person.*` or `calendar.*` entities - those
   remain fully HA's own, and the dashboard below only references them.
+- `kinward.request_action` submits an HA service call through Kinward on
+  behalf of one of your own assistants, gated by this household's
+  per-capability tool policy (`allow` / `approval_required` / `deny` - lights,
+  switches, and household timers default to allow; locks and the alarm panel
+  default to deny). A denied call never reaches Home Assistant. An
+  approval-required call becomes a pending action any current household admin
+  can resolve with `kinward.approve_action` / `kinward.deny_action`, visible
+  on `sensor.kinward_pending_approvals`. There is no LLM tool-calling
+  integration yet, so nothing is triggered from a conversation automatically -
+  these are explicit actions today, and the tool policy itself is only
+  editable through the backend contract, not yet this integration's options
+  flow.
 
 ## Install (development)
 
@@ -125,6 +137,16 @@ control.
 
 `kinward.refresh` re-polls the backend immediately instead of waiting for the
 next scheduled update (there is no backend "generate a briefing" action yet).
+
+`kinward.create_assistant`, `kinward.delete_assistant`, and
+`kinward.set_assistant_access` manage a person's own additional assistants and
+who besides the owner may address one (ADR-002).
+
+`kinward.request_action` submits an HA service call through Kinward, subject
+to the household's tool policy; `kinward.approve_action` /
+`kinward.deny_action` resolve a pending action by id (see
+`sensor.kinward_pending_approvals`). See `services.yaml` for full field
+documentation of every service.
 
 ## Diagnostics
 
