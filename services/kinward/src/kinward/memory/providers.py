@@ -54,5 +54,8 @@ class NullKnowledgeStoreProvider:
     async def retire_fact(self, *, fact_id: str) -> bool:
         return False
 
+    async def reclassify_fact(self, *, fact_id: str, privacy: PrivacyLevel) -> KnowledgeFact | None:
+        return None
+
     async def provenance(self, *, fact_id: str) -> list[str]:
         return []

@@ -64,6 +64,9 @@ class LlmWikiKnowledgeProvider:
     async def retire_fact(self, *, fact_id: str) -> bool:
         return await self._patch_fact(fact_id, {"status": "retired"}) is not None
 
+    async def reclassify_fact(self, *, fact_id: str, privacy: PrivacyLevel) -> KnowledgeFact | None:
+        return await self._patch_fact(fact_id, {"visibility": privacy})
+
     async def provenance(self, *, fact_id: str) -> list[str]:
         workspace_id, key = self.parse_fact_id(fact_id)
         data = await self.client.request_json("GET", f"/v1/workspaces/{quote(workspace_id)}/facts/{quote(key)}/history", fallback={"items": []})

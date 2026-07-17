@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from kinward.application.authorization import resolve_person
 from kinward.application.conversation import Unmapped
-from kinward.memory.contracts import KnowledgeStoreProvider
+from kinward.memory.contracts import KnowledgeStoreProvider, PrivacyLevel
 from kinward.persistence.models import KnowledgeFactRecord
 
 PENDING_OBSERVATION_EXPIRY_DAYS = 30
@@ -315,6 +315,41 @@ async def correct_fact(
     record.value = value
     if confidence is not None:
         record.confidence = confidence
+    record.record_version += 1
+    await session.flush()
+    return record
+
+
+async def reclassify_fact(
+    session: AsyncSession,
+    provider: KnowledgeStoreProvider,
+    *,
+    ha_user_id: str,
+    fact_id: str,
+    privacy: PrivacyLevel,
+) -> KnowledgeFactRecord | FactNotFound | NotConfirmed | Unmapped | ProviderUnavailable:
+    """Change a confirmed fact's sharing class (personal/household/sensitive).
+
+    Owner-unilateral in either direction, same trust level as ``correct_fact``:
+    nothing today reads ``privacy`` to gate rendering or access, so narrowing and
+    widening carry the same risk as any other self-owned correction.
+    """
+    person = await resolve_person(session, ha_user_id=ha_user_id)
+    if isinstance(person, Unmapped):
+        return person
+    record = await _find_owned(session, person_id=person.id, fact_id=fact_id)
+    if record is None:
+        return FactNotFound()
+    if record.knowledge_state != "confirmed":
+        return NotConfirmed()
+    if provider.name == "none":
+        return ProviderUnavailable()
+
+    if record.external_fact_id:
+        reclassified = await provider.reclassify_fact(fact_id=record.external_fact_id, privacy=privacy)
+        if reclassified is None:
+            return ProviderUnavailable()
+    record.privacy = privacy
     record.record_version += 1
     await session.flush()
     return record

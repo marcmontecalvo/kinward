@@ -1127,6 +1127,41 @@ async def test_correct_and_delete_a_confirmed_fact_via_api() -> None:
         assert after_delete.json() == []
 
 
+async def test_reclassify_a_confirmed_fact_via_api() -> None:
+    client, factory = await _client()
+    async with client:
+        household_id, person_id = await _seed_household_with_knowledge_provider(factory)
+        fact_id = await _seed_pending_observation(
+            factory, household_id=household_id, owner_person_id=person_id
+        )
+        token = await _issue_token(factory)
+        headers = {"Authorization": f"Bearer {token}"}
+        await client.post(
+            f"/api/v1/integration/knowledge/observations/{fact_id}/confirm",
+            headers=headers,
+            json={"haUserId": "ha-user-1"},
+        )
+
+        reclassified = await client.patch(
+            f"/api/v1/integration/knowledge/facts/{fact_id}/reclassify",
+            headers=headers,
+            json={"haUserId": "ha-user-1", "privacy": "household"},
+        )
+        assert reclassified.status_code == 200
+        assert reclassified.json()["privacy"] == "household"
+
+        still_pending = await _seed_pending_observation(
+            factory, household_id=household_id, owner_person_id=person_id, predicate="other"
+        )
+        not_confirmed = await client.patch(
+            f"/api/v1/integration/knowledge/facts/{still_pending}/reclassify",
+            headers=headers,
+            json={"haUserId": "ha-user-1", "privacy": "sensitive"},
+        )
+        assert not_confirmed.status_code == 409
+        assert not_confirmed.json()["detail"]["code"] == "knowledge_fact_not_confirmed"
+
+
 async def test_invalid_access_mode_is_rejected_via_api() -> None:
     client, factory = await _client()
     async with client:
