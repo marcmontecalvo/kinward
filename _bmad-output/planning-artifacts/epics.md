@@ -86,7 +86,7 @@ Status as of `implementationReviewDate` above; see [§8](#8-story-by-story-statu
 | 5 | Kinward produces useful briefings and calendar-aware attention without becoming a notification feed. | **Not started.** No calendar provider, briefing generation, change detection, or delivery policy exists yet — the largest fully greenfield epic. |
 | 6 | Meaningful actions and household coordination are approved, executed, reconciled, and recorded safely. | **v0 slice only.** Approval state machine covers HA-capability actions with no resource owner; the general multi-principal/quorum case (needed for cross-person actions like a calendar reschedule) and assistant-to-assistant coordination are unbuilt, and both are blocked on Epic 5. |
 | 7 | Home Assistant state and actions are used through policy-bound, observation-confirmed adapters. | **v0 read/write built.** No formal HA-resource mapping/versioning layer, no automation hooks (7.4), and completion still trusts a synchronous service-call response rather than a confirmed fresh observation. |
-| 8 | Administration, health, activity, and diagnostics are available without exposing protected content. | **Partial.** Health/diagnostics and most admin actions exist; there is no reauthentication step in the config flow and no read/query API for activity records (only writes). |
+| 8 | Administration, health, activity, and diagnostics are available without exposing protected content. | **Partial.** Health/diagnostics, most admin actions, and an authorized/filtered activity read API all exist; config-flow reauthentication is being implemented in a parallel pass (check its own PR for status). |
 | 9 | Backup, restore, import, retention, deletion, and recovery preserve the complete household authority model. | **Backup/restore/import deliberately deferred to v2.** Retention taxonomy and admin-invariant-safe deletion are done for what isn't blocked on Epic 6. |
 | 10 | Advanced generated views, custom cards, and broader clients remain evidence-gated extensions rather than foundation blockers. | **Correctly not started** — gated on real household usage evidence, per its own goal. |
 
@@ -776,6 +776,27 @@ Operate Kinward through HA-hosted configuration and backend administration witho
 - Filtering occurs after record/view authorization and leaks no unauthorized counts or facets.
 - HA logbook is not the authority for Kinward private or meaningful-action activity.
 
+> **Implemented (2026-07-17), read side:** `application/activity.py`'s `list_activity` and
+> `GET /api/v1/integration/activity?haUserId=...` (`services/kinward/src/kinward/api/integration.py`)
+> are the first reads of `ActivityRecord` - previously write-only from `pending_actions.py`,
+> `bootstrap.py`, `people_sync.py`, `layouts.py`, and `person_deletion.py`. Authorization is a query
+> filter, not a post-filter: a current admin (cross-cutting rule 4) gets the whole household feed;
+> anyone else's query is scoped to `ActivityRecord.person_id == <their own person id>` before the row
+> ever leaves the database, so a non-admin caller structurally cannot observe another person's activity
+> or how many hidden rows exist - "leaks no unauthorized counts or facets" holds by construction, not by
+> a response-shaping step after the fact. An unmapped `haUserId` fails closed to an empty list, matching
+> every other own-data listing endpoint (`/topics`, `/knowledge/observations`). Results are ordered most
+> recent first and bounded by a `limit` query param (default 50, hard cap 200) - append-only writes and
+> transactional coupling with the actions they describe were already true from the write side and are
+> unchanged here. Tests in `services/kinward/tests/test_activity.py` (application layer) and
+> `services/kinward/tests/test_integration_api.py::test_activity_endpoint_filters_by_caller_role` (API,
+> end to end).
+>
+> **Not built:** no HA entity/service exposes this yet - same "backend capability first" precedent as
+> Story 2.4's topic CRUD. `classification` on every existing row is `system-operational` (the default);
+> nothing produces a `private-person`-classified activity row today, so the person-scoped filter above is
+> currently the only authorization boundary actually exercised in production data.
+
 ### Story 8.4: Provide health and sanitized diagnostics
 
 - Health is separate for application, database, model, memory, knowledge, calendar, Home Assistant, jobs, and backup.
@@ -1032,9 +1053,10 @@ No custom card, custom dashboard strategy, custom panel, or standalone frontend 
 2. **Story 8.1 remainder** — add a reauthentication step to `custom_components/kinward/config_flow.py`
    (only `async_step_user` and the options flow exist today); without it a rotated/expired backend
    credential requires removing and re-adding the integration.
-3. **Story 8.3 read side** — add an authorized, filtered `GET` activity endpoint.
-   `ActivityRecord` rows are already written by `pending_actions.py`, `bootstrap.py`,
-   `people_sync.py`, `layouts.py`, and `person_deletion.py`, but nothing can read them back yet.
+3. ~~**Story 8.3 read side**~~ — **done (2026-07-17):** `GET /api/v1/integration/activity` reads
+   `ActivityRecord` rows (written by `pending_actions.py`, `bootstrap.py`, `people_sync.py`,
+   `layouts.py`, and `person_deletion.py`) with query-level person-scoped authorization for non-admins
+   and the full household feed for admins.
 4. **Epic 5 (Stories 5.1–5.4)** — calendar connection, change detection, briefings, and delivery
    policy. This is the largest remaining greenfield epic and the one still-unmet piece of the core
    product promise ("useful briefings and calendar-aware attention").
@@ -1163,7 +1185,7 @@ promise ("useful briefings and calendar-aware attention") still entirely unmet.
 | --- | --- | --- |
 | 8.1 Configuration-entry options and reauthentication | **Partial** | Options flow (assistant policy, tool policy, provider settings) exists. `config_flow.py` has no reauth step — only `async_step_user` and the options-flow init. |
 | 8.2 Preserve Kinward administrative authority | Done | — (pet CRUD, reclassify, admin-plural model) for what's still in scope |
-| 8.3 Provide authorized activity | **Partial** | `ActivityRecord` rows are written by five application modules but nothing reads them back — no filtered/authorized query endpoint exists. |
+| 8.3 Provide authorized activity | Done | — (`GET /api/v1/integration/activity`, query-level person-scoped authorization) |
 | 8.4 Provide health and sanitized diagnostics | Done | — (`health.py` per-capability health, `diagnostics.py` redaction) |
 
 ### Epic 9 — Backup, Restore, Import, Retention, Deletion, and Recovery
@@ -1185,7 +1207,8 @@ promise ("useful briefings and calendar-aware attention") still entirely unmet.
 ### Roll-up: what's actually left to reach a fuller release
 
 1. Run the Story 1.7 trial (process step, not code — unblocks everything else being validated for real).
-2. Two small gaps: config-flow reauth (8.1), activity read API (8.3).
+2. Activity read API (8.3) is done. Config-flow reauth (8.1) is being implemented in a parallel pass;
+   check its own PR for status before assuming this line is stale.
 3. One medium gap: the fallback-boundary regression test (2.5) and the admin-privacy regression test (§7).
 4. One large greenfield epic: calendars and briefings (Epic 5) — nothing else in the backlog is
    blocked *on* code that doesn't exist except this.

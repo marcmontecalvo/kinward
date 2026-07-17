@@ -8,6 +8,11 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from kinward.application.activity import (
+    DEFAULT_ACTIVITY_LIMIT,
+    MAX_ACTIVITY_LIMIT,
+    list_activity,
+)
 from kinward.application.assistant_policy import (
     get_or_create_assistant_policy,
     update_assistant_policy,
@@ -83,6 +88,7 @@ from kinward.domain.pending_action import ApprovalResolutionError
 from kinward.memory.contracts import KnowledgeStoreProvider
 from kinward.memory.factory import knowledge_store_provider
 from kinward.persistence.models import (
+    ActivityRecord,
     ApprovalRecord,
     AssistantPolicyRecord,
     AssistantRecord,
@@ -1192,6 +1198,30 @@ class PendingActionPayload(BaseModel):
         )
 
 
+class ActivityPayload(BaseModel):
+    id: str
+    person_id: str | None = Field(serialization_alias="personId")
+    assistant_id: str | None = Field(serialization_alias="assistantId")
+    summary: str
+    outcome: str
+    detail: dict[str, Any]
+    classification: str
+    occurred_at: datetime = Field(serialization_alias="occurredAt")
+
+    @classmethod
+    def from_record(cls, record: ActivityRecord) -> ActivityPayload:
+        return cls(
+            id=record.id,
+            person_id=record.person_id,
+            assistant_id=record.assistant_id,
+            summary=record.summary,
+            outcome=record.outcome,
+            detail=record.detail,
+            classification=record.classification,
+            occurred_at=record.occurred_at,
+        )
+
+
 class ResolveActionRequest(BaseModel):
     ha_user_id: str = Field(alias="haUserId", min_length=1, max_length=64)
 
@@ -1320,3 +1350,27 @@ async def integration_deny_action(
     approval_id: str, body: ResolveActionRequest, _token: IntegrationToken, session: Session, settings: AppSettings
 ) -> ActionResultPayload:
     return await _resolve_action(approval_id, body, session, settings, decision="deny")
+
+
+@router.get("/activity", response_model=list[ActivityPayload])
+async def integration_list_activity(
+    ha_user_id: HaUserIdQuery,
+    _token: IntegrationToken,
+    session: Session,
+    limit: Annotated[int, Query(ge=1, le=MAX_ACTIVITY_LIMIT)] = DEFAULT_ACTIVITY_LIMIT,
+) -> list[ActivityPayload]:
+    """Authorized, filtered activity - a current admin sees the whole household
+
+    feed; anyone else sees only records tied to their own person_id, never
+    another person's (epics.md Story 8.3). Fails closed to an empty list for
+    an unmapped caller, same as every other own-data listing endpoint.
+    """
+    summary = await fetch_household_summary(session)
+    if summary is None:
+        raise _household_not_configured()
+    result = await list_activity(
+        session, household_id=summary.id, ha_user_id=ha_user_id, limit=limit
+    )
+    if isinstance(result, Unmapped):
+        return []
+    return [ActivityPayload.from_record(record) for record in result]
