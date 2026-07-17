@@ -26,6 +26,7 @@ def test_every_bootstrap_record_has_explicit_lifecycle_metadata() -> None:
         "knowledge_fact",
         "approval",
         "home_assistant_tool_policy",
+        "home_assistant_resource_label",
     }
     for lifecycle in BOOTSTRAP_RECORD_LIFECYCLES.values():
         assert lifecycle.classification

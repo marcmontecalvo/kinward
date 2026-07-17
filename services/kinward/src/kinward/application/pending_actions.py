@@ -11,6 +11,7 @@ from kinward.application.authorization import NotAdmin, resolve_admin, resolve_p
 from kinward.application.conversation import AccessDenied, AssistantNotFound, Unmapped
 from kinward.config import Settings, get_settings
 from kinward.domain.assistant_access import can_address_assistant
+from kinward.domain.expected_state import expected_state_for
 from kinward.domain.pending_action import (
     ApprovalResolutionError,
     can_resolve_approval,
@@ -163,17 +164,38 @@ async def _submit_and_confirm(
     would be misleading (Epic 7 Story 7.3: "requested, submitted, observed, completed,
     failed, and unknown remain separate").
 
-    Fresh-observation confirmation of what HA actually did (Story 7.3's full "fresh
-    matching HA observation" rule) is not built here - a non-``None`` synchronous
-    response is treated as sufficient evidence of completion, the same scoping
-    discipline Story 7.2's read-only path used.
+    For services with a deterministic expected end state (``domain/expected_state.py`` -
+    e.g. ``light.turn_on`` must leave the entity ``on``), completion additionally requires a
+    fresh ``get_state`` read matching that expectation - Story 7.3's "completion requires a
+    fresh matching HA observation" rule. A service with no expected-state entry (e.g. any
+    "toggle") keeps the older, looser rule: a non-``None`` synchronous ``call_service``
+    response is sufficient evidence of completion, the same scoping discipline Story 7.2's
+    read-only path used.
+
+    An ambiguous or missing confirmation is treated exactly like the "response lost after
+    send" case below: ``ApprovalRecord.state`` has no ``unknown`` value to hold the
+    ambiguity, so it fail-closes to ``"failed"``, while the paired ``ActivityRecord.outcome``
+    is set to ``"unknown"`` so the async reconciliation job (``worker.py``) can resolve it
+    later without the household ever being told a possibly-successful action definitely
+    failed. This only runs once, synchronously - it does not retry or poll; a slow HA state
+    update is exactly the kind of ambiguity reconciliation exists to catch up on later.
     """
     merged: dict[str, Any] = {"entity_id": entity_id, **(data or {})}
     result = await ha_client.call_service(domain=domain, service=service, data=merged)
     detail: dict[str, Any] = {"domain": domain, "service": service, "entity_id": entity_id}
     if result is not None:
         detail["changed_states"] = len(result)
-        return "executed", "completed", detail
+        expected_state = expected_state_for(domain=domain, service=service)
+        if expected_state is None:
+            return "executed", "completed", detail
+        detail["expected_state"] = expected_state
+        observed = await ha_client.get_state(entity_id)
+        observed_state = observed.get("state") if observed else None
+        detail["observed_state"] = observed_state
+        if observed_state == expected_state:
+            return "executed", "completed", detail
+        detail["reason"] = "observation_mismatch" if observed is not None else "observation_unavailable"
+        return "failed", "unknown", detail
     if not ha_client.enabled:
         detail["reason"] = "not_configured"
         return "failed", "failed", detail

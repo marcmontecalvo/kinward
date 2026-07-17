@@ -46,6 +46,9 @@ BOOTSTRAP_RECORD_LIFECYCLES: dict[str, RecordLifecycle] = {
     "home_assistant_tool_policy": RecordLifecycle(
         "household-shared", True, False, "quarantine", "delete with household"
     ),
+    "home_assistant_resource_label": RecordLifecycle(
+        "household-shared", True, False, "quarantine", "delete with household"
+    ),
 }
 
 # Maps each persisted SQLAlchemy table (kinward.persistence.models) to the
@@ -70,6 +73,7 @@ TABLE_LIFECYCLE_KEYS: dict[str, tuple[str, ...]] = {
     "knowledge_facts": ("knowledge_fact",),
     "approvals": ("approval",),
     "home_assistant_tool_policy": ("home_assistant_tool_policy",),
+    "home_assistant_resource_labels": ("home_assistant_resource_label",),
 }
 
 # Persisted tables with no lifecycle entry yet. A table lands here only with an

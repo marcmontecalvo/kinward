@@ -669,6 +669,65 @@ def classify_action_result_response(status_code: int, payload: Any) -> ActionOut
     return ActionResult(outcome=outcome, approval_id=approval_id)
 
 
+# Epic 7 Story 7.4: documented HA bus events for stable household intent - "purpose-specific
+# HA automation hooks" a household can build automations on top of (e.g. flash a light when
+# an approval is requested). Kept a fixed, minimal set rather than exposing every possible
+# outcome, matching the story's "only when they express stable household intent" scoping.
+EVENT_ACTION_EXECUTED = "kinward_action_executed"
+EVENT_APPROVAL_REQUESTED = "kinward_approval_requested"
+EVENT_APPROVAL_RESOLVED = "kinward_approval_resolved"
+
+
+@dataclass(frozen=True)
+class BusEvent:
+    event_type: str
+    data: dict[str, Any]
+
+
+def action_outcome_event(
+    result: ActionResult, *, domain: str, service: str, entity_id: str
+) -> BusEvent | None:
+    """The HA bus event (if any) a ``kinward.request_action`` outcome should fire.
+
+    Only ``executed``/``pending_approval`` are "stable household intent" worth an automation
+    hook - ``denied``/``failed`` are rejections, not something that happened in the house, so
+    no event fires for them. The payload never includes the caller-supplied ``explanation``
+    (private, free-text content) or any person identifier - only the structural HA target,
+    matching "hooks avoid leaking private details into HA automation traces".
+    """
+    if result.outcome == "executed":
+        return BusEvent(
+            EVENT_ACTION_EXECUTED, {"domain": domain, "service": service, "entity_id": entity_id}
+        )
+    if result.outcome == "pending_approval" and result.approval_id:
+        return BusEvent(
+            EVENT_APPROVAL_REQUESTED,
+            {
+                "approval_id": result.approval_id,
+                "domain": domain,
+                "service": service,
+                "entity_id": entity_id,
+            },
+        )
+    return None
+
+
+def approval_resolution_event(
+    result: ActionResult, *, approval_id: str, decision: Literal["approve", "deny"]
+) -> BusEvent:
+    """The HA bus event for a ``kinward.approve_action``/``kinward.deny_action`` outcome.
+
+    Correlates by ``approval_id`` alone rather than looking up the resolved action's
+    domain/service/entity_id - the automation author already has that from whatever created
+    the approval in the first place, and this avoids an extra lookup against
+    already-resolved (no longer "pending") state.
+    """
+    return BusEvent(
+        EVENT_APPROVAL_RESOLVED,
+        {"approval_id": approval_id, "decision": decision, "outcome": result.outcome},
+    )
+
+
 class KinwardApiClient:
     """Thin async wrapper; all response interpretation lives in the pure classify_* functions."""
 

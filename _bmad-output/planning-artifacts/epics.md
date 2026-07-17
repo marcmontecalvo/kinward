@@ -658,6 +658,26 @@ Use HA as the physical-world authority while Kinward adds household language, po
 - Raw entity/service syntax is limited to authorized technical diagnostics.
 - Mapping changes are versioned and invalid mappings fail safely.
 
+> **Implemented (2026-07-17), v0 override layer:** a new `home_assistant_resource_labels` table
+> (`HomeAssistantResourceLabelRecord`, migration `012_ha_resource_labels`) holds admin-set,
+> versioned (`record_version`) household-language labels keyed by HA `entity_id`, editable via
+> `GET`/`PUT`/`DELETE /settings/home-assistant-resource-labels[/​{entity_id}]` (same
+> integration-token gating as `/settings/home-assistant-tool-policy`; not yet surfaced in the
+> options flow UI, same gap already tracked for that endpoint). `domain/household_resource_labels.
+> resolve_label` is the actual mapping: admin override, else HA's own `attributes.friendly_name`
+> (already household language - the homeowner named it in HA), else the raw `entity_id` - each
+> tier fails safely into the next (a blank/whitespace override is treated as absent, never
+> displayed as empty). `application/conversation.handle_conversation_request`'s system-prompt
+> grounding (both the entity/state summary and the "most recently changed"/"currently active
+> timer" note) now renders through this resolver instead of raw entity ids - "ordinary outputs use
+> household language" holds for every household-facing surface Kinward currently generates text
+> for. `PUT` rejects a malformed `entityId` (not `domain.object_id` shape) with `422
+> invalid_entity_id` rather than storing it - "invalid mappings fail safely" at the boundary, not
+> just at resolution time. Raw entity ids remain fully visible on `custom_components/kinward/
+> diagnostics.py` and the REST contract itself - "authorized technical diagnostics" - unaffected by
+> this pass. Tests in `tests/test_household_resource_labels.py`, `tests/test_resource_labels.py`,
+> `tests/test_conversation.py`, `tests/test_integration_api.py`.
+
 ### Story 7.2: Read fresh HA state through a provider-neutral port
 
 - Observed state includes source identity, observation time, availability, and freshness.
@@ -693,6 +713,21 @@ Use HA as the physical-world authority while Kinward adds household language, po
 > (current-room > current-assistant > household-window; ringing > only-active > room >
 > household-manageable) and nothing can yet act on a resolved device or timer - see
 > `docs/architecture/operational-household-context.md`.
+>
+> **Implemented (2026-07-17), freshness/availability metadata:** `domain/ha_observation.py`'s new
+> `ObservedState` (`entity_id`/`state`/`attributes`/`source`/`observed_at`/`last_changed`/
+> `available`) wraps every raw HA state row read during a conversation turn - `source` is always
+> `"home_assistant"` today (Kinward has exactly one state provider) but is modeled explicitly since
+> this story frames the read path as "provider-neutral". `is_current()` requires both availability
+> (HA state not `unavailable`/`unknown`) and freshness (`observed_at` within a bounded window of
+> "now") before a reading may be shown as the entity's current state; the system-prompt summary
+> (`conversation._home_state_summary`) now omits any entity that fails that check rather than
+> printing a possibly-stale/unavailable state value verbatim, and surfaces an omitted-count note
+> instead so the assistant can honestly say it can't see something. Freshness is close to a no-op
+> today - there is still no caching layer, every read is fetched live within the same request - but
+> the check now exists explicitly rather than being an unstated assumption, so a future
+> caching/batching path can't silently start presenting a held-over reading as current without this
+> catching it. Tests in `tests/test_ha_observation.py`, `tests/test_conversation.py`.
 
 ### Story 7.3: Execute and reconcile HA mutations
 
@@ -742,21 +777,53 @@ Use HA as the physical-world authority while Kinward adds household language, po
 > observed, completed, failed, and unknown remain separate" distinction this story's own AC asks for, one
 > layer down from where the enum can't hold it.
 >
-> **Not built - the full "fresh matching HA observation" rule**: a non-`None` synchronous `call_service`
-> response is treated as sufficient evidence of `executed`, the same scoping discipline the read-path note
-> above used ("no per-entity freshness/availability metadata surfaced yet"). There is no per-service
-> expected-state confirmation matrix (e.g. verifying `light.turn_off` actually left the entity `off`) and
-> no async reconciliation job (`worker.py` remains heartbeat-only) - "ambiguous or missing observations
-> preserve unknown state until reconciliation" only half-holds: the ambiguity is recorded, nothing
-> currently reconciles it. Tests in `tests/test_tool_permission.py`, `tests/test_pending_actions.py`
-> (including the `not_configured` vs. `ha_request_failed_after_send` distinction), and
-> `tests/test_integration_api.py`.
+> Tests in `tests/test_tool_permission.py`, `tests/test_pending_actions.py` (including the
+> `not_configured` vs. `ha_request_failed_after_send` distinction), and `tests/test_integration_api.py`.
+>
+> **Implemented (2026-07-17), the full "fresh matching HA observation" rule:** `domain/
+> expected_state.py`'s `EXPECTED_STATE_BY_SERVICE` gives a deterministic expected end state for
+> every capability-allowlisted `(domain, service)` pair with one (e.g. `light.turn_on` -> `"on"`,
+> `lock.lock` -> `"locked"`) - "toggle" services have no fixed end state and are deliberately left
+> unmapped, keeping the older "a non-`None` response is sufficient evidence" rule for those only.
+> `HomeAssistantClient.get_state()` (new, `GET /api/states/{entity_id}`) gives `_submit_and_confirm`
+> a fresh single-entity read immediately after a successful `call_service`; a match resolves
+> `executed`/`completed` as before, but a mismatch or unreadable state now resolves `failed`/
+> `unknown` - the same fail-closed-`ApprovalRecord`/honest-`unknown`-`ActivityRecord` split already
+> used for the "response lost after send" case, extended to "response received but never confirmed".
+>
+> Ambiguous rows no longer sit at `unknown` forever: `worker.reconcile_unknown_activity` (wired into
+> the existing heartbeat loop alongside `expire_pending_observations`) re-reads every `unknown`-
+> outcome `ActivityRecord`'s entity, resolves it to `completed` on a fresh match, or gives up to
+> `failed` past a fixed one-hour `RECONCILIATION_GIVE_UP_AFTER` window - "ambiguous or missing
+> observations preserve unknown state until reconciliation" now fully holds rather than "the
+> ambiguity is recorded, nothing currently reconciles it". Tests in `tests/test_pending_actions.py`
+> (mismatch/missing-observation/toggle-skip cases) and `tests/test_worker.py`
+> (confirm/leave-unknown/give-up/skip-undeterministic cases).
 
 ### Story 7.4: Add purpose-specific HA automation hooks
 
 - Kinward exposes documented events, actions, triggers, or conditions only when they express stable household intent.
 - Hooks avoid leaking private details into HA automation traces.
 - Generic entity-state automation remains possible for safe compact state.
+
+> **Implemented (2026-07-17), v0 event set:** three documented HA bus events -
+> `kinward_action_executed`, `kinward_approval_requested`, `kinward_approval_resolved` - fire from
+> `custom_components/kinward/__init__.py`'s existing `request_action`/`approve_action`/
+> `deny_action` service handlers. Which event (if any) fires, and its payload, is computed by pure
+> functions in `api.py` (`action_outcome_event`/`approval_resolution_event`, unit-tested without a
+> Home Assistant test harness, matching this package's existing pure/impure split) so `__init__.py`
+> itself only calls `hass.bus.async_fire(event.event_type, event.data)` - deliberately not unit
+> tested here, since this dev environment has no `homeassistant` package installed to exercise it
+> against (see `custom_components/kinward/tests/conftest.py`'s docstring). Only "executed"/
+> "pending_approval"/"resolved" fire - "denied"/"failed" outcomes of an immediate `request_action`
+> call do not, since those are rejections rather than something that happened in the house.
+> Payloads are limited to the structural HA target (`domain`/`service`/`entity_id`) plus
+> correlation ids (`approval_id`, `decision`, `outcome`) - never the caller-supplied free-text
+> `explanation` or any person identifier, satisfying "hooks avoid leaking private details into HA
+> automation traces". Documented in `custom_components/kinward/README.md`'s new "Events" section.
+> Generic entity-state automation triggers were never touched by this pass and remain fully
+> available - "additive, not a replacement" per that same doc. Tests in
+> `custom_components/kinward/tests/test_api_classification.py`.
 
 # Epic 8: Administration, Activity, Health, and Diagnostics
 
@@ -1207,10 +1274,10 @@ promise ("useful briefings and calendar-aware attention") still entirely unmet.
 
 | Story | Status | Remaining work |
 | --- | --- | --- |
-| 7.1 Map Kinward household concepts to HA resources | **Not started** | No versioned/household-language mapping layer exists; only the raw `(domain, service)` capability allowlist in `domain/tool_permission.py`. |
-| 7.2 Read fresh HA state through a provider-neutral port | **Partial** | v0 read-path grounding and a live "recent device/timer" heuristic exist. No per-entity freshness/availability metadata is surfaced yet, and there's no persisted `recent_actions`/`active_timers` store (deliberately deferred until live-lookup proves insufficient). |
-| 7.3 Execute and reconcile HA mutations | **Partial** | v0 write path exists (capability allowlist, pending-action approval gating). No per-service expected-state confirmation and no async reconciliation job — a non-`None` synchronous response is treated as sufficient evidence of completion, so "fresh matching HA observation" only half-holds. |
-| 7.4 Purpose-specific HA automation hooks | **Not started** | No documented events/triggers/conditions exposed for HA automations yet. |
+| 7.1 Map Kinward household concepts to HA resources | **Done (v0)** | Admin-editable, versioned per-entity label overrides (`home_assistant_resource_labels`) fall back to HA's own `friendly_name`, then the raw entity id; wired into the conversation grounding path. Not yet surfaced in the integration's options-flow UI (REST contract only), same gap already tracked for the tool-policy endpoint. |
+| 7.2 Read fresh HA state through a provider-neutral port | **Done (v0)** | Read-path grounding, the live "recent device/timer" heuristic, and now explicit per-entity availability/freshness metadata (`domain/ha_observation.py`) all exist - unavailable/stale entities are omitted from what's presented as current state. Still no persisted `recent_actions`/`active_timers` store (deliberately deferred until live-lookup proves insufficient) and freshness checking is close to a no-op absent a caching layer. |
+| 7.3 Execute and reconcile HA mutations | **Done (v0)** | v0 write path (capability allowlist, pending-action approval gating) plus a per-service expected-state confirmation matrix and an async reconciliation job (`worker.reconcile_unknown_activity`) now exist - "fresh matching HA observation" and "ambiguous... observations preserve unknown state until reconciliation" both fully hold for the five allowlisted capabilities. Reconciliation gives up (resolves to `failed`) after a fixed one-hour window rather than retrying indefinitely. |
+| 7.4 Purpose-specific HA automation hooks | **Done (v0)** | Three documented HA bus events (`kinward_action_executed`/`kinward_approval_requested`/`kinward_approval_resolved`) fire from the existing action/approval service handlers, payload limited to structural HA target + correlation ids (no explanation text, no person identifiers). |
 
 ### Epic 8 — Administration, Activity, Health, and Diagnostics
 
@@ -1243,7 +1310,10 @@ promise ("useful briefings and calendar-aware attention") still entirely unmet.
 3. One medium gap: the admin-privacy regression test (§7).
 4. One large greenfield epic: calendars and briefings (Epic 5) — nothing else in the backlog is
    blocked *on* code that doesn't exist except this.
-5. Two epics partially blocked *by* Epic 5: general approval/coordination (6.2/6.3) and the
-   HA-mapping/automation-hooks polish (7.1/7.4) are lower-priority and can trail real usage.
+5. One epic partially blocked *by* Epic 5: general approval/coordination (6.2/6.3) is lower-priority
+   and can trail real usage. Epic 7 (7.1–7.4) reached a v0 slice of every story as of 2026-07-17 -
+   remaining polish (options-flow UI surfacing for tool-policy/resource-labels, tiered
+   reference-resolution ranking, a persisted `recent_actions`/`active_timers` store) can also trail
+   real usage rather than blocking it.
 6. Backup/restore/import (9.1–9.3) and evidence-gated extensions (Epic 10) are intentionally not
    next — revisit only after the above is running for real.

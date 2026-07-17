@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import Annotated, Any, Literal, cast
 
@@ -84,6 +85,11 @@ from kinward.application.provider_settings import (
     get_or_create_provider_settings,
     update_provider_settings,
 )
+from kinward.application.resource_labels import (
+    delete_resource_label,
+    list_resource_labels,
+    set_resource_label,
+)
 from kinward.config import Settings
 from kinward.domain.pending_action import ApprovalResolutionError
 from kinward.memory.contracts import KnowledgeStoreProvider
@@ -93,6 +99,7 @@ from kinward.persistence.models import (
     ApprovalRecord,
     AssistantPolicyRecord,
     AssistantRecord,
+    HomeAssistantResourceLabelRecord,
     HomeAssistantToolPolicyRecord,
     KnowledgeFactRecord,
     PersonRecord,
@@ -1189,6 +1196,87 @@ async def integration_update_tool_policy(
     policy = await update_tool_policy(session, household_id=summary.id, permissions=body.permissions)
     await session.commit()
     return ToolPolicyPayload.from_record(policy)
+
+
+_ENTITY_ID_PATTERN = re.compile(r"^[a-z0-9_]+\.[a-z0-9_]+$")
+
+
+class ResourceLabelPayload(BaseModel):
+    entity_id: str = Field(serialization_alias="entityId")
+    label: str
+    record_version: int = Field(serialization_alias="recordVersion")
+
+    @classmethod
+    def from_record(cls, record: HomeAssistantResourceLabelRecord) -> ResourceLabelPayload:
+        return cls(entity_id=record.entity_id, label=record.label, record_version=record.record_version)
+
+
+class SetResourceLabelRequest(BaseModel):
+    entity_id: str = Field(alias="entityId", min_length=3, max_length=255)
+    label: str = Field(min_length=1, max_length=120)
+
+
+def _invalid_entity_id() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        detail={
+            "code": "invalid_entity_id",
+            "message": "entityId must look like a Home Assistant entity id ('domain.object_id').",
+        },
+    )
+
+
+@router.get(
+    "/settings/home-assistant-resource-labels", response_model=list[ResourceLabelPayload]
+)
+async def integration_list_resource_labels(
+    _token: IntegrationToken, session: Session
+) -> list[ResourceLabelPayload]:
+    """Epic 7 Story 7.1: admin-set household-language label overrides for HA entities.
+    Gated by the integration bearer token alone, matching ``/settings/home-assistant-tool-policy``."""
+    summary = await fetch_household_summary(session)
+    if summary is None:
+        raise _household_not_configured()
+    labels = await list_resource_labels(session, household_id=summary.id)
+    await session.commit()
+    return [ResourceLabelPayload.from_record(record) for record in labels]
+
+
+@router.put(
+    "/settings/home-assistant-resource-labels", response_model=ResourceLabelPayload
+)
+async def integration_set_resource_label(
+    body: SetResourceLabelRequest, _token: IntegrationToken, session: Session
+) -> ResourceLabelPayload:
+    """Create or update one entity's override label. ``entityId`` must look like a real HA
+    identifier (``domain.object_id``) - an invalid shape is rejected here rather than stored
+    and silently failing to resolve later (Story 7.1: "invalid mappings fail safely")."""
+    summary = await fetch_household_summary(session)
+    if summary is None:
+        raise _household_not_configured()
+    if not _ENTITY_ID_PATTERN.match(body.entity_id):
+        raise _invalid_entity_id()
+    record = await set_resource_label(
+        session, household_id=summary.id, entity_id=body.entity_id, label=body.label.strip()
+    )
+    await session.commit()
+    return ResourceLabelPayload.from_record(record)
+
+
+@router.delete(
+    "/settings/home-assistant-resource-labels/{entity_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def integration_delete_resource_label(
+    entity_id: str, _token: IntegrationToken, session: Session
+) -> None:
+    """Removing an override is always a safe no-op even if none existed - the entity falls
+    back to HA's own ``friendly_name``, then its raw id (Story 7.1's fallback chain)."""
+    summary = await fetch_household_summary(session)
+    if summary is None:
+        raise _household_not_configured()
+    await delete_resource_label(session, household_id=summary.id, entity_id=entity_id)
+    await session.commit()
 
 
 class RequestActionRequest(BaseModel):

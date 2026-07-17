@@ -1416,3 +1416,76 @@ async def test_activity_endpoint_filters_by_caller_role() -> None:
             "/api/v1/integration/activity?haUserId=ha-user-marc&limit=0", headers=headers
         )
         assert bounds_rejected.status_code == 422
+
+
+async def test_resource_labels_round_trip_via_api() -> None:
+    client, factory = await _client()
+    async with client:
+        await _seed_household(factory)
+        token = await _issue_token(factory)
+        headers = {"Authorization": f"Bearer {token}"}
+
+        empty = await client.get(
+            "/api/v1/integration/settings/home-assistant-resource-labels", headers=headers
+        )
+        assert empty.status_code == 200
+        assert empty.json() == []
+
+        created = await client.put(
+            "/api/v1/integration/settings/home-assistant-resource-labels",
+            headers=headers,
+            json={"entityId": "light.office", "label": "Office Light"},
+        )
+        assert created.status_code == 200
+        body = created.json()
+        assert body == {"entityId": "light.office", "label": "Office Light", "recordVersion": 1}
+
+        updated = await client.put(
+            "/api/v1/integration/settings/home-assistant-resource-labels",
+            headers=headers,
+            json={"entityId": "light.office", "label": "Study Light"},
+        )
+        assert updated.status_code == 200
+        assert updated.json()["label"] == "Study Light"
+        assert updated.json()["recordVersion"] == 2
+
+        listed = await client.get(
+            "/api/v1/integration/settings/home-assistant-resource-labels", headers=headers
+        )
+        assert listed.status_code == 200
+        assert [item["entityId"] for item in listed.json()] == ["light.office"]
+
+        deleted = await client.delete(
+            "/api/v1/integration/settings/home-assistant-resource-labels/light.office",
+            headers=headers,
+        )
+        assert deleted.status_code == 204
+
+        after_delete = await client.get(
+            "/api/v1/integration/settings/home-assistant-resource-labels", headers=headers
+        )
+        assert after_delete.status_code == 200
+        assert after_delete.json() == []
+
+        # Deleting again is a safe no-op, not an error.
+        again = await client.delete(
+            "/api/v1/integration/settings/home-assistant-resource-labels/light.office",
+            headers=headers,
+        )
+        assert again.status_code == 204
+
+
+async def test_resource_labels_rejects_a_malformed_entity_id() -> None:
+    client, factory = await _client()
+    async with client:
+        await _seed_household(factory)
+        token = await _issue_token(factory)
+        headers = {"Authorization": f"Bearer {token}"}
+
+        response = await client.put(
+            "/api/v1/integration/settings/home-assistant-resource-labels",
+            headers=headers,
+            json={"entityId": "not-a-valid-entity-id", "label": "Office Light"},
+        )
+        assert response.status_code == 422
+        assert response.json()["detail"]["code"] == "invalid_entity_id"

@@ -222,6 +222,33 @@ class HomeAssistantToolPolicyRecord(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
 
 
+class HomeAssistantResourceLabelRecord(Base):
+    """Admin-editable household-language label override for one HA entity (Epic 7 Story 7.1:
+    "ordinary outputs use household language... mapping changes are versioned").
+
+    Not every entity has a row - only ones where the household wants to override HA's own
+    ``friendly_name`` attribute for what Kinward says aloud; see
+    ``domain.household_resource_labels.resolve_label`` for the fallback chain used when an
+    entity has no override here.
+    """
+
+    __tablename__ = "home_assistant_resource_labels"
+    __table_args__ = (
+        UniqueConstraint("household_id", "entity_id", name="uq_ha_resource_labels_entity"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    household_id: Mapped[str] = mapped_column(ForeignKey("households.id", ondelete="CASCADE"), nullable=False)
+    entity_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    label: Mapped[str] = mapped_column(String(120), nullable=False)
+    record_version: Mapped[int] = mapped_column(default=1, nullable=False)
+    classification: Mapped[str] = mapped_column(String(32), default="household-shared", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now, nullable=False
+    )
+
+
 class ActivityRecord(Base):
     __tablename__ = "activity"
 

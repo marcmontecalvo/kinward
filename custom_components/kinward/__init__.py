@@ -17,6 +17,8 @@ from .api import (
     ContextSuccess,
     KinwardApiClient,
     PeopleFailure,
+    action_outcome_event,
+    approval_resolution_event,
 )
 from .const import CONF_BASE_URL, CONF_TOKEN, DOMAIN
 from .coordinator import KinwardDataUpdateCoordinator
@@ -200,6 +202,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             if isinstance(result, ActionFailure):
                 raise ServiceValidationError(result.reason)
             await stored_coordinator.async_request_refresh()
+            event = action_outcome_event(
+                result,
+                domain=call.data["domain"],
+                service=call.data["service"],
+                entity_id=call.data["entity_id"],
+            )
+            if event is not None:
+                hass.bus.async_fire(event.event_type, event.data)
 
     async def _handle_approve_action(call: ServiceCall) -> None:
         """Approve a pending action by id, as shown on
@@ -219,6 +229,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             if isinstance(result, ActionFailure):
                 raise ServiceValidationError(result.reason)
             await stored_coordinator.async_request_refresh()
+            event = approval_resolution_event(
+                result, approval_id=call.data["approval_id"], decision="approve"
+            )
+            hass.bus.async_fire(event.event_type, event.data)
 
     async def _handle_deny_action(call: ServiceCall) -> None:
         """Deny a pending action by id, as shown on ``sensor.kinward_pending_approvals``."""
@@ -234,6 +248,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             if isinstance(result, ActionFailure):
                 raise ServiceValidationError(result.reason)
             await stored_coordinator.async_request_refresh()
+            event = approval_resolution_event(
+                result, approval_id=call.data["approval_id"], decision="deny"
+            )
+            hass.bus.async_fire(event.event_type, event.data)
 
     if not hass.services.has_service(DOMAIN, "refresh"):
         hass.services.async_register(DOMAIN, "refresh", _handle_refresh)
