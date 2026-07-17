@@ -12,7 +12,9 @@ from kinward.persistence.models import (
     Base,
     HouseholdRecord,
     IntegrationTokenRecord,
+    KnowledgeFactRecord,
     PersonRecord,
+    ProviderSettingsRecord,
     TopicTurnRecord,
 )
 from kinward.persistence.session import session_dependency
@@ -920,6 +922,208 @@ async def test_assistant_access_mode_round_trips_and_gates_cross_person_conversa
         )
         assert allowed.json()["outcome"] == "completed"
         assert allowed.json()["mapped"] is True
+
+
+async def _seed_household_with_knowledge_provider(factory):  # type: ignore[no-untyped-def]
+    """A household with one synced person and a configured (unreachable) llm_wiki
+
+    provider - enough for the API-level lifecycle to run without a live server,
+    since seeded facts below never carry an ``external_fact_id`` to round-trip.
+    """
+    async with factory() as session:
+        household = HouseholdRecord(name="Example House")
+        session.add(household)
+        await session.flush()
+        person = PersonRecord(
+            household_id=household.id,
+            display_name="Example Adult",
+            role="admin",
+            profile_kind="adult",
+            ha_person_id="ha-person-1",
+            ha_user_id="ha-user-1",
+        )
+        session.add(person)
+        session.add(
+            ProviderSettingsRecord(
+                household_id=household.id,
+                knowledge_backend="llm_wiki",
+                llm_wiki_url="http://llm-wiki.invalid",
+            )
+        )
+        await session.commit()
+        return household.id, person.id
+
+
+async def _seed_pending_observation(factory, *, household_id: str, owner_person_id: str, predicate: str = "likes"):  # type: ignore[no-untyped-def]
+    from datetime import UTC, datetime, timedelta
+
+    async with factory() as session:
+        record = KnowledgeFactRecord(
+            household_id=household_id,
+            owner_person_id=owner_person_id,
+            subject="Example Adult",
+            predicate=predicate,
+            value="tea",
+            privacy="personal",
+            source_system="conversation-inference",
+            recurrence_key=f"test-key-{predicate}",
+            knowledge_state="pending",
+            created_at=datetime.now(UTC),
+            expires_at=datetime.now(UTC) + timedelta(days=30),
+        )
+        session.add(record)
+        await session.commit()
+        return record.id
+
+
+async def test_pending_observation_confirm_and_reject_round_trip_via_api() -> None:
+    client, factory = await _client()
+    async with client:
+        household_id, person_id = await _seed_household_with_knowledge_provider(factory)
+        keep_id = await _seed_pending_observation(
+            factory, household_id=household_id, owner_person_id=person_id, predicate="likes"
+        )
+        drop_id = await _seed_pending_observation(
+            factory, household_id=household_id, owner_person_id=person_id, predicate="dislikes"
+        )
+        token = await _issue_token(factory)
+        headers = {"Authorization": f"Bearer {token}"}
+
+        listed = await client.get(
+            "/api/v1/integration/knowledge/observations?haUserId=ha-user-1", headers=headers
+        )
+        assert listed.status_code == 200
+        assert {item["id"] for item in listed.json()} == {keep_id, drop_id}
+
+        confirmed = await client.post(
+            f"/api/v1/integration/knowledge/observations/{keep_id}/confirm",
+            headers=headers,
+            json={"haUserId": "ha-user-1"},
+        )
+        assert confirmed.status_code == 200
+        assert confirmed.json()["knowledgeState"] == "confirmed"
+
+        rejected = await client.post(
+            f"/api/v1/integration/knowledge/observations/{drop_id}/reject",
+            headers=headers,
+            json={"haUserId": "ha-user-1"},
+        )
+        assert rejected.status_code == 204
+
+        remaining = await client.get(
+            "/api/v1/integration/knowledge/observations?haUserId=ha-user-1", headers=headers
+        )
+        assert remaining.json() == []
+
+        facts = await client.get(
+            "/api/v1/integration/knowledge/facts?haUserId=ha-user-1", headers=headers
+        )
+        assert [fact["id"] for fact in facts.json()] == [keep_id]
+
+
+async def test_observation_confirm_fails_closed_for_unmapped_or_non_owning_user() -> None:
+    client, factory = await _client()
+    async with client:
+        household_id, person_id = await _seed_household_with_knowledge_provider(factory)
+        fact_id = await _seed_pending_observation(
+            factory, household_id=household_id, owner_person_id=person_id
+        )
+        async with factory() as session:
+            other = PersonRecord(
+                household_id=household_id,
+                display_name="Other Adult",
+                role="member",
+                profile_kind="adult",
+                ha_person_id="ha-person-2",
+                ha_user_id="ha-user-2",
+            )
+            session.add(other)
+            await session.commit()
+        token = await _issue_token(factory)
+        headers = {"Authorization": f"Bearer {token}"}
+
+        unmapped = await client.post(
+            f"/api/v1/integration/knowledge/observations/{fact_id}/confirm",
+            headers=headers,
+            json={"haUserId": "not-mapped"},
+        )
+        assert unmapped.status_code == 404
+        assert unmapped.json()["detail"]["code"] == "knowledge_fact_not_found"
+
+        not_owner = await client.post(
+            f"/api/v1/integration/knowledge/observations/{fact_id}/confirm",
+            headers=headers,
+            json={"haUserId": "ha-user-2"},
+        )
+        assert not_owner.status_code == 404
+        assert not_owner.json()["detail"]["code"] == "knowledge_fact_not_found"
+
+
+async def test_observation_confirm_requires_a_configured_knowledge_provider() -> None:
+    client, factory = await _client()
+    async with client:
+        async with factory() as session:
+            household = HouseholdRecord(name="Example House")
+            session.add(household)
+            await session.flush()
+            person = PersonRecord(
+                household_id=household.id,
+                display_name="Example Adult",
+                role="admin",
+                profile_kind="adult",
+                ha_person_id="ha-person-1",
+                ha_user_id="ha-user-1",
+            )
+            session.add(person)
+            await session.commit()
+            household_id, person_id = household.id, person.id
+        fact_id = await _seed_pending_observation(
+            factory, household_id=household_id, owner_person_id=person_id
+        )
+        token = await _issue_token(factory)
+        headers = {"Authorization": f"Bearer {token}"}
+
+        response = await client.post(
+            f"/api/v1/integration/knowledge/observations/{fact_id}/confirm",
+            headers=headers,
+            json={"haUserId": "ha-user-1"},
+        )
+        assert response.status_code == 409
+        assert response.json()["detail"]["code"] == "knowledge_provider_unavailable"
+
+
+async def test_correct_and_delete_a_confirmed_fact_via_api() -> None:
+    client, factory = await _client()
+    async with client:
+        household_id, person_id = await _seed_household_with_knowledge_provider(factory)
+        fact_id = await _seed_pending_observation(
+            factory, household_id=household_id, owner_person_id=person_id
+        )
+        token = await _issue_token(factory)
+        headers = {"Authorization": f"Bearer {token}"}
+        await client.post(
+            f"/api/v1/integration/knowledge/observations/{fact_id}/confirm",
+            headers=headers,
+            json={"haUserId": "ha-user-1"},
+        )
+
+        corrected = await client.patch(
+            f"/api/v1/integration/knowledge/facts/{fact_id}",
+            headers=headers,
+            json={"haUserId": "ha-user-1", "value": "green tea", "confidence": 0.9},
+        )
+        assert corrected.status_code == 200
+        assert corrected.json()["value"] == "green tea"
+
+        deleted = await client.delete(
+            f"/api/v1/integration/knowledge/facts/{fact_id}?haUserId=ha-user-1", headers=headers
+        )
+        assert deleted.status_code == 204
+
+        after_delete = await client.get(
+            "/api/v1/integration/knowledge/facts?haUserId=ha-user-1", headers=headers
+        )
+        assert after_delete.json() == []
 
 
 async def test_invalid_access_mode_is_rejected_via_api() -> None:
