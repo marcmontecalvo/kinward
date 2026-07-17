@@ -240,3 +240,83 @@ this pass). All verified with no defects:
 also passed post-migration (the `.env.example` leg collides with the live
 household stack's own port 8000, same as the 2.1/2.2 pass - not a
 regression).
+
+**2026-07-17 browser-driven trial** (the first genuinely human/browser pass to
+close out Story 1.7 - all earlier passes above drove the REST API directly and
+explicitly left "the config flow's and dashboard's actual visual rendering"
+unverified). Logged into the already-running long-lived `--profile ha` stack
+as the household's own admin user (`marc`) through a real browser session and
+worked the checklist steps that need eyes on rendered UI, not just API
+responses.
+
+Verified with no defects:
+
+- **Steps 1-2**: Settings -> Devices & Services -> Kinward shows one hub
+  entry titled "Example House" (the real household name, not a placeholder),
+  1 device, 9 entities. The config/options flow renders and completes
+  correctly in the browser.
+- **Step 3**: `person.marc` and `person.lisa` both show real states;
+  `binary_sensor.kinward_backend` is `on`; `sensor.kinward_people`'s `people`
+  attribute lists both with the correct `role` (`admin`/`member`).
+- **Step 4**: Developer Tools -> Actions, `kinward.refresh` performed with no
+  error; `sensor.kinward_last_refresh` advanced to the call's timestamp.
+- **Step 6**: `conversation.process` targeting `conversation.kinward`, run as
+  the synced admin user, returned a real generated reply (a model was already
+  configured from an earlier pass) with a `conversation_id`. A follow-up
+  request reusing that `conversation_id` correctly recalled the first turn as
+  prior context and returned the same `conversation_id` - continuity
+  confirmed end-to-end from the browser (earlier passes only confirmed this
+  by inspecting server-side tables).
+- **Step 7**: `docker compose stop api`, waited one polling interval (60s) -
+  `binary_sensor.kinward_backend` -> `off` and every other Kinward entity ->
+  `unavailable`, not stale data presented as current. `docker compose start
+  api`, waited one more interval - full recovery, including an automatic
+  refresh (`sensor.kinward_last_refresh` advanced on its own with no manual
+  `kinward.refresh` call).
+
+Two real defects found, exactly the kind step 8 and this file's header ask to
+be recorded rather than silently worked around:
+
+1. **The "Household roster" People/Pets markdown cards rendered as raw text,
+   not tables** (`custom_components/kinward/kinward-dashboard.yaml`). Root
+   cause: both cards used a *folded* YAML block scalar (`content: >-`), which
+   collapses the template's single newlines into spaces before Jinja ever
+   runs - so the `{% for %}` loop and the resulting `| Name | Role | HA login
+   |` GFM table syntax were flattened onto one line, which the markdown card
+   doesn't parse as a table. Confirmed both visually (a screenshot showing
+   literal pipe-delimited text under "People" instead of a rendered table)
+   and by inspecting the YAML. **Fixed in this pass**: switched both cards'
+   `content` to a literal block scalar (`|-`), which preserves the template's
+   newlines through evaluation - confirmed via `yaml.safe_load` that the
+   parsed content string now contains real `\n` characters between the
+   header row, separator row, and each data row, rather than being folded
+   onto one line. (Not re-verified against the live rendered dashboard in
+   this same pass, since the running dev stack's `homeassistant` container
+   mounts the checkout this fix was made in isolation from; re-check on
+   next merge/reload.)
+2. **`sensor.kinward_household_status`'s adult/child counts can silently
+   diverge from the actually-synced roster.** Observed `adult_count: 3` while
+   `sensor.kinward_people` (and the roster table) showed only 2 currently
+   synced people. Root cause, confirmed by reading `people_sync.py` and
+   `household_summary.py`: `sync_people()` deliberately never deletes or
+   clears a `PersonRecord` when its HA `person.*` entity disappears ("real
+   removal is Epic 9's territory," per its own docstring), but
+   `fetch_household_summary()` counts *every* `PersonRecord` with
+   `profile_kind="adult"` ever created for the household, including ones no
+   longer present in HA. This is a known, intentional deferral to Epic 9, not
+   a regression - but it's a real user-facing inconsistency worth flagging
+   now: a household member reading the dashboard sees "3 adults" next to a
+   roster table listing only 2 names, with nothing explaining the gap. Not
+   fixed in this pass (Epic 9's real-removal work is the right place for it).
+
+One missing-UI observation, not a defect: the dashboard's "Today" calendar
+card (bound to the placeholder `calendar.replace_with_household_calendar`,
+never substituted in this dev stack since no calendar provider is
+configured) shows an endless loading spinner rather than a clear "entity not
+found" message. This is core Home Assistant calendar-card behavior, not
+Kinward's own code, but it's still a rough edge a real household would hit on
+first import if the calendar ID isn't substituted before the card is used.
+
+With this pass, Story 1.7's acceptance criteria have now been exercised
+end-to-end through a real browser, closing the one gap ("actual visual
+rendering") every earlier REST-driven pass explicitly left open.

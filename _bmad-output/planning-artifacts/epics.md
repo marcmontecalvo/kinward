@@ -79,7 +79,7 @@ Status as of `implementationReviewDate` above; see [§8](#8-story-by-story-statu
 
 | Epic | Outcome | Status |
 | --- | --- | --- |
-| 1 | A healthy Kinward backend and HA 2026.7.2 integration can be installed and used today. | **Built.** Only the manual day-one trial (1.7) is still outstanding. |
+| 1 | A healthy Kinward backend and HA 2026.7.2 integration can be installed and used today. | **Built and verified.** The manual day-one trial (1.7) ran end-to-end on 2026-07-17; two defects were found (one fixed, one deferred to Epic 9) — see `docs/ha-native/household-trial.md`. |
 | 2 | Household members can speak or type to their private Kinward assistant through Assist with truthful lifecycle behavior. | **Built.** Mapping, conversation entity, cancellation, and topic CRUD all exist; the fallback-assistant privacy boundary (2.5) now has a dedicated regression test. |
 | 3 | The household and account graph is safely established and managed through backend workflows and HA-hosted configuration entry points. | **Done** for everything still in scope (invitations/local accounts were cut, not just deferred). |
 | 4 | Topics, memory, knowledge, and corrections remain private, inspectable, and portable across authorized HA interactions. | **Core lifecycle built.** Auto-extracting facts from a live conversation, and reclassifying a confirmed fact's sharing class, are not wired. |
@@ -1062,9 +1062,11 @@ No custom card, custom dashboard strategy, custom panel, or standalone frontend 
 
 ## 6a. Current execution queue (2026-07-17)
 
-1. **Story 1.7** — run the actual same-day household trial. Nothing else blocks it; every dependency
-   it lists (integration, entry, entities, one summary, refresh, one conversational request, truthful
-   offline behavior) already exists in code and just needs to be exercised for real.
+1. ~~**Story 1.7**~~ — **done (2026-07-17):** the same-day household trial ran end-to-end through a
+   real browser session against the live `--profile ha` stack. See `docs/ha-native/household-trial.md`
+   for the full log; one defect (dashboard roster tables rendering as raw text) was found and fixed,
+   one (stale-person count drift in `sensor.kinward_household_status`) was found and deferred to
+   Epic 9's real-removal work.
 2. ~~**Story 8.1 remainder**~~ — **done (2026-07-17):** `config_flow.py` gained
    `async_step_reauth`/`async_step_reauth_confirm`, triggered automatically by a new
    `ConfigEntryAuthFailed` raised from the coordinator on `invalid_auth`. A rotated/expired backend
@@ -1134,7 +1136,7 @@ Legend: **Done** / **Partial** (gap noted) / **Not started** / **Deferred** (int
 | 1.4 Kinward custom integration and config flow | Done | — |
 | 1.5 Initial safe entity set | Done | — |
 | 1.6 First core-card dashboard | Done | — |
-| 1.7 Verify the same-day usable slice | **Not started** | Run the actual manual trial end-to-end and record defects/missing-UI needs. Everything it depends on already exists. |
+| 1.7 Verify the same-day usable slice | **Done (2026-07-17)** | Manual browser trial run end-to-end; see `docs/ha-native/household-trial.md`. One defect fixed (dashboard roster tables), one deferred to Epic 9 (stale-person count drift). |
 
 ### Epic 2 — Private Assistant Through Home Assistant Assist
 
@@ -1222,7 +1224,7 @@ promise ("useful briefings and calendar-aware attention") still entirely unmet.
 
 ### Roll-up: what's actually left to reach a fuller release
 
-1. Run the Story 1.7 trial (process step, not code — unblocks everything else being validated for real).
+1. ~~Run the Story 1.7 trial~~ — **done (2026-07-17)**; see `docs/ha-native/household-trial.md`.
 3. One medium gap: the admin-privacy regression test (§7).
 4. One large greenfield epic: calendars and briefings (Epic 5) — nothing else in the backlog is
    blocked *on* code that doesn't exist except this.
