@@ -27,11 +27,13 @@ from kinward.application.conversation import (
 from kinward.integrations.home_assistant import HomeAssistantClient
 from kinward.llm.contracts import ModelMessage, ModelReply
 from kinward.llm.providers import NO_MODEL_RESPONSE
+from kinward.memory.contracts import KnowledgeFact
 from kinward.memory.honcho import HonchoMemoryProvider
 from kinward.persistence.models import (
     AssistantRecord,
     Base,
     HouseholdRecord,
+    KnowledgeFactRecord,
     PersonRecord,
     TopicRecord,
     TopicTurnRecord,
@@ -49,6 +51,48 @@ class RecordingModelProvider:
     async def generate_reply(self, *, system_prompt: str, messages: Sequence[ModelMessage]) -> ModelReply:
         self.calls.append((system_prompt, tuple(messages)))
         return ModelReply(content=self.reply_text)
+
+
+@dataclass
+class TwoStageModelProvider:
+    """Fake model returning ``reply_text`` for the first call (the turn's reply) and
+
+    ``extraction_json`` for every call after that (the Story 4.3 structured-extraction step).
+    """
+
+    name: str = "fake"
+    reply_text: str = "Got it, I'll remember that."
+    extraction_json: str = '{"observations": []}'
+    calls: list[tuple[str, tuple[ModelMessage, ...]]] = field(default_factory=list)
+
+    async def generate_reply(self, *, system_prompt: str, messages: Sequence[ModelMessage]) -> ModelReply:
+        self.calls.append((system_prompt, tuple(messages)))
+        content = self.reply_text if len(self.calls) == 1 else self.extraction_json
+        return ModelReply(content=content)
+
+
+@dataclass
+class RecordingKnowledgeProvider:
+    """Fake ``KnowledgeStoreProvider`` that records every ``propose_fact`` call it receives."""
+
+    name: str = "fake-knowledge"
+    calls: list[dict] = field(default_factory=list)
+    _counter: int = 0
+
+    async def search_facts(self, **kwargs) -> list:  # type: ignore[no-untyped-def]
+        return []
+
+    async def propose_fact(self, **kwargs) -> KnowledgeFact:  # type: ignore[no-untyped-def]
+        self._counter += 1
+        self.calls.append(kwargs)
+        return KnowledgeFact(
+            id=f"fake-fact-{self._counter}",
+            subject=kwargs["subject"],
+            predicate=kwargs["predicate"],
+            value=kwargs["value"],
+            status="proposed",
+            privacy=kwargs["privacy"],
+        )
 
 
 async def _factory():  # type: ignore[no-untyped-def]
@@ -852,3 +896,88 @@ async def test_allowlist_mode_allows_only_listed_people() -> None:
         )
         assert denied == AccessDenied(assistant_name="Nova")
         _ = third
+
+
+async def test_a_configured_model_and_knowledge_provider_proposes_an_extracted_observation() -> None:
+    factory = await _factory()
+    async with factory() as session:
+        household, _person = await _seed_mapped_person(session)
+        model = TwoStageModelProvider(
+            extraction_json=(
+                '{"observations": [{"subject": "Example Adult", "predicate": "likes", '
+                '"value": "tea", "privacy": "personal", "confidence": 0.9}]}'
+            )
+        )
+        knowledge = RecordingKnowledgeProvider()
+
+        result = await handle_conversation_request(
+            session,
+            ha_user_id="ha-user-1",
+            text="I really like tea in the mornings.",
+            conversation_id=None,
+            language="en",
+            model=model,
+            knowledge_provider=knowledge,
+        )
+        await session.commit()
+
+        assert isinstance(result, Completed)
+        assert len(model.calls) == 2
+        assert len(knowledge.calls) == 1
+        assert knowledge.calls[0]["subject"] == "Example Adult"
+        assert knowledge.calls[0]["predicate"] == "likes"
+        assert knowledge.calls[0]["value"] == "tea"
+
+        records = (
+            await session.scalars(
+                select(KnowledgeFactRecord).where(KnowledgeFactRecord.household_id == household.id)
+            )
+        ).all()
+        assert len(records) == 1
+        assert records[0].knowledge_state == "pending"
+        assert records[0].source_system == "conversation-inference"
+
+
+async def test_extraction_is_skipped_without_a_configured_knowledge_provider() -> None:
+    factory = await _factory()
+    async with factory() as session:
+        await _seed_mapped_person(session)
+        model = TwoStageModelProvider(
+            extraction_json='{"observations": [{"subject": "x", "predicate": "y", "value": "z", "privacy": "personal"}]}'
+        )
+
+        result = await handle_conversation_request(
+            session,
+            ha_user_id="ha-user-1",
+            text="I really like tea.",
+            conversation_id=None,
+            language="en",
+            model=model,
+        )
+        await session.commit()
+
+        assert isinstance(result, Completed)
+        assert len(model.calls) == 1
+
+
+async def test_an_extraction_reply_with_no_observations_proposes_nothing() -> None:
+    factory = await _factory()
+    async with factory() as session:
+        await _seed_mapped_person(session)
+        model = TwoStageModelProvider(extraction_json='{"observations": []}')
+        knowledge = RecordingKnowledgeProvider()
+
+        result = await handle_conversation_request(
+            session,
+            ha_user_id="ha-user-1",
+            text="hello",
+            conversation_id=None,
+            language="en",
+            model=model,
+            knowledge_provider=knowledge,
+        )
+        await session.commit()
+
+        assert isinstance(result, Completed)
+        assert len(model.calls) == 2
+        assert knowledge.calls == []

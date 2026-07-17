@@ -440,10 +440,10 @@ Provide useful continuity without allowing optional memory systems or inferred k
 > `list[Message]` - meaning recall and append silently returned nothing against any real deployment
 > until fixed. Tests in `tests/test_memory_providers.py`, `tests/test_conversation.py`.
 >
-> **Not yet wired:** proposing new facts (`propose_fact`) from a conversation - this needs structured
-> extraction and confirmation policy (Story 4.3/4.4), not just "call the existing thing," and remains
-> unbuilt. Home Assistant entity-state grounding (read-only, separate from memory/knowledge) is Epic 7's
-> territory - see the Story 7.2 note.
+> **Wired (2026-07-17):** proposing new facts from a conversation now runs inline in
+> `handle_conversation_request` (`application/conversation.py`) - see the Story 4.3 note below for the
+> structured-extraction step this required. Home Assistant entity-state grounding (read-only, separate
+> from memory/knowledge) is Epic 7's territory - see the Story 7.2 note.
 
 ### Story 4.3: Manage inferred observations
 
@@ -471,11 +471,21 @@ Provide useful continuity without allowing optional memory systems or inferred k
 > `POST /knowledge/observations/{id}/reject`. Tests in `tests/test_knowledge.py`,
 > `tests/test_worker.py`, `tests/test_integration_api.py`.
 >
-> **Not yet built:** nothing calls `propose_observation` in production - the
-> conversation flow doesn't extract candidate facts from a reply and propose
-> them (that needs a structured-extraction step this pass doesn't add; see
-> Story 4.2's note). Backup/restore survival is out of scope until Stories
-> 9.1-9.3 exist (deferred to v2, per the Epic 9 goal note).
+> **Wired (2026-07-17), structured extraction:** `extract_candidate_observations` in
+> `application/knowledge.py` closes the gap noted above - a second, best-effort model call per
+> turn asks for durable personal facts from the caller's message as strict JSON
+> (`{"observations": [{"subject", "predicate", "value", "privacy", "confidence"}]}`), and any
+> reply that isn't well-formed JSON (or names an invalid `privacy`, or is missing a field) simply
+> yields no candidates rather than raising - the model provider itself already degrades to a fixed
+> "unavailable" reply on transport failure, so extraction never blocks the turn's real response.
+> `handle_conversation_request` calls it after generating the reply and proposes each candidate via
+> `propose_observation` with `source_system="conversation-inference"`, but only when both a real
+> model and a real knowledge provider are configured (`name != "none"`) - otherwise it's skipped
+> outright rather than spending a second model call on a proposal that would immediately fail
+> closed. Capped at `MAX_EXTRACTED_OBSERVATIONS` (3) candidates per turn. Tests in
+> `tests/test_knowledge.py` (parsing/validation) and `tests/test_conversation.py` (end-to-end
+> wiring). Backup/restore survival is out of scope until Stories 9.1-9.3 exist (deferred to v2, per
+> the Epic 9 goal note).
 
 ### Story 4.4: Inspect, correct, reclassify, and delete durable facts
 
@@ -1161,7 +1171,7 @@ Legend: **Done** / **Partial** (gap noted) / **Not started** / **Deferred** (int
 | --- | --- | --- |
 | 4.1 Persist authorized topics and context | Done | — |
 | 4.2 Separate private memory and household-shared knowledge | Done | — (Honcho + LLM-wiki providers wired) |
-| 4.3 Manage inferred observations | **Partial** | Core lifecycle (`propose`/`confirm`/`reject`/expire) is built, but nothing in the conversation flow actually calls `propose_observation` — no structured-extraction step exists yet, so the feature is unreachable end-to-end. |
+| 4.3 Manage inferred observations | Done | — (`propose`/`confirm`/`reject`/expire lifecycle plus the `extract_candidate_observations` structured-extraction step now wired into `handle_conversation_request`) |
 | 4.4 Inspect, correct, reclassify, and delete durable facts | **Partial** | Inspect/correct/delete are built. Reclassifying a *confirmed* fact's sharing class after the fact has no operation — needs an authorization decision (can an owner unilaterally widen personal → household-shared?) before it can be built. |
 | 4.5 Degrade memory and knowledge truthfully | Done | — (`health.py` `CapabilityHealthSet` covers model/memory/knowledge separately) |
 

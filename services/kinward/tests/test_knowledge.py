@@ -8,6 +8,9 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from kinward.application.conversation import Unmapped
 from kinward.application.knowledge import (
+    CONVERSATION_INFERENCE_SOURCE,
+    MAX_EXTRACTED_OBSERVATIONS,
+    CandidateObservation,
     Disposed,
     FactNotFound,
     NotConfirmed,
@@ -18,11 +21,13 @@ from kinward.application.knowledge import (
     correct_fact,
     delete_fact,
     expire_due_observations,
+    extract_candidate_observations,
     list_confirmed_facts,
     list_pending_observations,
     propose_observation,
     reject_observation,
 )
+from kinward.llm.contracts import ModelMessage, ModelReply
 from kinward.memory.contracts import KnowledgeFact
 from kinward.memory.providers import NullKnowledgeStoreProvider
 from kinward.persistence.models import Base, HouseholdRecord, KnowledgeFactRecord, PersonRecord
@@ -416,3 +421,112 @@ async def test_list_confirmed_facts_excludes_pending_and_other_owners() -> None:
         facts = await list_confirmed_facts(session, ha_user_id="ha-user-1")
         assert not isinstance(facts, Unmapped)
         assert [fact.id for fact in facts] == [own_confirmed.id]
+
+
+@dataclass
+class FakeExtractionModel:
+    """Fake ``ModelProvider`` that hands back a canned extraction reply and records the call."""
+
+    reply_text: str
+    name: str = "fake"
+    calls: list[tuple[str, tuple[ModelMessage, ...]]] = field(default_factory=list)
+
+    async def generate_reply(self, *, system_prompt: str, messages: Sequence[ModelMessage]) -> ModelReply:
+        self.calls.append((system_prompt, tuple(messages)))
+        return ModelReply(content=self.reply_text)
+
+
+async def test_extract_candidate_observations_parses_a_well_formed_reply() -> None:
+    model = FakeExtractionModel(
+        reply_text=(
+            '{"observations": [{"subject": "Example Adult", "predicate": "likes", '
+            '"value": "tea", "privacy": "personal", "confidence": 0.8}]}'
+        )
+    )
+
+    candidates = await extract_candidate_observations(
+        model, person_display_name="Example Adult", message_text="I really like tea."
+    )
+
+    assert candidates == [
+        CandidateObservation(
+            subject="Example Adult", predicate="likes", value="tea", privacy="personal", confidence=0.8
+        )
+    ]
+    assert len(model.calls) == 1
+    system_prompt, messages = model.calls[0]
+    assert "Example Adult" in system_prompt
+    assert messages == (ModelMessage(role="user", content="I really like tea."),)
+
+
+async def test_extract_candidate_observations_ignores_a_non_json_reply() -> None:
+    model = FakeExtractionModel(reply_text="Sure, I can help with that!")
+
+    candidates = await extract_candidate_observations(
+        model, person_display_name="Example Adult", message_text="hello"
+    )
+
+    assert candidates == []
+
+
+async def test_extract_candidate_observations_drops_entries_with_invalid_privacy_or_missing_fields() -> None:
+    # At most MAX_EXTRACTED_OBSERVATIONS items, so the cap doesn't shadow the filtering this
+    # test is actually exercising (see test_..._caps_the_number_of_candidates for that).
+    model = FakeExtractionModel(
+        reply_text=(
+            '{"observations": ['
+            '{"subject": "Example Adult", "predicate": "likes", "value": "tea", "privacy": "public"},'
+            '{"subject": "Example Adult", "predicate": "likes", "value": "coffee"},'
+            '{"subject": "Example Adult", "predicate": "likes", "value": "cocoa", "privacy": "household", '
+            '"confidence": 5}'
+            "]}"
+        )
+    )
+
+    candidates = await extract_candidate_observations(
+        model, person_display_name="Example Adult", message_text="various drinks"
+    )
+
+    assert candidates == [
+        CandidateObservation(
+            subject="Example Adult", predicate="likes", value="cocoa", privacy="household", confidence=1.0
+        )
+    ]
+
+
+async def test_extract_candidate_observations_caps_the_number_of_candidates() -> None:
+    items = ",".join(
+        f'{{"subject": "Example Adult", "predicate": "likes", "value": "item-{i}", "privacy": "personal"}}'
+        for i in range(MAX_EXTRACTED_OBSERVATIONS + 5)
+    )
+    model = FakeExtractionModel(reply_text=f'{{"observations": [{items}]}}')
+
+    candidates = await extract_candidate_observations(
+        model, person_display_name="Example Adult", message_text="lots of preferences"
+    )
+
+    assert len(candidates) == MAX_EXTRACTED_OBSERVATIONS
+
+
+async def test_proposing_an_extracted_observation_uses_the_conversation_inference_source() -> None:
+    factory = await _factory()
+    async with factory() as session:
+        household, person = await _seed_person(session)
+        provider = FakeKnowledgeProvider()
+
+        record = await propose_observation(
+            session,
+            provider,
+            household_id=household.id,
+            owner_person_id=person.id,
+            assistant_id=None,
+            subject=person.display_name,
+            predicate="likes",
+            value="tea",
+            privacy="personal",
+            source_system=CONVERSATION_INFERENCE_SOURCE,
+            confidence=0.8,
+        )
+
+        assert isinstance(record, KnowledgeFactRecord)
+        assert record.source_system == "conversation-inference"
