@@ -86,6 +86,7 @@ Status as of `implementationReviewDate` above; see [§8](#8-story-by-story-statu
 | 5 | Kinward produces useful briefings and calendar-aware attention without becoming a notification feed. | **Not started.** No calendar provider, briefing generation, change detection, or delivery policy exists yet — the largest fully greenfield epic. |
 | 6 | Meaningful actions and household coordination are approved, executed, reconciled, and recorded safely. | **v0 slice only.** Approval state machine covers HA-capability actions with no resource owner; the general multi-principal/quorum case (needed for cross-person actions like a calendar reschedule) and assistant-to-assistant coordination are unbuilt, and both are blocked on Epic 5. |
 | 7 | Home Assistant state and actions are used through policy-bound, observation-confirmed adapters. | **v0 read/write built.** No formal HA-resource mapping/versioning layer, no automation hooks (7.4), and completion still trusts a synchronous service-call response rather than a confirmed fresh observation. |
+| 8 | Administration, health, activity, and diagnostics are available without exposing protected content. | **Partial.** Health/diagnostics, most admin actions, and config-flow reauthentication all exist; there is still no read/query API for activity records (only writes). |
 | 8 | Administration, health, activity, and diagnostics are available without exposing protected content. | **Partial.** Health/diagnostics, most admin actions, and an authorized/filtered activity read API all exist; config-flow reauthentication is being implemented in a parallel pass (check its own PR for status). |
 | 9 | Backup, restore, import, retention, deletion, and recovery preserve the complete household authority model. | **Backup/restore/import deliberately deferred to v2.** Retention taxonomy and admin-invariant-safe deletion are done for what isn't blocked on Epic 6. |
 | 10 | Advanced generated views, custom cards, and broader clients remain evidence-gated extensions rather than foundation blockers. | **Correctly not started** — gated on real household usage evidence, per its own goal. |
@@ -758,6 +759,20 @@ Operate Kinward through HA-hosted configuration and backend administration witho
 > is gone - there is no options flow and nothing to map. People sync automatically; admin role is
 > derived automatically. The remaining real scope here is backend connection/reauthentication only.
 
+> **Implemented (2026-07-17):** `config_flow.py` gained `async_step_reauth`/`async_step_reauth_confirm`.
+> `coordinator._async_update_data` now raises `ConfigEntryAuthFailed` (rather than a plain
+> `UpdateFailed`) specifically for `SummaryFailure(error="invalid_auth")`, which is what makes Home
+> Assistant surface the entry's "Reauthenticate" action automatically the next time a poll sees a
+> rejected token - every other failure kind (`cannot_connect`, `household_not_configured`, `unknown`)
+> is unchanged and still just marks the entry unavailable. The reauth form only asks for a new token
+> (base URL is unchanged - a rotated backend token is the only credential that expires here), validates
+> it with the same `async_fetch_context()` call `async_step_user` uses, and refuses to attach a token
+> for a *different* household to an existing entry (`result.household_id != reauth_entry.unique_id`
+> aborts with a new `wrong_household` reason) before calling `async_update_reload_and_abort`. This
+> closes Story 8.1's "remaining real scope" noted above in full - reconnect preserves the existing
+> non-secret `base_url`, and disablement (entry disabled by the user) remains distinguishable from this
+> failure path since it never reaches `_async_update_data` at all.
+
 ### Story 8.2: Preserve Kinward administrative authority
 
 - Authorized administrators manage people, invitations, assistants, child policy, household integrations, proactive defaults, backup, and health.
@@ -1050,9 +1065,10 @@ No custom card, custom dashboard strategy, custom panel, or standalone frontend 
 1. **Story 1.7** — run the actual same-day household trial. Nothing else blocks it; every dependency
    it lists (integration, entry, entities, one summary, refresh, one conversational request, truthful
    offline behavior) already exists in code and just needs to be exercised for real.
-2. **Story 8.1 remainder** — add a reauthentication step to `custom_components/kinward/config_flow.py`
-   (only `async_step_user` and the options flow exist today); without it a rotated/expired backend
-   credential requires removing and re-adding the integration.
+2. ~~**Story 8.1 remainder**~~ — **done (2026-07-17):** `config_flow.py` gained
+   `async_step_reauth`/`async_step_reauth_confirm`, triggered automatically by a new
+   `ConfigEntryAuthFailed` raised from the coordinator on `invalid_auth`. A rotated/expired backend
+   credential no longer requires removing and re-adding the integration.
 3. ~~**Story 8.3 read side**~~ — **done (2026-07-17):** `GET /api/v1/integration/activity` reads
    `ActivityRecord` rows (written by `pending_actions.py`, `bootstrap.py`, `people_sync.py`,
    `layouts.py`, and `person_deletion.py`) with query-level person-scoped authorization for non-admins
@@ -1183,7 +1199,7 @@ promise ("useful briefings and calendar-aware attention") still entirely unmet.
 
 | Story | Status | Remaining work |
 | --- | --- | --- |
-| 8.1 Configuration-entry options and reauthentication | **Partial** | Options flow (assistant policy, tool policy, provider settings) exists. `config_flow.py` has no reauth step — only `async_step_user` and the options-flow init. |
+| 8.1 Configuration-entry options and reauthentication | Done | — (options flow for assistant/tool/provider policy, plus `async_step_reauth`/`async_step_reauth_confirm` triggered by a coordinator-raised `ConfigEntryAuthFailed`) |
 | 8.2 Preserve Kinward administrative authority | Done | — (pet CRUD, reclassify, admin-plural model) for what's still in scope |
 | 8.3 Provide authorized activity | Done | — (`GET /api/v1/integration/activity`, query-level person-scoped authorization) |
 | 8.4 Provide health and sanitized diagnostics | Done | — (`health.py` per-capability health, `diagnostics.py` redaction) |
@@ -1207,8 +1223,6 @@ promise ("useful briefings and calendar-aware attention") still entirely unmet.
 ### Roll-up: what's actually left to reach a fuller release
 
 1. Run the Story 1.7 trial (process step, not code — unblocks everything else being validated for real).
-2. Activity read API (8.3) is done. Config-flow reauth (8.1) is being implemented in a parallel pass;
-   check its own PR for status before assuming this line is stale.
 3. One medium gap: the fallback-boundary regression test (2.5) and the admin-privacy regression test (§7).
 4. One large greenfield epic: calendars and briefings (Epic 5) — nothing else in the backlog is
    blocked *on* code that doesn't exist except this.

@@ -8,6 +8,13 @@
           "base_url": "Backend URL",
           "token": "Integration token"
         }
+      },
+      "reauth_confirm": {
+        "title": "Reauthenticate Kinward",
+        "description": "The integration token for {base_url} was rejected. Enter a new integration token to reconnect this household.",
+        "data": {
+          "token": "Integration token"
+        }
       }
     },
     "error": {
@@ -18,7 +25,9 @@
       "unknown": "An unexpected error occurred."
     },
     "abort": {
-      "already_configured": "This household is already configured."
+      "already_configured": "This household is already configured.",
+      "reauth_successful": "Reauthentication was successful.",
+      "wrong_household": "That token belongs to a different Kinward household than this integration entry. Reauthentication must use a token for the same household."
     }
   },
   "options": {

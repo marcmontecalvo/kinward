@@ -78,6 +78,14 @@ incompatible API contract version, and a backend with no household set up
 yet. Nothing further is asked - there's no separate admin-designation step
 (see below).
 
+If the integration token is rotated or revoked on the backend, the next poll
+that sees it rejected marks the entry as needing reauthentication - Home
+Assistant surfaces a "Reauthenticate" action on the integration's card rather
+than the entry silently going unavailable forever. Reauthenticating only asks
+for a new token; the backend URL is unchanged. A token for a different
+household than the one already configured is refused, not silently swapped
+in.
+
 ## Configure model and memory
 
 From the integration's card on **Settings -> Devices & Services**, choose
