@@ -80,7 +80,7 @@ Status as of `implementationReviewDate` above; see [§8](#8-story-by-story-statu
 | Epic | Outcome | Status |
 | --- | --- | --- |
 | 1 | A healthy Kinward backend and HA 2026.7.2 integration can be installed and used today. | **Built.** Only the manual day-one trial (1.7) is still outstanding. |
-| 2 | Household members can speak or type to their private Kinward assistant through Assist with truthful lifecycle behavior. | **Built.** Mapping, conversation entity, cancellation, and topic CRUD all exist; the fallback-assistant privacy boundary (2.5) has no dedicated regression test. |
+| 2 | Household members can speak or type to their private Kinward assistant through Assist with truthful lifecycle behavior. | **Built.** Mapping, conversation entity, cancellation, and topic CRUD all exist; the fallback-assistant privacy boundary (2.5) now has a dedicated regression test. |
 | 3 | The household and account graph is safely established and managed through backend workflows and HA-hosted configuration entry points. | **Done** for everything still in scope (invitations/local accounts were cut, not just deferred). |
 | 4 | Topics, memory, knowledge, and corrections remain private, inspectable, and portable across authorized HA interactions. | **Core lifecycle built.** Auto-extracting facts from a live conversation, and reclassifying a confirmed fact's sharing class, are not wired. |
 | 5 | Kinward produces useful briefings and calendar-aware attention without becoming a notification feed. | **Not started.** No calendar provider, briefing generation, change detection, or delivery policy exists yet — the largest fully greenfield epic. |
@@ -1144,7 +1144,7 @@ Legend: **Done** / **Partial** (gap noted) / **Not started** / **Deferred** (int
 | 2.2 Kinward conversation entity | Done | — |
 | 2.3 Cancellation and terminal integrity | Done | — (`conversation.cancel_turn`) |
 | 2.4 Continue topics across authorized HA clients | Done | — (topic CRUD in `conversation.py` + `/topics` API) |
-| 2.5 Preserve the household fallback assistant boundary | **Partial** | The boundary holds structurally (per-(person, assistant) session isolation, `access_mode=household`), but there is no dedicated test proving a shared-display/unmapped-user request gets only household-safe context. Add one. |
+| 2.5 Preserve the household fallback assistant boundary | **Done** | `test_household_fallback_assistant_never_leaks_a_persons_private_memory_into_its_context` (`services/kinward/tests/test_conversation.py`) seeds real private-sounding memory and proves both the owner and a different resolved person addressing the household-fallback assistant get only their own empty, isolated `(person, assistant)` session - never another person's (or their own private-assistant) content. |
 
 ### Epic 3 — Household, Profiles, Invitations, and Assistant Setup
 
@@ -1223,7 +1223,7 @@ promise ("useful briefings and calendar-aware attention") still entirely unmet.
 ### Roll-up: what's actually left to reach a fuller release
 
 1. Run the Story 1.7 trial (process step, not code — unblocks everything else being validated for real).
-3. One medium gap: the fallback-boundary regression test (2.5) and the admin-privacy regression test (§7).
+3. One medium gap: the admin-privacy regression test (§7).
 4. One large greenfield epic: calendars and briefings (Epic 5) — nothing else in the backlog is
    blocked *on* code that doesn't exist except this.
 5. Two epics partially blocked *by* Epic 5: general approval/coordination (6.2/6.3) and the
