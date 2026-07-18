@@ -276,45 +276,72 @@ if [[ "${WITH_HONCHO}" == yes ]]; then
     local)
       log "Local/self-hosted LLM (any OpenAI-compatible server: vLLM, Ollama, LiteLLM, LM Studio, ...)."
       chat_base_url="$(get_env KINWARD_HONCHO_CHAT_BASE_URL "")"
-      [[ -n "${chat_base_url}" ]] || chat_base_url="$(ask "Base URL for chat/inference (OpenAI-compatible, e.g. http://10.0.0.5:8000/v1)")"
-      [[ -n "${chat_base_url}" ]] || fail "a base URL is required for a local LLM provider"
-      chat_api_key="$(ask_secret "API key for ${chat_base_url} (blank if your server does not require one)")"
+      chat_model="$(get_env KINWARD_HONCHO_CHAT_MODEL "")"
+      embedding_base_url="$(get_env KINWARD_HONCHO_EMBEDDING_BASE_URL "")"
+      embedding_model="$(get_env KINWARD_HONCHO_EMBEDDING_MODEL "")"
+      embedding_dim="$(get_env KINWARD_HONCHO_EMBEDDING_DIMENSIONS "")"
+      keep_existing=no
 
-      chat_model="$(pick_model "${chat_base_url}" "${chat_api_key}" "chat/inference")"
-      [[ -n "${chat_model}" ]] || fail "a chat model id is required"
+      if [[ -n "${chat_base_url}" ]]; then
+        log "Honcho is already configured:"
+        log "  chat model:      ${chat_model} @ ${chat_base_url}"
+        log "  embedding model: ${embedding_model} @ ${embedding_base_url} (dim ${embedding_dim})"
+        keep_existing=yes
+        if [[ "${NONINTERACTIVE}" != true ]]; then
+          keep_existing="$(ask_yn "Keep this configuration?" yes)"
+        fi
+      fi
 
-      if [[ "$(ask_yn "Use the same URL for embeddings?" yes)" == yes ]]; then
-        embedding_base_url="${chat_base_url}"
+      if [[ "${keep_existing}" == yes ]]; then
+        chat_api_key="$(get_env KINWARD_HONCHO_LLM_OPENAI_API_KEY "")"
+        [[ "${chat_api_key}" == local-no-key-required ]] && chat_api_key=""
         embedding_api_key="${chat_api_key}"
       else
-        embedding_base_url="$(ask "Base URL for embeddings (OpenAI-compatible)" "${chat_base_url}")"
-        embedding_api_key="$(ask_secret "API key for ${embedding_base_url} (blank if not required)")"
-      fi
-      embedding_model="$(pick_model "${embedding_base_url}" "${embedding_api_key}" "embedding")"
-      [[ -n "${embedding_model}" ]] || fail "an embedding model id is required"
+        chat_base_url="" chat_model="" embedding_base_url="" embedding_model="" embedding_dim=""
+        if [[ "${NONINTERACTIVE}" == true ]]; then
+          fail "no local Honcho LLM is configured yet; pass --household-name etc. and run interactively once first, or edit .env directly (KINWARD_HONCHO_CHAT_BASE_URL and friends)"
+        fi
 
-      if [[ "${embedding_api_key}" != "${chat_api_key}" ]]; then
-        warn "the embedding endpoint's API key differs from the chat endpoint's; this wizard only wires"
-        warn "one shared key (LLM_OPENAI_API_KEY) for both. Edit vendor/honcho/.env after setup if they"
-        warn "truly need different credentials."
-      fi
+        chat_base_url="$(ask "Base URL for chat/inference (OpenAI-compatible, e.g. http://10.0.0.5:8000/v1)")"
+        [[ -n "${chat_base_url}" ]] || fail "a base URL is required for a local LLM provider"
+        chat_api_key="$(ask_secret "API key for ${chat_base_url} (blank if your server does not require one)")"
 
-      log "Probing ${embedding_model} to detect its output vector dimension..."
-      embedding_dim="$(probe_embedding_dimension "${embedding_base_url}" "${embedding_api_key}" "${embedding_model}")"
-      if [[ -z "${embedding_dim}" ]]; then
-        warn "could not auto-detect the embedding dimension by calling ${embedding_base_url%/}/embeddings."
-        embedding_dim="$(ask "Embedding vector dimension for ${embedding_model}" "1536")"
-      else
-        log "Detected a ${embedding_dim}-dimension embedding vector from ${embedding_model}."
-      fi
-      [[ "${embedding_dim}" =~ ^[0-9]+$ ]] || fail "embedding dimension must be a number, got '${embedding_dim}'"
+        chat_model="$(pick_model "${chat_base_url}" "${chat_api_key}" "chat/inference")"
+        [[ -n "${chat_model}" ]] || fail "a chat model id is required"
 
-      existing_dim="$(get_env KINWARD_HONCHO_EMBEDDING_DIMENSIONS "")"
-      if [[ -n "${existing_dim}" && "${existing_dim}" != "${embedding_dim}" ]]; then
-        warn "Honcho's pgvector schema was previously configured for dimension ${existing_dim}; it will be"
-        warn "re-adjusted to ${embedding_dim} by honcho-configure-embeddings on next startup. That step"
-        warn "refuses to run if any embeddings have already been written (dimension is otherwise immutable"
-        warn "for the life of a deployment - see Honcho's changing-embeddings docs)."
+        if [[ "$(ask_yn "Use the same URL for embeddings?" yes)" == yes ]]; then
+          embedding_base_url="${chat_base_url}"
+          embedding_api_key="${chat_api_key}"
+        else
+          embedding_base_url="$(ask "Base URL for embeddings (OpenAI-compatible)" "${chat_base_url}")"
+          embedding_api_key="$(ask_secret "API key for ${embedding_base_url} (blank if not required)")"
+        fi
+        embedding_model="$(pick_model "${embedding_base_url}" "${embedding_api_key}" "embedding")"
+        [[ -n "${embedding_model}" ]] || fail "an embedding model id is required"
+
+        if [[ "${embedding_api_key}" != "${chat_api_key}" ]]; then
+          warn "the embedding endpoint's API key differs from the chat endpoint's; this wizard only wires"
+          warn "one shared key (LLM_OPENAI_API_KEY) for both. Edit vendor/honcho/.env after setup if they"
+          warn "truly need different credentials."
+        fi
+
+        log "Probing ${embedding_model} to detect its output vector dimension..."
+        embedding_dim="$(probe_embedding_dimension "${embedding_base_url}" "${embedding_api_key}" "${embedding_model}")"
+        if [[ -z "${embedding_dim}" ]]; then
+          warn "could not auto-detect the embedding dimension by calling ${embedding_base_url%/}/embeddings."
+          embedding_dim="$(ask "Embedding vector dimension for ${embedding_model}" "1536")"
+        else
+          log "Detected a ${embedding_dim}-dimension embedding vector from ${embedding_model}."
+        fi
+        [[ "${embedding_dim}" =~ ^[0-9]+$ ]] || fail "embedding dimension must be a number, got '${embedding_dim}'"
+
+        existing_dim="$(get_env KINWARD_HONCHO_EMBEDDING_DIMENSIONS "")"
+        if [[ -n "${existing_dim}" && "${existing_dim}" != "${embedding_dim}" ]]; then
+          warn "Honcho's pgvector schema was previously configured for dimension ${existing_dim}; it will be"
+          warn "re-adjusted to ${embedding_dim} by honcho-configure-embeddings on next startup. That step"
+          warn "refuses to run if any embeddings have already been written (dimension is otherwise immutable"
+          warn "for the life of a deployment - see Honcho's changing-embeddings docs)."
+        fi
       fi
 
       set_env KINWARD_HONCHO_CHAT_BASE_URL "${chat_base_url}"
