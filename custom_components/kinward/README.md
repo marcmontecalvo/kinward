@@ -166,6 +166,17 @@ configuration editor**, and paste the file's contents. Replace every
 household's real entity IDs - never commit real entity IDs or names to source
 control.
 
+The dashboard's **Control** tab has buttons for every service below except
+persona import (see [`kinward-helpers.yaml`](kinward-helpers.yaml)'s own header
+for why). Its buttons need helper entities Home Assistant's stock Lovelace
+cards can't create on their own - copy `kinward-helpers.yaml` into your HA
+config directory, add it as a `homeassistant: packages:` include (exact
+snippet in the file), and restart Home Assistant (packages load at startup,
+not on reload) before importing the dashboard, or the Control tab's cards will
+show "entity not found." Kept as a separate tab from "Home," not mixed in,
+per the product's UX requirement that Kinward Control stay separate from
+everyday assistant navigation.
+
 ## Services
 
 `kinward.refresh` re-polls the backend immediately instead of waiting for the

@@ -11,6 +11,14 @@
 #
 # Built entirely from Home Assistant core cards; no Kinward-owned frontend code
 # is required to use it (epics.md Story 1.6).
+#
+# The "Control" tab below calls kinward.* services through the input_text/
+# input_select/script helpers in kinward-helpers.yaml - install that as a
+# package (see its own header) before importing this file, or every button on
+# that tab will show "entity not found". Kept as a separate tab, not mixed
+# into "Home", because the product's UX spec requires Kinward Control to stay
+# separate from everyday assistant navigation and keep raw technical fields
+# (approval/item IDs, HA domain/service/entity_id) off the everyday surface.
 
 title: Kinward
 views:
@@ -143,3 +151,193 @@ views:
               {% else %}
               No pets on record yet.
               {% endif %}
+
+  - title: Control
+    path: control
+    icon: mdi:shield-account
+    sections:
+      - type: grid
+        cards:
+          - type: heading
+            heading: Quick actions
+          - type: button
+            name: Refresh
+            icon: mdi:refresh
+            tap_action:
+              action: perform-action
+              perform_action: kinward.refresh
+          - type: button
+            name: Generate briefing
+            icon: mdi:newspaper-variant
+            tap_action:
+              action: perform-action
+              perform_action: kinward.generate_briefing
+
+      - type: grid
+        cards:
+          - type: heading
+            heading: Manage assistants
+          - type: markdown
+            content: >-
+              The personality interview isn't set from here - after creating an
+              assistant, talk to it (Assist) and it'll ask its interview questions
+              on the next few turns.
+          - type: entities
+            entities:
+              - entity: input_text.kinward_assistant_name
+                name: Assistant name
+          - type: horizontal-stack
+            cards:
+              - type: button
+                name: Create
+                icon: mdi:account-plus
+                tap_action:
+                  action: perform-action
+                  perform_action: script.kinward_create_assistant
+              - type: button
+                name: Restart interview
+                icon: mdi:refresh-circle
+                tap_action:
+                  action: perform-action
+                  perform_action: script.kinward_restart_assistant_interview
+              - type: button
+                name: Delete
+                icon: mdi:account-remove
+                tap_action:
+                  action: perform-action
+                  perform_action: script.kinward_delete_assistant
+                  confirmation:
+                    text: Delete this assistant? This cannot be undone.
+
+      - type: grid
+        cards:
+          - type: heading
+            heading: Assistant access
+          - type: entities
+            entities:
+              - entity: input_select.kinward_assistant_access_mode
+                name: Mode
+              - entity: input_text.kinward_allowed_people
+                name: Allowed people (allowlist mode only)
+          - type: button
+            name: Set access
+            icon: mdi:shield-account
+            tap_action:
+              action: perform-action
+              perform_action: script.kinward_set_assistant_access
+
+      - type: grid
+        cards:
+          - type: heading
+            heading: Pending approvals
+          - type: markdown
+            content: |-
+              {% set actions = state_attr('sensor.kinward_pending_approvals', 'pending_actions') %}
+              {% if actions %}
+              | ID | Action | Explanation | Expires |
+              | --- | --- | --- | --- |
+              {% for item in actions -%}
+              | `{{ item.id }}` | {{ item.action }} | {{ item.explanation }} | {{ item.expires_at }} |
+              {% endfor %}
+              {% else %}
+              Nothing pending approval right now.
+              {% endif %}
+          - type: entities
+            entities:
+              - entity: input_text.kinward_approval_id
+                name: Approval ID
+          - type: horizontal-stack
+            cards:
+              - type: button
+                name: Approve
+                icon: mdi:check-circle
+                tap_action:
+                  action: perform-action
+                  perform_action: script.kinward_approve_action
+              - type: button
+                name: Deny
+                icon: mdi:close-circle
+                tap_action:
+                  action: perform-action
+                  perform_action: script.kinward_deny_action
+              - type: button
+                name: Cancel mine
+                icon: mdi:cancel
+                tap_action:
+                  action: perform-action
+                  perform_action: script.kinward_cancel_action
+
+      - type: grid
+        cards:
+          - type: heading
+            heading: Attention items
+          - type: markdown
+            content: |-
+              {% set items = state_attr('sensor.kinward_attention', 'items') %}
+              {% if items %}
+              | ID | Summary | State |
+              | --- | --- | --- |
+              {% for item in items -%}
+              | `{{ item.id }}` | {{ item.summary }} | {{ item.state }} |
+              {% endfor %}
+              {% else %}
+              Nothing needs attention right now.
+              {% endif %}
+          - type: entities
+            entities:
+              - entity: input_text.kinward_attention_item_id
+                name: Item ID
+          - type: horizontal-stack
+            cards:
+              - type: button
+                name: Acknowledge
+                icon: mdi:eye-check
+                tap_action:
+                  action: perform-action
+                  perform_action: script.kinward_acknowledge_attention_item
+              - type: button
+                name: Dismiss
+                icon: mdi:eye-off
+                tap_action:
+                  action: perform-action
+                  perform_action: script.kinward_dismiss_attention_item
+
+      - type: grid
+        cards:
+          - type: heading
+            heading: Request a Home Assistant action
+          - type: markdown
+            content: >-
+              Ask one of your assistants to submit a Home Assistant service call
+              on your behalf, subject to this household's tool-capability policy
+              (see the integration's Options). A denied or approval-required
+              result never executes silently - check Pending approvals above.
+          - type: entities
+            entities:
+              - entity: input_text.kinward_request_assistant_name
+                name: Assistant
+              - entity: input_text.kinward_request_domain
+                name: Domain (e.g. light)
+              - entity: input_text.kinward_request_service
+                name: Service (e.g. turn_off)
+              - entity: input_text.kinward_request_entity_id
+                name: Entity ID
+              - entity: input_text.kinward_request_explanation
+                name: Explanation
+          - type: button
+            name: Submit request
+            icon: mdi:send
+            tap_action:
+              action: perform-action
+              perform_action: script.kinward_request_action
+
+      - type: grid
+        cards:
+          - type: heading
+            heading: Advanced
+          - type: markdown
+            content: >-
+              `kinward.import_assistant_persona` and
+              `kinward.confirm_assistant_persona_import` take a full document of
+              free text plus a structured dimensions object - not a good fit for
+              a dashboard button. Use Developer Tools -> Actions for those two.
