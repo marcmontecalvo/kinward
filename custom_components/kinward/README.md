@@ -150,6 +150,17 @@ next scheduled update (there is no backend "generate a briefing" action yet).
 `kinward.set_assistant_access` manage a person's own additional assistants and
 who besides the owner may address one (ADR-002).
 
+`kinward.restart_assistant_interview` redoes one of your own assistants'
+personality interview (Epic 3 Story 3.5) from scratch. `kinward.
+import_assistant_persona` extracts a proposal from a pasted persona document
+(a `soul.md`, an `AGENTS.md`-style character file, or similar) without saving
+anything - call it with `response_variable` in a script/automation to see the
+proposal, then pass the (optionally edited) values to `kinward.
+confirm_assistant_persona_import` to actually save them. Importing and the
+conversational interview are not mutually exclusive: an import pre-fills
+whichever interview dimensions it covers, and the interview picks up the rest
+on the assistant's next conversation turn.
+
 `kinward.request_action` submits an HA service call through Kinward, subject
 to the household's tool policy; `kinward.approve_action` /
 `kinward.deny_action` resolve a pending action by id (see

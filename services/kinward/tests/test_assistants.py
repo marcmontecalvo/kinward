@@ -7,11 +7,13 @@ from kinward.application.assistants import (
     AssistantNotFound,
     Deleted,
     InvalidAccessMode,
+    InvalidVisualPack,
     PolicyBlocked,
     create_additional_assistant,
     delete_own_assistant,
     list_accessible_assistants,
     list_own_assistants,
+    restart_interview,
     update_own_assistant,
 )
 from kinward.application.conversation import Unmapped
@@ -408,3 +410,98 @@ async def test_list_accessible_assistants_allowlist_mode_is_selective() -> None:
         )
         assert not isinstance(accessible_to_nia, Unmapped)
         assert bob.id not in [a.id for a in accessible_to_nia]
+
+
+async def test_owner_can_swap_visual_pack() -> None:
+    factory = await _factory()
+    async with factory() as session:
+        _household, _person, assistant = await _seed_owner_with_assistant(session)
+        assert assistant.visual_pack_id == "orb"
+
+        result = await update_own_assistant(
+            session, ha_user_id="ha-user-marc", assistant_id=assistant.id, visual_pack_id="robot"
+        )
+        await session.commit()
+
+        assert not isinstance(result, (Unmapped, AssistantNotFound, InvalidAccessMode, InvalidVisualPack))
+        assert result.visual_pack_id == "robot"
+
+
+async def test_update_own_assistant_rejects_unknown_visual_pack() -> None:
+    factory = await _factory()
+    async with factory() as session:
+        _household, _person, assistant = await _seed_owner_with_assistant(session)
+
+        result = await update_own_assistant(
+            session, ha_user_id="ha-user-marc", assistant_id=assistant.id, visual_pack_id="not-a-pack"
+        )
+
+        assert isinstance(result, InvalidVisualPack)
+
+
+async def test_create_additional_assistant_defaults_to_not_started_interview() -> None:
+    factory = await _factory()
+    async with factory() as session:
+        household, _person, _assistant = await _seed_owner_with_assistant(session)
+
+        result = await create_additional_assistant(
+            session,
+            household_id=household.id,
+            ha_user_id="ha-user-marc",
+            name="Second Assistant",
+            requester_is_admin=True,
+        )
+        await session.commit()
+
+        assert not isinstance(result, (Unmapped, PolicyBlocked, InvalidVisualPack))
+        assert result.interview_state == "not_started"
+        assert result.visual_pack_id == "orb"
+
+
+async def test_create_additional_assistant_rejects_unknown_visual_pack() -> None:
+    factory = await _factory()
+    async with factory() as session:
+        household, _person, _assistant = await _seed_owner_with_assistant(session)
+
+        result = await create_additional_assistant(
+            session,
+            household_id=household.id,
+            ha_user_id="ha-user-marc",
+            name="Second Assistant",
+            visual_pack_id="not-a-pack",
+            requester_is_admin=True,
+        )
+
+        assert isinstance(result, InvalidVisualPack)
+
+
+async def test_restart_interview_resets_state_and_clears_only_dimension_keys() -> None:
+    factory = await _factory()
+    async with factory() as session:
+        _household, _person, assistant = await _seed_owner_with_assistant(session)
+        assistant.interview_state = "completed"
+        assistant.personality = {
+            "communication_style": "direct",
+            "response_length": "short",
+            "custom_note": "keep me",
+        }
+        await session.commit()
+
+        result = await restart_interview(session, ha_user_id="ha-user-marc", assistant_id=assistant.id)
+        await session.commit()
+
+        assert not isinstance(result, (Unmapped, AssistantNotFound))
+        assert result.interview_state == "not_started"
+        assert "communication_style" not in result.personality
+        assert "response_length" not in result.personality
+        assert result.personality.get("custom_note") == "keep me"
+
+
+async def test_restart_interview_fails_closed_for_someone_elses_assistant() -> None:
+    factory = await _factory()
+    async with factory() as session:
+        household, _marc, bob, _lisa = await _seed_two_people(session)
+
+        result = await restart_interview(session, ha_user_id="ha-user-lisa", assistant_id=bob.id)
+
+        assert isinstance(result, AssistantNotFound)

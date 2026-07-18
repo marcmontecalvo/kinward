@@ -32,14 +32,26 @@ from kinward.application.assistants import AssistantNotFound
 from kinward.application.assistants import Deleted as AssistantDeleted
 from kinward.application.assistants import (
     InvalidAccessMode,
+    InvalidVisualPack,
     PolicyBlocked,
     create_additional_assistant,
     delete_own_assistant,
     list_accessible_assistants,
+    list_household_assistants,
     list_own_assistants,
+    restart_interview,
     update_own_assistant,
 )
-from kinward.application.authorization import NotAdmin, resolve_admin
+from kinward.application.authorization import NotAdmin, resolve_admin, resolve_person
+from kinward.application.persona_import import (
+    MAX_GROUNDING_NOTES_LENGTH,
+    MAX_IMPORT_DOCUMENT_LENGTH,
+    apply_persona_import,
+    extract_persona_document,
+)
+from kinward.application.visual_packs import DEFAULT_VISUAL_PACK_ID, get_visual_pack, list_visual_packs
+from kinward.domain.visual_packs import VisualPack, stage_for
+from kinward.llm.factory import model_provider as build_model_provider
 from kinward.application.conversation import AccessDenied
 from kinward.application.conversation import AssistantNotFound as AddressedAssistantNotFound
 from kinward.application.conversation import (
@@ -511,15 +523,26 @@ class AssistantPayload(BaseModel):
     personality: dict[str, Any]
     access_mode: str = Field(serialization_alias="accessMode")
     allowed_person_ids: list[str] = Field(serialization_alias="allowedPersonIds")
+    visual_pack_id: str = Field(serialization_alias="visualPackId")
+    interview_state: str = Field(serialization_alias="interviewState")
+    visual_stage: str = Field(serialization_alias="visualStage")
 
     @classmethod
     def from_record(cls, assistant: AssistantRecord) -> AssistantPayload:
+        pack = get_visual_pack(assistant.visual_pack_id) or get_visual_pack(DEFAULT_VISUAL_PACK_ID)
+        assert pack is not None, "the default visual pack must always be registered"
+        stage = stage_for(
+            pack, interview_state=assistant.interview_state, personality=assistant.personality
+        )
         return cls(
             id=assistant.id,
             name=assistant.name,
             personality=dict(assistant.personality),
             access_mode=assistant.access_mode,
             allowed_person_ids=list(assistant.allowed_person_ids),
+            visual_pack_id=assistant.visual_pack_id,
+            interview_state=assistant.interview_state,
+            visual_stage=stage.name,
         )
 
 
@@ -527,6 +550,7 @@ class CreateAssistantRequest(BaseModel):
     ha_user_id: str = Field(alias="haUserId", min_length=1, max_length=64)
     name: str = Field(min_length=1, max_length=120)
     personality: dict[str, Any] | None = None
+    visual_pack_id: str | None = Field(default=None, alias="visualPackId")
 
 
 class UpdateOwnAssistantRequest(BaseModel):
@@ -535,6 +559,7 @@ class UpdateOwnAssistantRequest(BaseModel):
     personality: dict[str, Any] | None = None
     access_mode: str | None = Field(default=None, alias="accessMode")
     allowed_person_ids: list[str] | None = Field(default=None, alias="allowedPersonIds")
+    visual_pack_id: str | None = Field(default=None, alias="visualPackId")
 
 
 def _assistant_not_found() -> HTTPException:
@@ -545,6 +570,13 @@ def _invalid_access_mode() -> HTTPException:
     return HTTPException(
         status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
         detail={"code": "invalid_access_mode", "message": "accessMode must be one of: owner_only, household, allowlist."},
+    )
+
+
+def _invalid_visual_pack() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        detail={"code": "invalid_visual_pack", "message": "visualPackId must name a registered visual pack."},
     )
 
 
@@ -562,6 +594,18 @@ def _policy_blocked(violation: PolicyBlocked) -> HTTPException:
 async def _is_admin(session: AsyncSession, *, ha_user_id: str) -> bool:
     result = await resolve_admin(session, ha_user_id=ha_user_id)
     return not isinstance(result, (Unmapped, NotAdmin))
+
+
+async def _owned_assistant_or_404(
+    session: AsyncSession, *, ha_user_id: str, assistant_id: str
+) -> AssistantRecord:
+    person = await resolve_person(session, ha_user_id=ha_user_id)
+    if isinstance(person, Unmapped):
+        raise _assistant_not_found()
+    assistant = await session.get(AssistantRecord, assistant_id)
+    if assistant is None or assistant.owner_person_id != person.id:
+        raise _assistant_not_found()
+    return assistant
 
 
 @router.get("/assistants", response_model=list[AssistantPayload])
@@ -604,6 +648,7 @@ async def integration_create_assistant(
         ha_user_id=body.ha_user_id,
         name=body.name,
         personality=body.personality,
+        visual_pack_id=body.visual_pack_id,
         requester_is_admin=requester_is_admin,
     )
     if isinstance(result, Unmapped):
@@ -612,6 +657,9 @@ async def integration_create_assistant(
     if isinstance(result, PolicyBlocked):
         await session.rollback()
         raise _policy_blocked(result)
+    if isinstance(result, InvalidVisualPack):
+        await session.rollback()
+        raise _invalid_visual_pack()
     await session.commit()
     return AssistantPayload.from_record(result)
 
@@ -628,6 +676,7 @@ async def integration_update_own_assistant(
         personality=body.personality,
         access_mode=body.access_mode,
         allowed_person_ids=body.allowed_person_ids,
+        visual_pack_id=body.visual_pack_id,
     )
     if isinstance(result, (Unmapped, AssistantNotFound)):
         await session.rollback()
@@ -635,6 +684,178 @@ async def integration_update_own_assistant(
     if isinstance(result, InvalidAccessMode):
         await session.rollback()
         raise _invalid_access_mode()
+    if isinstance(result, InvalidVisualPack):
+        await session.rollback()
+        raise _invalid_visual_pack()
+    await session.commit()
+    return AssistantPayload.from_record(result)
+
+
+class AssistantIdentityPayload(BaseModel):
+    """Public-only fields (Epic 3 Story 3.7) - never ``personality``. Safe for a
+
+    household-wide listing (no ``ha_user_id`` scoping) because it carries nothing
+    private, unlike ``AssistantPayload`` which is always fetched for one person's
+    own/accessible assistants.
+    """
+
+    id: str
+    name: str
+    owner_person_id: str | None = Field(serialization_alias="ownerPersonId")
+    visual_pack_id: str = Field(serialization_alias="visualPackId")
+    visual_stage: str = Field(serialization_alias="visualStage")
+    visual_stage_icon: str = Field(serialization_alias="visualStageIcon")
+    visual_stage_preview_image: str | None = Field(
+        default=None, serialization_alias="visualStagePreviewImage"
+    )
+    accent: str
+
+    @classmethod
+    def from_record(cls, assistant: AssistantRecord) -> AssistantIdentityPayload:
+        pack = get_visual_pack(assistant.visual_pack_id) or get_visual_pack(DEFAULT_VISUAL_PACK_ID)
+        assert pack is not None, "the default visual pack must always be registered"
+        stage = stage_for(
+            pack, interview_state=assistant.interview_state, personality=assistant.personality
+        )
+        return cls(
+            id=assistant.id,
+            name=assistant.name,
+            owner_person_id=assistant.owner_person_id,
+            visual_pack_id=assistant.visual_pack_id,
+            visual_stage=stage.name,
+            visual_stage_icon=stage.mdi_icon,
+            visual_stage_preview_image=stage.preview_image,
+            accent=assistant.accent or pack.default_accent,
+        )
+
+
+@router.get("/assistants/household", response_model=list[AssistantIdentityPayload])
+async def integration_list_household_assistants(
+    _token: IntegrationToken, session: Session
+) -> list[AssistantIdentityPayload]:
+    """Every household assistant's public identity - mirrors ``GET /people``'s
+
+    unscoped household-wide listing (display_name/role, no private fields either).
+    """
+    summary = await fetch_household_summary(session)
+    if summary is None:
+        raise _household_not_configured()
+    assistants = await list_household_assistants(session, household_id=summary.id)
+    return [AssistantIdentityPayload.from_record(assistant) for assistant in assistants]
+
+
+class VisualPackStagePayload(BaseModel):
+    name: str
+    mdi_icon: str = Field(serialization_alias="mdiIcon")
+    preview_image: str | None = Field(default=None, serialization_alias="previewImage")
+
+
+class VisualPackPayload(BaseModel):
+    id: str
+    display_name: str = Field(serialization_alias="displayName")
+    category: str
+    default_accent: str = Field(serialization_alias="defaultAccent")
+    stages: list[VisualPackStagePayload]
+
+    @classmethod
+    def from_pack(cls, pack: VisualPack) -> VisualPackPayload:
+        return cls(
+            id=pack.id,
+            display_name=pack.display_name,
+            category=pack.category,
+            default_accent=pack.default_accent,
+            stages=[
+                VisualPackStagePayload(
+                    name=stage.name, mdi_icon=stage.mdi_icon, preview_image=stage.preview_image
+                )
+                for stage in pack.stages
+            ],
+        )
+
+
+@router.get("/visual-packs", response_model=list[VisualPackPayload])
+async def integration_list_visual_packs(_token: IntegrationToken) -> list[VisualPackPayload]:
+    """The full Story 3.7 catalog - static, code-shipped data, not household-private, so no
+
+    ``ha_user_id``/ownership check is needed beyond the usual integration token.
+    """
+    return [VisualPackPayload.from_pack(pack) for pack in list_visual_packs()]
+
+
+@router.post("/assistants/{assistant_id}/interview/restart", response_model=AssistantPayload)
+async def integration_restart_interview(
+    assistant_id: str, body: HaUserIdBody, _token: IntegrationToken, session: Session
+) -> AssistantPayload:
+    result = await restart_interview(session, ha_user_id=body.ha_user_id, assistant_id=assistant_id)
+    if isinstance(result, (Unmapped, AssistantNotFound)):
+        await session.rollback()
+        raise _assistant_not_found()
+    await session.commit()
+    return AssistantPayload.from_record(result)
+
+
+class PersonaImportRequest(BaseModel):
+    ha_user_id: str = Field(alias="haUserId", min_length=1, max_length=64)
+    document_text: str = Field(
+        alias="documentText", min_length=1, max_length=MAX_IMPORT_DOCUMENT_LENGTH
+    )
+
+
+class PersonaImportProposalPayload(BaseModel):
+    dimensions: dict[str, str]
+    grounding_notes: str = Field(serialization_alias="groundingNotes")
+
+
+@router.post("/assistants/{assistant_id}/persona-import", response_model=PersonaImportProposalPayload)
+async def integration_persona_import(
+    assistant_id: str, body: PersonaImportRequest, _token: IntegrationToken, session: Session
+) -> PersonaImportProposalPayload:
+    """Story 3.6, step one: extract a proposal only - never commits anything.
+
+    The caller must review (and may edit) the proposal, then POST it to the ``/confirm``
+    endpoint below before it reaches ``AssistantRecord.personality``.
+    """
+    summary = await fetch_household_summary(session)
+    if summary is None:
+        raise _household_not_configured()
+    assistant = await _owned_assistant_or_404(session, ha_user_id=body.ha_user_id, assistant_id=assistant_id)
+    provider_settings = await get_or_create_provider_settings(session, household_id=summary.id)
+    model = build_model_provider(
+        provider=provider_settings.model_provider,
+        base_url=provider_settings.model_base_url,
+        model_name=provider_settings.model_name,
+        api_key=provider_settings.model_api_key,
+    )
+    proposal = await extract_persona_document(
+        model, assistant_name=assistant.name, document_text=body.document_text
+    )
+    return PersonaImportProposalPayload(
+        dimensions=proposal.dimensions, grounding_notes=proposal.grounding_notes
+    )
+
+
+class PersonaImportConfirmRequest(BaseModel):
+    ha_user_id: str = Field(alias="haUserId", min_length=1, max_length=64)
+    dimensions: dict[str, str] = Field(default_factory=dict)
+    grounding_notes: str = Field(default="", alias="groundingNotes", max_length=MAX_GROUNDING_NOTES_LENGTH)
+
+
+@router.post(
+    "/assistants/{assistant_id}/persona-import/confirm", response_model=AssistantPayload
+)
+async def integration_persona_import_confirm(
+    assistant_id: str, body: PersonaImportConfirmRequest, _token: IntegrationToken, session: Session
+) -> AssistantPayload:
+    result = await apply_persona_import(
+        session,
+        ha_user_id=body.ha_user_id,
+        assistant_id=assistant_id,
+        dimensions=body.dimensions,
+        grounding_notes=body.grounding_notes,
+    )
+    if isinstance(result, (Unmapped, AssistantNotFound)):
+        await session.rollback()
+        raise _assistant_not_found()
     await session.commit()
     return AssistantPayload.from_record(result)
 

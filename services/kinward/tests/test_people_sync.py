@@ -45,6 +45,8 @@ async def test_sync_creates_a_person_and_primary_assistant_atomically() -> None:
         )
         assert assistant is not None
         assert assistant.kind == "primary"
+        assert assistant.interview_state == "not_started"
+        assert assistant.visual_pack_id == "orb"
 
 
 async def test_sync_represents_a_household_member_with_no_login() -> None:

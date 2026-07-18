@@ -8,6 +8,7 @@ from typing import Literal
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from kinward.application.interview import maybe_handle_interview_turn
 from kinward.application.operational_context import (
     EntityResolution,
     ResolvedEntity,
@@ -279,6 +280,22 @@ async def handle_conversation_request(
         model_name=provider_settings.model_name,
         api_key=provider_settings.model_api_key,
     )
+
+    # Epic 3 Story 3.5: a not-started/in-progress personality interview owns this turn
+    # entirely - short-circuits before touching HA state, calendar, memory, or knowledge,
+    # since none of that is relevant to "how would you like me to talk with you?".
+    interview_reply = await maybe_handle_interview_turn(
+        session, resolved_model, assistant=assistant, person_id=person_id, text=text
+    )
+    if interview_reply is not None:
+        session.add(
+            TopicTurnRecord(
+                topic_id=topic.id, request_text=text, response_text=interview_reply, outcome="completed"
+            )
+        )
+        await session.flush()
+        return Completed(conversation_id=topic.id, response_text=interview_reply)
+
     resolved_ha_client = ha_client or HomeAssistantClient(
         base_url=runtime_settings.home_assistant_url, token=runtime_settings.home_assistant_token
     )

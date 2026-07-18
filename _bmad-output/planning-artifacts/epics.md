@@ -83,7 +83,7 @@ Status as of `implementationReviewDate` above; see [§8](#8-story-by-story-statu
 | --- | --- | --- |
 | 1 | A healthy Kinward backend and HA 2026.7.2 integration can be installed and used today. | **Built and verified.** The manual day-one trial (1.7) ran end-to-end on 2026-07-17; two defects were found (one fixed, one deferred to Epic 9) — see `docs/ha-native/household-trial.md`. |
 | 2 | Household members can speak or type to their private Kinward assistant through Assist with truthful lifecycle behavior. | **Built.** Mapping, conversation entity, cancellation, and topic CRUD all exist; the fallback-assistant privacy boundary (2.5) now has a dedicated regression test. |
-| 3 | The household and account graph is safely established and managed through backend workflows and HA-hosted configuration entry points. | **Core (3.1–3.4) done.** New scope added 2026-07-17: a conversational personality interview (3.5), persona-document import (3.6), and a swappable visual-identity catalog (3.7) — none started. |
+| 3 | The household and account graph is safely established and managed through backend workflows and HA-hosted configuration entry points. | **Done.** 3.1–3.4 as before; the personalization stories added 2026-07-17 (3.5 conversational interview, 3.6 persona-document import, 3.7 visual-identity catalog) all shipped 2026-07-18. |
 | 4 | Topics, memory, knowledge, and corrections remain private, inspectable, and portable across authorized HA interactions. | **Core lifecycle built.** Auto-extracting facts from a live conversation, and reclassifying a confirmed fact's sharing class, are not wired. |
 | 5 | Kinward produces useful briefings and calendar-aware attention without becoming a notification feed. | **v0 built.** HA calendar entities are read directly (no per-person provider credentials - deferred to v1), meaningful-change detection is deterministic, attention items carry the full six-state lifecycle, the briefing is a live projection Assist also grounds on, and deduplicated HA notifications are delivered. No quiet-hours policy yet. |
 | 6 | Meaningful actions and household coordination are approved, executed, reconciled, and recorded safely. | **v0 slice only.** Approval state machine covers HA-capability actions with no resource owner; the general multi-principal/quorum case (needed for cross-person actions like a calendar reschedule) and assistant-to-assistant coordination are unbuilt, and both are blocked on Epic 5's v1 (person-owned calendars) specifically, not v0 (Epic 5 v0's calendars are household-shared, giving this case nothing to own yet). |
@@ -91,7 +91,7 @@ Status as of `implementationReviewDate` above; see [§8](#8-story-by-story-statu
 | 8 | Administration, health, activity, and diagnostics are available without exposing protected content. | **Partial.** Health/diagnostics, most admin actions, and config-flow reauthentication all exist; there is still no read/query API for activity records (only writes). |
 | 8 | Administration, health, activity, and diagnostics are available without exposing protected content. | **Partial.** Health/diagnostics, most admin actions, and an authorized/filtered activity read API all exist; config-flow reauthentication is being implemented in a parallel pass (check its own PR for status). |
 | 9 | Backup, restore, import, retention, deletion, and recovery preserve the complete household authority model. | **Backup/restore/import deliberately deferred to v2.** Retention taxonomy and admin-invariant-safe deletion are done for what isn't blocked on Epic 6. |
-| 10 | Advanced generated views, custom cards, and broader clients remain evidence-gated extensions rather than foundation blockers. | **10.1–10.4 correctly not started** — gated on real household usage evidence, per its own goal. **10.5 (assistant visual-identity card) is a named exception** — committed 2026-07-18, not evidence-gated; not started. |
+| 10 | Advanced generated views, custom cards, and broader clients remain evidence-gated extensions rather than foundation blockers. | **10.1–10.4 correctly not started** — gated on real household usage evidence, per its own goal. **10.5 (assistant visual-identity card) is a named exception** — committed and built 2026-07-18, not evidence-gated. |
 
 # Epic 1: Installable HA-Native Household Foundation
 
@@ -432,6 +432,26 @@ Safely manage household people and assistant ownership while keeping initial HA-
 > always-skippable) survives; the *delivery mechanism* becomes the assistant's own conversation turn,
 > consistent with Epic 2's Assist-native design rather than a new UI surface. See Story 3.7 for where the
 > visual "reveal" moment Homefront built instead belongs.
+>
+> **Implemented (2026-07-18):** `domain/interview.py` holds the five fixed `INTERVIEW_DIMENSIONS`
+> (`communication_style`/`urgency_handling`/`humor_warmth`/`formality_register`/`response_length`) plus
+> the deterministic `is_skip_phrase` check - no model call needed to recognize "skip". `AssistantRecord`
+> gained `interview_state` (migration `014_assistant_visual_identity`) -
+> `not_started`/`in_progress`/`skipped`/`completed`, defaulting to `completed` at the column level so
+> every *existing* assistant is treated as already onboarded; only `people_sync.sync_people`'s new-person
+> path and `assistants.create_additional_assistant` opt a genuinely new assistant into `not_started`,
+> which is what keeps this from retroactively hijacking anyone's next conversation turn.
+> `application/interview.py`'s `maybe_handle_interview_turn` is spliced into
+> `application/conversation.py::handle_conversation_request` right after the model provider is resolved -
+> it short-circuits before touching HA state, calendar, memory, or knowledge (none of that is relevant to
+> "how would you like me to talk with you?"), and only ever triggers for the caller's *own* assistant
+> (`assistant.owner_person_id == person_id`), never one they merely have access to under ADR-002's
+> `household`/`allowlist` modes. Distillation degrades to the raw (bounded) answer text when the model is
+> unavailable, per the same "never block the turn" rule `knowledge.py` already established.
+> `application/assistants.restart_interview` is the "redo" path - clears just the five interview-dimension
+> keys from `personality` (any manually-set/imported key survives) and resets state, exposed as
+> `POST /api/v1/integration/assistants/{id}/interview/restart`. Tests in `tests/test_interview.py` (domain
+> + application) and `tests/test_integration_api.py::test_first_conversation_turn_opens_the_personality_interview`.
 
 ### Story 3.6: Import an existing assistant persona document
 
@@ -440,9 +460,9 @@ Safely manage household people and assistant ownership while keeping initial HA-
   description used by another agent framework (Hermes-based agents and others). There is no standard
   format across these in the wild, so import relies on model-assisted extraction rather than a
   per-product parser.
-- Import is submitted through the Kinward integration's options/config flow (a text field or file paste),
-  matching the established pattern for admin-configured settings (`ProviderSettingsRecord`,
-  `AssistantPolicyRecord`) rather than a bespoke upload UI.
+- Import is submitted through the Kinward integration (a text field or file paste), matching the
+  established pattern for admin-configured settings (`ProviderSettingsRecord`, `AssistantPolicyRecord`)
+  rather than a bespoke upload UI.
 - The raw document is never applied verbatim or unreviewed. A model-assisted extraction step (the same
   kind of seam as `application/knowledge.py`'s `extract_candidate_observations`) maps it onto the
   interview's own dimensions, plus a bounded free-text "grounding notes" field for whatever doesn't fit a
@@ -456,6 +476,28 @@ Safely manage household people and assistant ownership while keeping initial HA-
   content that reaches a system prompt or is written to disk (AGENTS.md's public-repository-safety
   rules apply to fixtures/examples derived from this feature same as anywhere else) - an admin pasting an
   arbitrary file is not an exemption from that review.
+
+> **Implemented (2026-07-18):** `application/persona_import.py`'s `extract_persona_document` (LLM
+> extraction, JSON-parsed the same defensive way as `knowledge.py`'s `_parse_candidate_observations` -
+> malformed/unavailable model output degrades to an empty proposal, never an error) and
+> `apply_persona_import` (the actual commit, owner-ownership-checked, always called separately and only
+> after review). Backend API: `POST /assistants/{id}/persona-import` (propose only) and
+> `POST /assistants/{id}/persona-import/confirm` (commit the, possibly hand-edited, proposal) -
+> `apply_persona_import` sets `interview_state` to `in_progress` (not `completed`) whenever the import
+> left at least one dimension unanswered, which is the actual mechanism behind "import pre-fills the
+> interview."
+>
+> **Deviation from this story's original wording:** delivered as two new HA services
+> (`kinward.import_assistant_persona`, using `supports_response` to return the proposal without saving
+> anything; `kinward.confirm_assistant_persona_import` to commit it) rather than the household options
+> flow named above. HA's options flow is a single synchronous voluptuous form with no good way to show an
+> extracted proposal back for review before the same submission commits it - the two-service shape gives
+> an automation/script a real propose-then-confirm round trip, matching the backend's own two-endpoint
+> design, without needing a bespoke multi-step form. `ProviderSettingsRecord`/`AssistantPolicyRecord`
+> remain the options-flow precedent for *household-wide admin settings*; this is a *per-assistant, owner-
+> initiated* action, closer in shape to `kinward.create_assistant`/`kinward.set_assistant_access`, which
+> is why it follows their service pattern instead. Tests in `tests/test_persona_import.py` and
+> `tests/test_integration_api.py::test_persona_import_proposes_then_requires_explicit_confirm`.
 
 ### Story 3.7: Give every assistant a flexible, swappable visual identity
 
@@ -493,6 +535,26 @@ Safely manage household people and assistant ownership while keeping initial HA-
 > unbuilt and are not claimed by this story - only the flexible visual-pack format is in scope here.
 > A renderer of that catalog (Story 10.5) is committed too as of 2026-07-18, ahead of the rest of Epic
 > 10's evidence gate - see that story's decision note for why this one card is the exception.
+>
+> **Implemented (2026-07-18):** `domain/visual_packs.py` (`VisualPack`/`VisualPackStage` dataclasses,
+> pure `stage_for()`) plus `application/visual_packs.py` (loads every `kinward/visual_packs/<id>.json`
+> file via `importlib.resources` - JSON, not YAML, to avoid a new dependency for something this repo's
+> Python service otherwise has none of). Four built-in packs ship: `orb` (abstract), `robot`,
+> `dog` (animal), `portrait` (humanoid) - each a 3-stage manifest (name + `mdi:` icon, optional preview
+> image) proving the format isn't orb-shaped. `stage_for` derives the current stage from
+> `interview_state` plus how many of Story 3.5's five dimensions are already answered (the same
+> answered/total ratio idea Homefront's orb used, generalized to any stage count). `AssistantRecord`
+> gained `visual_pack_id` (default `"orb"`, migration `014_assistant_visual_identity`). API:
+> `GET /visual-packs` (the catalog), `visualPackId`/`interviewState`/`visualStage` on every
+> `AssistantPayload`, `visualPackId` accepted by both assistant create/update endpoints
+> (`InvalidVisualPack` -> 422 `invalid_visual_pack` for an unknown id). A new
+> `GET /assistants/household` endpoint (`application/assistants.list_household_assistants`) exposes
+> every assistant's *public-only* identity (id, name, ownerPersonId, visualPackId, visualStage plus its
+> resolved icon, accent) - deliberately never `personality`, mirroring `GET /people`'s existing unscoped/
+> household-wide precedent rather than `GET /assistants`' per-owner scoping. Scaffolding:
+> `scripts/new_visual_pack.py` (`make new-visual-pack NAME=<id> DISPLAY_NAME="..." CATEGORY=...`)
+> generates a manifest skeleton so adding a pack is authoring JSON, never touching the loader. Tests in
+> `tests/test_visual_packs.py` and `tests/test_integration_api.py`.
 
 # Epic 4: Topics, Memory, Knowledge, and Corrections
 
@@ -1327,14 +1389,16 @@ Expand presentation only after the household trial demonstrates a concrete need.
 - Ships as an additive HACS-style frontend resource bundled with `custom_components/kinward` (rule 11's
   "optional HACS enhancements must be additive"). The default core-card dashboard remains fully
   functional without it; installing the card is opt-in, never required to use an assistant.
-- Thin client only: reads the assistant's own already-authorization-checked entity attributes (icon/
-  accent/stage from Story 3.7) plus safe summary text (assistant name, and the personality's distilled
-  fragment/summary if one exists) - no direct database access, no bypassing backend privacy checks,
-  matching Story 10.1's existing constraint.
-- Privacy-aware per surface: a personal surface shows that person's own accessible assistant(s); a
-  shared display shows only the household-fallback assistant's identity (or a neutral "house"
-  representation), never another person's private assistant - the same shared/private disclosure
-  boundary already enforced everywhere else (Story 3.3, `can_address_assistant`).
+- Thin client only: reads the assistant's own public identity fields (icon/accent/stage/name from
+  Story 3.7) - never `personality`, which must never enter HA entity state at all (cross-cutting rule 6),
+  so there is nothing private for this card to read in the first place, let alone leak. No direct
+  database access, no bypassing backend privacy checks, matching Story 10.1's existing constraint.
+- Privacy-aware by construction, not by per-surface detection: its one data source carries only public
+  identity fields for every household assistant (owned or shared alike), so which assistant a given
+  dashboard view shows is a configuration choice (like any other entity-scoped Lovelace card), never a
+  source of leaked private content - the same shared/private disclosure boundary already enforced
+  everywhere else (Story 3.3, `can_address_assistant`) is preserved by never exposing anything that
+  boundary would need to gate.
 - Respects `prefers-reduced-motion`: any stage change is an instant swap, not an animation, when reduced
   motion is requested, and the static state alone must always be fully representative - no information
   conveyed only through motion.
@@ -1353,8 +1417,35 @@ Expand presentation only after the household trial demonstrates a concrete need.
 > this feature area under Homefront: the forming-orb interview (Epic 16.12) was built "per Marc's
 > explicit instruction despite [an] unapproved gate" rather than waiting - a scoped override of a
 > default, not a reopening of the HA-native pivot's "core cards only" default in general.
-
-## 5. Story 1.1–1.6 historical disposition
+>
+> **Implemented (2026-07-18):** `custom_components/kinward/www/kinward-assistant-card.js` - a
+> dependency-free custom element (`customElements.define("kinward-assistant-card", ...)`), no build step,
+> no CDN import. Config takes `assistant_id` or `assistant_name` (required) plus an optional `entity`
+> override; it reads `sensor.kinward_assistants`' `assistants` attribute (`sensor.py`'s
+> `KinwardAssistantsSensor`, backed by the new `GET /assistants/household` endpoint - Story 3.7's note),
+> finds the matching assistant, and renders its current stage's `mdi:` icon (or a static preview image if
+> the pack provides one) tinted with its accent, the assistant's name, and the stage name.
+> `window.matchMedia("(prefers-reduced-motion: reduce)")` gates a CSS transition on stage change - the
+> very first render is always instant regardless, and the static markup is fully representative either
+> way (no state conveyed only through motion). Registered automatically via
+> `hass.http.async_register_static_paths` + `frontend.add_extra_js_url` in `__init__.py`'s
+> `async_setup_entry` (no manual "add Lovelace resource" step), wrapped in a broad `try/except` so a
+> registration failure only logs a warning and never blocks the rest of setup - this integration's
+> existing "optional integrations degrade safely" rule (AGENTS.md) applied to a frontend resource, not
+> just a backend provider. `manifest.json` gained `"dependencies": ["http", "frontend"]`.
+>
+> **Known simplifications, honestly scoped rather than silently skipped:** (1) "shared display shows the
+> household-fallback assistant" from the design note above is achievable - the fallback assistant is
+> just another row in the sensor's `assistants` list (`owner_person_id: null`) - but there is no
+> automatic surface-type detection; a shared-display dashboard's author currently has to explicitly
+> configure the card with the fallback assistant's id, the same as any other Lovelace card is scoped to
+> a view. (2) No accessibility/mobile/stale-state automated tests exist for this card, `__init__.py`'s
+> frontend registration, or `sensor.py`'s new sensor - `custom_components/kinward/tests/` only unit-tests
+> pure response-classification logic that avoids importing `homeassistant.*`
+> (see `tests/conftest.py`'s own docstring); the real HA-runtime files (`__init__.py`, `sensor.py`,
+> `coordinator.py`, `config_flow.py`) have never had automated coverage in this repo, on either side of
+> this change - a pre-existing gap, not one introduced here. `ruff check` passes on the new/changed
+> Python; the JS card has no linter wired up in this repo and was verified by manual review only.
 
 | Previous story | Status under this plan |
 | --- | --- |
@@ -1494,9 +1585,9 @@ Legend: **Done** / **Partial** (gap noted) / **Not started** / **Deferred** (int
 | 3.2 Bind invitations without duplicate profiles | N/A | Superseded — HA owns user management; nothing to build. |
 | 3.3 Enforce account/role/privacy/ownership/authority separately | Done | — (`application/people.reclassify_person`) |
 | 3.4 Configure the primary assistant | Done | — (multi-assistant, policy, access modes, ADR-002 v0 all implemented) |
-| 3.5 Conduct a rich personality & interaction interview | **Not started** (added 2026-07-17) | Whole story: interview-state tracking on `AssistantRecord`, question/dimension config, conversational delivery through `handle_conversation_request`. |
-| 3.6 Import an existing assistant persona document | **Not started** (added 2026-07-17) | Whole story: options-flow import field, extraction seam, propose/confirm review UI (options-flow based, no bespoke frontend). |
-| 3.7 Give every assistant a flexible, swappable visual identity | **Not started** (added 2026-07-17) | Whole story: visual-pack catalog/manifest schema, HA icon/entity_picture wiring, scaffolding skill for new packs. Rendering lives in a separate story — see Story 10.5 (committed 2026-07-18, not evidence-gated). |
+| 3.5 Conduct a rich personality & interaction interview | **Done (2026-07-18)** | — (`domain/interview.py`, `application/interview.py`, spliced into `handle_conversation_request`; `tests/test_interview.py`) |
+| 3.6 Import an existing assistant persona document | **Done (2026-07-18)** | — (`application/persona_import.py`; delivered as two HA services with `supports_response` rather than the options flow — see the epic body's deviation note; `tests/test_persona_import.py`) |
+| 3.7 Give every assistant a flexible, swappable visual identity | **Done (2026-07-18)** | — (`domain/visual_packs.py`, `application/visual_packs.py`, 4 built-in packs, `scripts/new_visual_pack.py` scaffolding, `GET /assistants/household`; `tests/test_visual_packs.py`). Rendering lives in a separate story — see Story 10.5. |
 
 ### Epic 4 — Topics, Memory, Knowledge, and Corrections
 
@@ -1570,7 +1661,7 @@ push/webhook delivery, and calendar mutation via Epic 6's approval machinery.
 | Story | Status | Remaining work |
 | --- | --- | --- |
 | 10.1–10.4 | **Correctly not started** | All four are explicitly gated on real household usage evidence per the epic's own goal. Do not start until Story 1.7's trial (and ideally some weeks of real use) produces that evidence. |
-| 10.5 Ship the assistant visual-identity Lovelace card | **Not started** (added 2026-07-17, promoted to committed scope 2026-07-18) | Whole story: the card itself, plus its dependency, Story 3.7's catalog (also not started). Not evidence-gated, unlike 10.1–10.4 — see the epic body's decision note. |
+| 10.5 Ship the assistant visual-identity Lovelace card | **Done (2026-07-18)** | — (`custom_components/kinward/www/kinward-assistant-card.js`, auto-registered in `__init__.py`). No automated frontend/HA-runtime test coverage exists for this or any other platform file in this integration — see the epic body's "known simplifications" note. |
 
 ### Roll-up: what's actually left to reach a fuller release
 
@@ -1588,8 +1679,9 @@ push/webhook delivery, and calendar mutation via Epic 6's approval machinery.
    `recent_actions`/`active_timers` store) can also trail real usage rather than blocking it.
 6. Backup/restore/import (9.1–9.3) and Epic 10's evidence-gated stories (10.1–10.4) are intentionally
    not next — revisit only after the above is running for real.
-7. New scope added 2026-07-17/2026-07-18, not yet prioritized against the above: Epic 3's assistant
-   personalization stories (3.5 conversational interview, 3.6 persona-document import, 3.7 swappable
-   visual-identity catalog) plus Story 10.5, its Lovelace-card renderer. None of the four are blocked on
-   other unfinished work. Unlike the rest of Epic 10, 10.5 is committed rather than evidence-gated
-   (2026-07-18 decision) - it can be sequenced whenever 3.7 is, not deferred to "after real usage."
+7. ~~New scope added 2026-07-17: Epic 3's assistant personalization stories~~ — **done (2026-07-18)**;
+   3.5 (conversational interview), 3.6 (persona-document import), 3.7 (swappable visual-identity
+   catalog), and the committed-not-evidence-gated Story 10.5 (its Lovelace-card renderer) all shipped
+   together. No automated HA-runtime test coverage exists for 10.5's card or the sensor/registration
+   code it depends on - a pre-existing gap in this integration's test harness, not new to this pass; see
+   Story 10.5's "known simplifications" note.

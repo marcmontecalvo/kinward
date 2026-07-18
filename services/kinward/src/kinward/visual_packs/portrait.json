@@ -1,0 +1,11 @@
+{
+  "id": "portrait",
+  "display_name": "Portrait",
+  "category": "humanoid",
+  "default_accent": "#7B8794",
+  "stages": [
+    { "name": "silhouette", "mdi_icon": "mdi:account-outline" },
+    { "name": "taking_shape", "mdi_icon": "mdi:account-question" },
+    { "name": "portrait", "mdi_icon": "mdi:account-circle" }
+  ]
+}

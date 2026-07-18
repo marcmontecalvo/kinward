@@ -59,6 +59,9 @@ async def sync_people(
                     owner_person_id=record.id,
                     name=_assistant_name_for(item.display_name),
                     kind="primary",
+                    # Epic 3 Story 3.5: only a genuinely new assistant opts into the interview -
+                    # see migration 014's note on why the column default stays "completed".
+                    interview_state="not_started",
                 )
             )
             session.add(

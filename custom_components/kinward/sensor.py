@@ -27,6 +27,7 @@ async def async_setup_entry(
             KinwardPeopleSensor(coordinator),
             KinwardPetsSensor(coordinator),
             KinwardPendingApprovalsSensor(coordinator),
+            KinwardAssistantsSensor(coordinator),
         ]
     )
 
@@ -202,6 +203,46 @@ class KinwardPetsSensor(KinwardEntity, SensorEntity):
                     "shared_facts": pet.shared_facts,
                 }
                 for pet in self.coordinator.pets
+            ]
+        }
+
+
+class KinwardAssistantsSensor(KinwardEntity, SensorEntity):
+    """Every household assistant's public visual identity (Epic 3 Story 3.7) - the
+
+    data source for a Lovelace card (Story 10.5). Deliberately public-only fields
+    (name, visual pack, current stage, accent) - never ``personality``, which stays
+    private per-owner and must never enter shared HA entity state (cross-cutting
+    architecture rule 6). Mirrors ``KinwardPeopleSensor``'s "role/display_name are
+    fine to broadcast, private content is not" precedent.
+    """
+
+    _attr_name = "Assistants"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(self, coordinator: KinwardDataUpdateCoordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.household_id}-assistants"
+
+    @property
+    def native_value(self) -> int:
+        return len(self.coordinator.assistant_identities)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, list[dict[str, object]]]:
+        return {
+            "assistants": [
+                {
+                    "id": assistant.id,
+                    "name": assistant.name,
+                    "owner_person_id": assistant.owner_person_id,
+                    "visual_pack_id": assistant.visual_pack_id,
+                    "visual_stage": assistant.visual_stage,
+                    "visual_stage_icon": assistant.visual_stage_icon,
+                    "visual_stage_preview_image": assistant.visual_stage_preview_image,
+                    "accent": assistant.accent,
+                }
+                for assistant in self.coordinator.assistant_identities
             ]
         }
 

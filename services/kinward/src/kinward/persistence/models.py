@@ -90,6 +90,12 @@ class AssistantRecord(Base):
     # permissions - a separate, still-unbuilt concern.
     access_mode: Mapped[str] = mapped_column(String(16), default="owner_only", nullable=False)
     allowed_person_ids: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    # Epic 3 Story 3.7: references a kinward.visual_packs/<id>.json catalog entry, not a table.
+    visual_pack_id: Mapped[str] = mapped_column(String(64), default="orb", nullable=False)
+    # Epic 3 Story 3.5: not_started/in_progress/skipped/completed. Defaults to "completed" at the
+    # Python/column level (see migration 014) so only explicit creation paths (people_sync,
+    # create_additional_assistant) opt a *new* assistant into "not_started".
+    interview_state: Mapped[str] = mapped_column(String(16), default="completed", nullable=False)
     record_version: Mapped[int] = mapped_column(default=1, nullable=False)
     classification: Mapped[str] = mapped_column(String(32), default="private-person", nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)

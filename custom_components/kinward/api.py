@@ -223,6 +223,9 @@ class Assistant:
     personality: dict[str, Any]
     access_mode: str
     allowed_person_ids: list[str]
+    visual_pack_id: str
+    interview_state: str
+    visual_stage: str
 
 
 @dataclass(frozen=True)
@@ -245,6 +248,9 @@ def _assistant_from(payload: Any) -> Assistant | None:
     personality = payload.get("personality")
     access_mode = payload.get("accessMode")
     allowed_person_ids = payload.get("allowedPersonIds")
+    visual_pack_id = payload.get("visualPackId")
+    interview_state = payload.get("interviewState")
+    visual_stage = payload.get("visualStage")
     if (
         not isinstance(assistant_id, str)
         or not isinstance(name, str)
@@ -252,6 +258,9 @@ def _assistant_from(payload: Any) -> Assistant | None:
         or not isinstance(access_mode, str)
         or not isinstance(allowed_person_ids, list)
         or not all(isinstance(item, str) for item in allowed_person_ids)
+        or not isinstance(visual_pack_id, str)
+        or not isinstance(interview_state, str)
+        or not isinstance(visual_stage, str)
     ):
         return None
     return Assistant(
@@ -260,6 +269,163 @@ def _assistant_from(payload: Any) -> Assistant | None:
         personality=personality,
         access_mode=access_mode,
         allowed_person_ids=allowed_person_ids,
+        visual_pack_id=visual_pack_id,
+        interview_state=interview_state,
+        visual_stage=visual_stage,
+    )
+
+
+@dataclass(frozen=True)
+class AssistantIdentity:
+    """The public-only subset of an assistant's fields (Epic 3 Story 3.7) - never
+
+    ``personality``. Safe for household-wide display (e.g. a shared sensor or the
+    Story 10.5 Lovelace card) because it carries nothing private, unlike ``Assistant``
+    above which is always fetched scoped to one person's own ``ha_user_id``.
+    """
+
+    id: str
+    name: str
+    owner_person_id: str | None
+    visual_pack_id: str
+    visual_stage: str
+    visual_stage_icon: str
+    visual_stage_preview_image: str | None
+    accent: str
+
+
+@dataclass(frozen=True)
+class AssistantIdentitiesFailure:
+    error: str
+
+
+def _assistant_identity_from(payload: Any) -> AssistantIdentity | None:
+    if not isinstance(payload, dict):
+        return None
+    assistant_id = payload.get("id")
+    name = payload.get("name")
+    owner_person_id = payload.get("ownerPersonId")
+    visual_pack_id = payload.get("visualPackId")
+    visual_stage = payload.get("visualStage")
+    visual_stage_icon = payload.get("visualStageIcon")
+    visual_stage_preview_image = payload.get("visualStagePreviewImage")
+    accent = payload.get("accent")
+    if (
+        not isinstance(assistant_id, str)
+        or not isinstance(name, str)
+        or not (owner_person_id is None or isinstance(owner_person_id, str))
+        or not isinstance(visual_pack_id, str)
+        or not isinstance(visual_stage, str)
+        or not isinstance(visual_stage_icon, str)
+        or not (visual_stage_preview_image is None or isinstance(visual_stage_preview_image, str))
+        or not isinstance(accent, str)
+    ):
+        return None
+    return AssistantIdentity(
+        id=assistant_id,
+        name=name,
+        owner_person_id=owner_person_id,
+        visual_pack_id=visual_pack_id,
+        visual_stage=visual_stage,
+        visual_stage_icon=visual_stage_icon,
+        visual_stage_preview_image=visual_stage_preview_image,
+        accent=accent,
+    )
+
+
+def classify_assistant_identities_response(
+    status_code: int, payload: Any
+) -> list[AssistantIdentity] | AssistantIdentitiesFailure:
+    if status_code != 200 or not isinstance(payload, list):
+        return AssistantIdentitiesFailure(error=_error_reason(status_code, payload))
+    return [identity for item in payload if (identity := _assistant_identity_from(item)) is not None]
+
+
+@dataclass(frozen=True)
+class VisualPackStage:
+    name: str
+    mdi_icon: str
+    preview_image: str | None
+
+
+@dataclass(frozen=True)
+class VisualPack:
+    id: str
+    display_name: str
+    category: str
+    default_accent: str
+    stages: list[VisualPackStage]
+
+
+@dataclass(frozen=True)
+class VisualPacksFailure:
+    error: str
+
+
+def _visual_pack_from(payload: Any) -> VisualPack | None:
+    if not isinstance(payload, dict):
+        return None
+    stages_raw = payload.get("stages")
+    if not isinstance(stages_raw, list):
+        return None
+    stages: list[VisualPackStage] = []
+    for stage in stages_raw:
+        if not isinstance(stage, dict):
+            return None
+        name, mdi_icon = stage.get("name"), stage.get("mdiIcon")
+        if not isinstance(name, str) or not isinstance(mdi_icon, str):
+            return None
+        preview_image = stage.get("previewImage")
+        stages.append(
+            VisualPackStage(
+                name=name,
+                mdi_icon=mdi_icon,
+                preview_image=preview_image if isinstance(preview_image, str) else None,
+            )
+        )
+    pack_id, display_name = payload.get("id"), payload.get("displayName")
+    category, default_accent = payload.get("category"), payload.get("defaultAccent")
+    if (
+        not isinstance(pack_id, str)
+        or not isinstance(display_name, str)
+        or not isinstance(category, str)
+        or not isinstance(default_accent, str)
+    ):
+        return None
+    return VisualPack(
+        id=pack_id, display_name=display_name, category=category, default_accent=default_accent, stages=stages
+    )
+
+
+def classify_visual_packs_response(status_code: int, payload: Any) -> list[VisualPack] | VisualPacksFailure:
+    if status_code != 200 or not isinstance(payload, list):
+        return VisualPacksFailure(error=_error_reason(status_code, payload))
+    return [pack for item in payload if (pack := _visual_pack_from(item)) is not None]
+
+
+@dataclass(frozen=True)
+class PersonaImportProposal:
+    dimensions: dict[str, str]
+    grounding_notes: str
+
+
+@dataclass(frozen=True)
+class PersonaImportFailure:
+    error: str
+
+
+def classify_persona_import_response(
+    status_code: int, payload: Any
+) -> PersonaImportProposal | PersonaImportFailure:
+    if status_code != 200 or not isinstance(payload, dict):
+        return PersonaImportFailure(error=_error_reason(status_code, payload))
+    dimensions = payload.get("dimensions")
+    grounding_notes = payload.get("groundingNotes")
+    if not isinstance(dimensions, dict) or not isinstance(grounding_notes, str):
+        return PersonaImportFailure(error="malformed response")
+    return PersonaImportProposal(
+        dimensions={k: v for k, v in dimensions.items() if isinstance(v, str)},
+        grounding_notes=grounding_notes,
     )
 
 
@@ -1072,6 +1238,75 @@ class KinwardApiClient:
         try:
             status, payload = await self._request(
                 "PATCH", f"/api/v1/integration/assistants/{quote(assistant_id)}", json_body=body
+            )
+        except (TimeoutError, aiohttp.ClientError):
+            return AssistantActionFailure(reason="cannot_connect")
+        return classify_assistant_action_response(status, payload)
+
+    async def async_fetch_assistant_identities(
+        self,
+    ) -> list[AssistantIdentity] | AssistantIdentitiesFailure:
+        """Every household assistant's public identity fields (Epic 3 Story 3.7) - never
+
+        personality, so no ``ha_user_id`` scoping is needed (mirrors ``async_fetch_people``).
+        """
+        try:
+            status, payload = await self._request("GET", "/api/v1/integration/assistants/household")
+        except (TimeoutError, aiohttp.ClientError):
+            return AssistantIdentitiesFailure(error="cannot_connect")
+        return classify_assistant_identities_response(status, payload)
+
+    async def async_list_visual_packs(self) -> list[VisualPack] | VisualPacksFailure:
+        try:
+            status, payload = await self._request("GET", "/api/v1/integration/visual-packs")
+        except (TimeoutError, aiohttp.ClientError):
+            return VisualPacksFailure(error="cannot_connect")
+        return classify_visual_packs_response(status, payload)
+
+    async def async_restart_interview(
+        self, *, ha_user_id: str, assistant_id: str
+    ) -> Assistant | AssistantActionFailure:
+        body = {"haUserId": ha_user_id}
+        try:
+            status, payload = await self._request(
+                "POST",
+                f"/api/v1/integration/assistants/{quote(assistant_id)}/interview/restart",
+                json_body=body,
+            )
+        except (TimeoutError, aiohttp.ClientError):
+            return AssistantActionFailure(reason="cannot_connect")
+        return classify_assistant_action_response(status, payload)
+
+    async def async_import_persona(
+        self, *, ha_user_id: str, assistant_id: str, document_text: str
+    ) -> PersonaImportProposal | PersonaImportFailure:
+        """Step one of Story 3.6 - proposes only, never commits anything."""
+        body = {"haUserId": ha_user_id, "documentText": document_text}
+        try:
+            status, payload = await self._request(
+                "POST",
+                f"/api/v1/integration/assistants/{quote(assistant_id)}/persona-import",
+                json_body=body,
+            )
+        except (TimeoutError, aiohttp.ClientError):
+            return PersonaImportFailure(error="cannot_connect")
+        return classify_persona_import_response(status, payload)
+
+    async def async_confirm_persona_import(
+        self,
+        *,
+        ha_user_id: str,
+        assistant_id: str,
+        dimensions: dict[str, str],
+        grounding_notes: str,
+    ) -> Assistant | AssistantActionFailure:
+        """Step two of Story 3.6 - commits an owner-confirmed (possibly hand-edited) proposal."""
+        body = {"haUserId": ha_user_id, "dimensions": dimensions, "groundingNotes": grounding_notes}
+        try:
+            status, payload = await self._request(
+                "POST",
+                f"/api/v1/integration/assistants/{quote(assistant_id)}/persona-import/confirm",
+                json_body=body,
             )
         except (TimeoutError, aiohttp.ClientError):
             return AssistantActionFailure(reason="cannot_connect")
