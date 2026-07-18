@@ -437,19 +437,20 @@ wait_for_healthy() {
   fail "${service} did not become healthy in time - check: docker compose logs ${service}"
 }
 
-honcho_migration_failed_on_password() {
-  docker compose --env-file "${ENV_FILE}" "${COMPOSE_FILES[@]}" logs honcho-configure-embeddings 2>/dev/null \
-    | grep -qi "password authentication failed"
-}
-
 run_honcho_migration() {
   # honcho-db's POSTGRES_PASSWORD env var only takes effect the first time its data
   # directory is initialized. A volume left over from an earlier attempt - a different
   # random password generated on a prior wizard run, or a `docker compose up` done
   # outside the wizard entirely - leaves Postgres out of sync with .env, and
-  # honcho-configure-embeddings fails auth before it ever gets to the schema. Detect
-  # that specific failure once and reconcile the password via honcho-db's own
-  # Unix-socket trust auth (no data is touched), then retry.
+  # honcho-configure-embeddings fails auth before it ever gets to the schema.
+  #
+  # Unconditionally reconcile the password once (rather than gating on grepping the
+  # failure out of `docker compose logs`, which races the container's log flush) via
+  # honcho-db's own Unix-socket trust auth - safe and idempotent even if that wasn't
+  # the real failure, since it just re-asserts the password .env already expects.
+  # Note: "trust" only applies to local/loopback connections in the image's default
+  # pg_hba.conf - it does not weaken password enforcement for other containers, which
+  # is what actually matters and is what this reconciliation fixes.
   local retry="${1:-false}"
   if [[ "${retry}" == true ]]; then
     docker compose --env-file "${ENV_FILE}" "${COMPOSE_FILES[@]}" "${COMPOSE_PROFILES[@]}" \
@@ -469,9 +470,9 @@ run_honcho_migration() {
     sleep 2
   done
 
-  if [[ "${retry}" != true ]] && honcho_migration_failed_on_password; then
-    warn "honcho-db's password doesn't match .env - its data volume was likely initialized by an earlier"
-    warn "attempt with a different password. Reconciling it via honcho-db's local trust socket (no data is touched)..."
+  if [[ "${retry}" != true ]]; then
+    warn "honcho-configure-embeddings failed on its first attempt. Reconciling honcho-db's password with"
+    warn ".env via its local trust socket (safe even if that wasn't the real cause; no data is touched)..."
     docker compose --env-file "${ENV_FILE}" "${COMPOSE_FILES[@]}" exec -T honcho-db \
       psql -U honcho -d honcho -c "ALTER USER honcho WITH PASSWORD '${honcho_postgres_password}';" >/dev/null \
       || fail "could not reconcile honcho-db's password via its local trust socket - check: docker compose logs honcho-db"
