@@ -134,6 +134,76 @@ get_env() {
   printf '%s' "${value:-${default}}"
 }
 
+list_models() {
+  # $1 = base_url, $2 = api_key (may be empty). Prints one model id per line.
+  local base_url="$1" api_key="$2"
+  local -a auth_header=()
+  [[ -n "${api_key}" ]] && auth_header=(-H "Authorization: Bearer ${api_key}")
+  curl -fsS "${auth_header[@]}" "${base_url%/}/models" 2>/dev/null | python3 -c '
+import json, sys
+try:
+    data = json.load(sys.stdin)
+except ValueError:
+    sys.exit(1)
+items = data.get("data", data) if isinstance(data, dict) else data
+if not isinstance(items, list):
+    sys.exit(1)
+for item in items:
+    if isinstance(item, dict) and item.get("id"):
+        print(item["id"])
+' 2>/dev/null
+}
+
+pick_model() {
+  # $1 = base_url, $2 = api_key, $3 = purpose label for prompts. Echoes the chosen model id on stdout.
+  local base_url="$1" api_key="$2" purpose="$3" models
+  models="$(list_models "${base_url}" "${api_key}")"
+  if [[ -z "${models}" ]]; then
+    warn "could not list models from ${base_url%/}/models; enter the ${purpose} model id manually."
+    ask "Model id for ${purpose}"
+    return
+  fi
+  warn "Models available at ${base_url}:"
+  local i=1 line
+  while IFS= read -r line; do
+    printf '  %d) %s\n' "${i}" "${line}" >&2
+    i=$((i + 1))
+  done <<<"${models}"
+  local choice selected
+  while true; do
+    choice="$(ask "Pick the ${purpose} model (number, or paste a model id not listed)" "1")"
+    if [[ "${choice}" =~ ^[0-9]+$ ]]; then
+      selected="$(sed -n "${choice}p" <<<"${models}")"
+      if [[ -n "${selected}" ]]; then
+        printf '%s' "${selected}"
+        return
+      fi
+      warn "no model at position ${choice}; try again."
+    else
+      printf '%s' "${choice}"
+      return
+    fi
+  done
+}
+
+probe_embedding_dimension() {
+  # $1 = base_url, $2 = api_key, $3 = model id. Echoes the vector length on success, nothing on failure.
+  local base_url="$1" api_key="$2" model="$3"
+  local -a auth_header=()
+  [[ -n "${api_key}" ]] && auth_header=(-H "Authorization: Bearer ${api_key}")
+  local body
+  body="$(python3 -c 'import json, sys; print(json.dumps({"model": sys.argv[1], "input": "kinward-dimension-probe"}))' "${model}")"
+  curl -fsS "${auth_header[@]}" -H "Content-Type: application/json" -X POST "${base_url%/}/embeddings" -d "${body}" 2>/dev/null \
+    | python3 -c '
+import json, sys
+try:
+    data = json.load(sys.stdin)
+    print(len(data["data"][0]["embedding"]))
+except (ValueError, KeyError, IndexError, TypeError):
+    sys.exit(1)
+' 2>/dev/null
+}
+
 clone_vendor() {
   local name="$1" url="$2"
   mkdir -p "${VENDOR_DIR}"
@@ -181,25 +251,82 @@ if [[ "${WITH_HONCHO}" == yes ]]; then
   COMPOSE_FILES+=(-f compose.honcho.yaml)
   COMPOSE_PROFILES+=(--profile honcho)
 
-  log "Honcho needs an LLM provider for memory extraction, summarization, and dialectic chat."
+  log "Honcho needs an LLM provider for memory extraction, summarization, dreaming, and dialectic chat."
   provider="$(get_env KINWARD_HONCHO_LLM_PROVIDER "")"
   if [[ -z "${provider}" ]]; then
-    provider="$(ask "LLM provider for Honcho (openai/anthropic/gemini)" openai)"
+    provider="$(ask "LLM provider for Honcho (openai/anthropic/gemini/local)" openai)"
   fi
+
   case "${provider}" in
-    openai) honcho_key_var=KINWARD_HONCHO_LLM_OPENAI_API_KEY ;;
-    anthropic) honcho_key_var=KINWARD_HONCHO_LLM_ANTHROPIC_API_KEY ;;
-    gemini) honcho_key_var=KINWARD_HONCHO_LLM_GEMINI_API_KEY ;;
-    *) fail "unknown Honcho LLM provider '${provider}' (expected openai, anthropic, or gemini)" ;;
+    openai|anthropic|gemini)
+      case "${provider}" in
+        openai) honcho_key_var=KINWARD_HONCHO_LLM_OPENAI_API_KEY ;;
+        anthropic) honcho_key_var=KINWARD_HONCHO_LLM_ANTHROPIC_API_KEY ;;
+        gemini) honcho_key_var=KINWARD_HONCHO_LLM_GEMINI_API_KEY ;;
+      esac
+      existing_key="$(get_env "${honcho_key_var}" "")"
+      if [[ -n "${existing_key}" ]]; then
+        log "Reusing the ${provider} API key already stored in .env."
+      else
+        api_key="$(ask_secret "API key for ${provider} (used by Honcho only)")"
+        [[ -n "${api_key}" ]] || fail "Honcho will not start without an LLM provider API key."
+        set_env "${honcho_key_var}" "${api_key}"
+      fi
+      ;;
+    local)
+      log "Local/self-hosted LLM (any OpenAI-compatible server: vLLM, Ollama, LiteLLM, LM Studio, ...)."
+      chat_base_url="$(get_env KINWARD_HONCHO_CHAT_BASE_URL "")"
+      [[ -n "${chat_base_url}" ]] || chat_base_url="$(ask "Base URL for chat/inference (OpenAI-compatible, e.g. http://10.0.0.5:8000/v1)")"
+      [[ -n "${chat_base_url}" ]] || fail "a base URL is required for a local LLM provider"
+      chat_api_key="$(ask_secret "API key for ${chat_base_url} (blank if your server does not require one)")"
+
+      chat_model="$(pick_model "${chat_base_url}" "${chat_api_key}" "chat/inference")"
+      [[ -n "${chat_model}" ]] || fail "a chat model id is required"
+
+      if [[ "$(ask_yn "Use the same URL for embeddings?" yes)" == yes ]]; then
+        embedding_base_url="${chat_base_url}"
+        embedding_api_key="${chat_api_key}"
+      else
+        embedding_base_url="$(ask "Base URL for embeddings (OpenAI-compatible)" "${chat_base_url}")"
+        embedding_api_key="$(ask_secret "API key for ${embedding_base_url} (blank if not required)")"
+      fi
+      embedding_model="$(pick_model "${embedding_base_url}" "${embedding_api_key}" "embedding")"
+      [[ -n "${embedding_model}" ]] || fail "an embedding model id is required"
+
+      if [[ "${embedding_api_key}" != "${chat_api_key}" ]]; then
+        warn "the embedding endpoint's API key differs from the chat endpoint's; this wizard only wires"
+        warn "one shared key (LLM_OPENAI_API_KEY) for both. Edit vendor/honcho/.env after setup if they"
+        warn "truly need different credentials."
+      fi
+
+      log "Probing ${embedding_model} to detect its output vector dimension..."
+      embedding_dim="$(probe_embedding_dimension "${embedding_base_url}" "${embedding_api_key}" "${embedding_model}")"
+      if [[ -z "${embedding_dim}" ]]; then
+        warn "could not auto-detect the embedding dimension by calling ${embedding_base_url%/}/embeddings."
+        embedding_dim="$(ask "Embedding vector dimension for ${embedding_model}" "1536")"
+      else
+        log "Detected a ${embedding_dim}-dimension embedding vector from ${embedding_model}."
+      fi
+      [[ "${embedding_dim}" =~ ^[0-9]+$ ]] || fail "embedding dimension must be a number, got '${embedding_dim}'"
+
+      existing_dim="$(get_env KINWARD_HONCHO_EMBEDDING_DIMENSIONS "")"
+      if [[ -n "${existing_dim}" && "${existing_dim}" != "${embedding_dim}" ]]; then
+        warn "Honcho's pgvector schema was previously configured for dimension ${existing_dim}; it will be"
+        warn "re-adjusted to ${embedding_dim} by honcho-configure-embeddings on next startup. That step"
+        warn "refuses to run if any embeddings have already been written (dimension is otherwise immutable"
+        warn "for the life of a deployment - see Honcho's changing-embeddings docs)."
+      fi
+
+      set_env KINWARD_HONCHO_CHAT_BASE_URL "${chat_base_url}"
+      set_env KINWARD_HONCHO_CHAT_MODEL "${chat_model}"
+      set_env KINWARD_HONCHO_EMBEDDING_BASE_URL "${embedding_base_url}"
+      set_env KINWARD_HONCHO_EMBEDDING_MODEL "${embedding_model}"
+      set_env KINWARD_HONCHO_EMBEDDING_DIMENSIONS "${embedding_dim}"
+      set_env KINWARD_HONCHO_LLM_OPENAI_API_KEY "${chat_api_key:-local-no-key-required}"
+      ;;
+    *) fail "unknown Honcho LLM provider '${provider}' (expected openai, anthropic, gemini, or local)" ;;
   esac
-  existing_key="$(get_env "${honcho_key_var}" "")"
-  if [[ -n "${existing_key}" ]]; then
-    log "Reusing the ${provider} API key already stored in .env."
-  else
-    api_key="$(ask_secret "API key for ${provider} (used by Honcho only)")"
-    [[ -n "${api_key}" ]] || fail "Honcho will not start without an LLM provider API key."
-    set_env "${honcho_key_var}" "${api_key}"
-  fi
+
   set_env KINWARD_HONCHO_LLM_PROVIDER "${provider}"
   [[ -n "$(get_env KINWARD_HONCHO_POSTGRES_PASSWORD)" ]] || set_env KINWARD_HONCHO_POSTGRES_PASSWORD "$(random_secret 24)"
   set_env KINWARD_HONCHO_URL "http://honcho-api:8000"
@@ -216,6 +343,54 @@ if [[ "${WITH_LLM_WIKI}" == yes ]]; then
 fi
 
 [[ "${WITH_HA}" == yes ]] && COMPOSE_PROFILES+=(--profile ha)
+
+# ---------------------------------------------------------------------------
+# Kinward's own conversation model - separate from Honcho's memory pipeline.
+# Without this, assistants have no model to actually reply with until an
+# admin visits the Kinward integration's Options screen in Home Assistant.
+# ---------------------------------------------------------------------------
+
+model_provider="$(get_env KINWARD_MODEL_PROVIDER "")"
+model_base_url="$(get_env KINWARD_MODEL_BASE_URL "")"
+model_name="$(get_env KINWARD_MODEL_NAME "")"
+model_api_key="$(get_env KINWARD_MODEL_API_KEY "")"
+
+if [[ -z "${model_provider}" ]]; then
+  reused=no
+  if [[ "${WITH_HONCHO}" == yes && "$(get_env KINWARD_HONCHO_LLM_PROVIDER)" == local ]]; then
+    if [[ "$(ask_yn "Use the same local model you just configured for Honcho (${chat_model} @ ${chat_base_url}) for Kinward's own assistant conversations too?" yes)" == yes ]]; then
+      model_provider="openai-compatible"
+      model_base_url="${chat_base_url}"
+      model_name="${chat_model}"
+      model_api_key="${chat_api_key}"
+      reused=yes
+    fi
+  fi
+  if [[ "${reused}" == no ]]; then
+    if [[ "$(ask_yn "Configure a conversation model for Kinward's own assistants now? (skip to leave this for the Kinward integration's Options screen in Home Assistant later)" yes)" == yes ]]; then
+      model_provider="$(ask "Model provider (openai/anthropic/openai-compatible)" openai)"
+      case "${model_provider}" in
+        openai-compatible)
+          model_base_url="$(ask "Base URL (OpenAI-compatible, e.g. http://10.0.0.5:8000/v1)")"
+          [[ -n "${model_base_url}" ]] || fail "a base URL is required for the openai-compatible provider"
+          model_api_key="$(ask_secret "API key for ${model_base_url} (blank if your server does not require one)")"
+          model_name="$(pick_model "${model_base_url}" "${model_api_key}" "conversation")"
+          ;;
+        openai|anthropic)
+          model_name="$(ask "Model name")"
+          model_api_key="$(ask_secret "API key for ${model_provider}")"
+          ;;
+        *) fail "unknown model provider '${model_provider}' (expected openai, anthropic, or openai-compatible)" ;;
+      esac
+    else
+      model_provider="none"
+    fi
+  fi
+  set_env KINWARD_MODEL_PROVIDER "${model_provider}"
+  [[ -n "${model_base_url}" ]] && set_env KINWARD_MODEL_BASE_URL "${model_base_url}"
+  [[ -n "${model_name}" ]] && set_env KINWARD_MODEL_NAME "${model_name}"
+  [[ -n "${model_api_key}" ]] && set_env KINWARD_MODEL_API_KEY "${model_api_key}"
+fi
 
 # ---------------------------------------------------------------------------
 # Bring the stack up
@@ -242,6 +417,23 @@ wait_for_healthy() {
   fail "${service} did not become healthy in time - check: docker compose logs ${service}"
 }
 
+wait_for_exit_success() {
+  local service="$1" attempts="${2:-60}" container_id status
+  local error_hint="${3:-check: docker compose logs ${service}}"
+  for ((attempt = 1; attempt <= attempts; attempt++)); do
+    container_id="$(docker compose --env-file "${ENV_FILE}" "${COMPOSE_FILES[@]}" ps -aq "${service}" 2>/dev/null)"
+    if [[ -n "${container_id}" ]]; then
+      status="$(docker inspect --format '{{.State.Status}}' "${container_id}")"
+      if [[ "${status}" == "exited" ]]; then
+        [[ "$(docker inspect --format '{{.State.ExitCode}}' "${container_id}")" == "0" ]] && return 0
+        fail "${error_hint}"
+      fi
+    fi
+    sleep 2
+  done
+  fail "${service} did not finish in time - check: docker compose logs ${service}"
+}
+
 log "Generating a one-time household setup authorization..."
 export KINWARD_SETUP_AUTHORIZATION
 KINWARD_SETUP_AUTHORIZATION="$(random_secret 24)"
@@ -254,7 +446,13 @@ docker compose --env-file "${ENV_FILE}" "${COMPOSE_FILES[@]}" "${COMPOSE_PROFILE
 
 wait_for_healthy api
 wait_for_healthy worker
-[[ "${WITH_HONCHO}" == yes ]] && wait_for_healthy honcho-api 90
+
+if [[ "${WITH_HONCHO}" == yes ]]; then
+  log "Applying Honcho's database migrations and pgvector dimension..."
+  wait_for_exit_success honcho-configure-embeddings 60 \
+    "honcho-configure-embeddings failed - check: docker compose logs honcho-configure-embeddings (a common cause is the embedding dimension changing on a deployment that already has embeddings written; see the warning above, or wipe the honcho volumes with 'docker compose ... down --volumes' for a clean local dev reset)"
+  wait_for_healthy honcho-api 90
+fi
 [[ "${WITH_HA}" == yes ]] && wait_for_healthy homeassistant 90
 
 # ---------------------------------------------------------------------------
@@ -324,11 +522,18 @@ token_output="$(docker compose --env-file "${ENV_FILE}" "${COMPOSE_FILES[@]}" ex
 integration_token="$(printf '%s\n' "${token_output}" | awk -F': ' '/^  token:/{print $2}')"
 [[ -n "${integration_token}" ]] || fail "token minting succeeded but the token could not be parsed from CLI output"
 
-if [[ "${WITH_HONCHO}" == yes || "${WITH_LLM_WIKI}" == yes ]]; then
-  log "Pointing Kinward's provider settings at the peers you installed..."
-  provider_body="$(python3 - "${WITH_HONCHO}" "${WITH_LLM_WIKI}" <<'PY'
+if [[ "${WITH_HONCHO}" == yes || "${WITH_LLM_WIKI}" == yes || ( -n "${model_provider}" && "${model_provider}" != none ) ]]; then
+  log "Pointing Kinward's provider settings at what you configured..."
+  provider_body="$(python3 - "${WITH_HONCHO}" "${WITH_LLM_WIKI}" "${model_provider}" "${model_base_url}" "${model_name}" "${model_api_key}" <<'PY'
 import json, sys
-with_honcho, with_wiki = sys.argv[1] == "yes", sys.argv[2] == "yes"
+with_honcho, with_wiki, model_provider, model_base_url, model_name, model_api_key = (
+    sys.argv[1] == "yes",
+    sys.argv[2] == "yes",
+    sys.argv[3],
+    sys.argv[4],
+    sys.argv[5],
+    sys.argv[6],
+)
 body = {}
 if with_honcho:
     body["memoryBackend"] = "honcho"
@@ -336,6 +541,14 @@ if with_honcho:
 if with_wiki:
     body["knowledgeBackend"] = "llm_wiki"
     body["llmWikiUrl"] = "http://llm-wiki:3050"
+if model_provider and model_provider != "none":
+    body["modelProvider"] = model_provider
+    if model_base_url:
+        body["modelBaseUrl"] = model_base_url
+    if model_name:
+        body["modelName"] = model_name
+    if model_api_key:
+        body["modelApiKey"] = model_api_key
 print(json.dumps(body))
 PY
 )"
@@ -367,8 +580,17 @@ Next step - connect Home Assistant:
      Token: the value printed above
 SUMMARY
 
+if [[ -n "${model_provider}" && "${model_provider}" != none ]]; then
+  echo "  Conversation model: ${model_provider} - $(get_env KINWARD_MODEL_NAME)${model_base_url:+ @ ${model_base_url}}"
+else
+  echo "  Conversation model: none set - configure one from the Kinward integration's Options in Home Assistant, or assistants have nothing to reply with."
+fi
 if [[ "${WITH_HONCHO}" == yes ]]; then
   echo "  Honcho:    http://localhost:$(get_env KINWARD_HONCHO_PORT 8001) (internal: honcho-api:8000)"
+  if [[ "$(get_env KINWARD_HONCHO_LLM_PROVIDER)" == local ]]; then
+    echo "             chat model:      $(get_env KINWARD_HONCHO_CHAT_MODEL) @ $(get_env KINWARD_HONCHO_CHAT_BASE_URL)"
+    echo "             embedding model: $(get_env KINWARD_HONCHO_EMBEDDING_MODEL) @ $(get_env KINWARD_HONCHO_EMBEDDING_BASE_URL) (dim $(get_env KINWARD_HONCHO_EMBEDDING_DIMENSIONS))"
+  fi
 fi
 if [[ "${WITH_LLM_WIKI}" == yes ]]; then
   echo "  LLM-Wiki:  http://localhost:$(get_env KINWARD_LLM_WIKI_PORT 3050)"

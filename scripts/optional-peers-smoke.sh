@@ -23,14 +23,14 @@ export KINWARD_HONCHO_POSTGRES_PASSWORD=placeholder
 export KINWARD_LLM_WIKI_UI_PASSWORD=placeholder
 
 default_services="$("${COMPOSE[@]}" config --services | sort)"
-for forbidden in honcho-db honcho-redis honcho-api honcho-deriver llm-wiki; do
+for forbidden in honcho-db honcho-redis honcho-api honcho-deriver honcho-configure-embeddings llm-wiki; do
   if grep -qx "${forbidden}" <<<"${default_services}"; then
     fail "${forbidden} appears without an active profile"
   fi
 done
 
 honcho_services="$("${COMPOSE[@]}" --profile honcho config --services | sort)"
-for expected in honcho-db honcho-redis honcho-api honcho-deriver; do
+for expected in honcho-db honcho-redis honcho-api honcho-deriver honcho-configure-embeddings; do
   grep -qx "${expected}" <<<"${honcho_services}" || fail "honcho profile is missing ${expected}"
 done
 

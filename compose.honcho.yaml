@@ -4,6 +4,13 @@
 # `--profile honcho`, normally via `scripts/kinward-setup.sh` rather than by hand.
 # Honcho is vendored as a git checkout at ./vendor/honcho (see scripts/kinward-setup.sh)
 # and built from source, matching how plastic-labs/honcho ships (no published image).
+#
+# LLM/embedding routing: KINWARD_HONCHO_CHAT_* drives every text-generation feature
+# (deriver, summary, dream, dialectic); KINWARD_HONCHO_EMBEDDING_* drives the embedding
+# pipeline. Both accept an OpenAI-compatible base URL override, which is how a local
+# vLLM/Ollama/etc. endpoint is wired in instead of a cloud provider - Honcho's own
+# transport stays "openai" (the wire protocol), only the base URL/model/key change.
+# See scripts/kinward-setup.sh for how these get populated from the wizard.
 x-honcho-env: &honcho-env
   DB_CONNECTION_URI: postgresql+psycopg://honcho:${KINWARD_HONCHO_POSTGRES_PASSWORD:?Run scripts/kinward-setup.sh to generate this}@honcho-db:5432/honcho
   CACHE_URL: redis://honcho-redis:6379/0?suppress=true
@@ -12,6 +19,37 @@ x-honcho-env: &honcho-env
   LLM_OPENAI_API_KEY: ${KINWARD_HONCHO_LLM_OPENAI_API_KEY:-}
   LLM_ANTHROPIC_API_KEY: ${KINWARD_HONCHO_LLM_ANTHROPIC_API_KEY:-}
   LLM_GEMINI_API_KEY: ${KINWARD_HONCHO_LLM_GEMINI_API_KEY:-}
+  EMBEDDING_VECTOR_DIMENSIONS: ${KINWARD_HONCHO_EMBEDDING_DIMENSIONS:-1536}
+  EMBEDDING_MODEL_CONFIG__TRANSPORT: ${KINWARD_HONCHO_EMBEDDING_TRANSPORT:-openai}
+  EMBEDDING_MODEL_CONFIG__MODEL: ${KINWARD_HONCHO_EMBEDDING_MODEL:-text-embedding-3-small}
+  EMBEDDING_MODEL_CONFIG__OVERRIDES__BASE_URL: ${KINWARD_HONCHO_EMBEDDING_BASE_URL:-}
+  DERIVER_MODEL_CONFIG__TRANSPORT: ${KINWARD_HONCHO_CHAT_TRANSPORT:-openai}
+  DERIVER_MODEL_CONFIG__MODEL: ${KINWARD_HONCHO_CHAT_MODEL:-gpt-5.4-mini}
+  DERIVER_MODEL_CONFIG__OVERRIDES__BASE_URL: ${KINWARD_HONCHO_CHAT_BASE_URL:-}
+  SUMMARY_MODEL_CONFIG__TRANSPORT: ${KINWARD_HONCHO_CHAT_TRANSPORT:-openai}
+  SUMMARY_MODEL_CONFIG__MODEL: ${KINWARD_HONCHO_CHAT_MODEL:-gpt-5.4-mini}
+  SUMMARY_MODEL_CONFIG__OVERRIDES__BASE_URL: ${KINWARD_HONCHO_CHAT_BASE_URL:-}
+  DREAM_DEDUCTION_MODEL_CONFIG__TRANSPORT: ${KINWARD_HONCHO_CHAT_TRANSPORT:-openai}
+  DREAM_DEDUCTION_MODEL_CONFIG__MODEL: ${KINWARD_HONCHO_CHAT_MODEL:-gpt-5.4-mini}
+  DREAM_DEDUCTION_MODEL_CONFIG__OVERRIDES__BASE_URL: ${KINWARD_HONCHO_CHAT_BASE_URL:-}
+  DREAM_INDUCTION_MODEL_CONFIG__TRANSPORT: ${KINWARD_HONCHO_CHAT_TRANSPORT:-openai}
+  DREAM_INDUCTION_MODEL_CONFIG__MODEL: ${KINWARD_HONCHO_CHAT_MODEL:-gpt-5.4-mini}
+  DREAM_INDUCTION_MODEL_CONFIG__OVERRIDES__BASE_URL: ${KINWARD_HONCHO_CHAT_BASE_URL:-}
+  DIALECTIC_LEVELS__minimal__MODEL_CONFIG__TRANSPORT: ${KINWARD_HONCHO_CHAT_TRANSPORT:-openai}
+  DIALECTIC_LEVELS__minimal__MODEL_CONFIG__MODEL: ${KINWARD_HONCHO_CHAT_MODEL:-gpt-5.4-mini}
+  DIALECTIC_LEVELS__minimal__MODEL_CONFIG__OVERRIDES__BASE_URL: ${KINWARD_HONCHO_CHAT_BASE_URL:-}
+  DIALECTIC_LEVELS__low__MODEL_CONFIG__TRANSPORT: ${KINWARD_HONCHO_CHAT_TRANSPORT:-openai}
+  DIALECTIC_LEVELS__low__MODEL_CONFIG__MODEL: ${KINWARD_HONCHO_CHAT_MODEL:-gpt-5.4-mini}
+  DIALECTIC_LEVELS__low__MODEL_CONFIG__OVERRIDES__BASE_URL: ${KINWARD_HONCHO_CHAT_BASE_URL:-}
+  DIALECTIC_LEVELS__medium__MODEL_CONFIG__TRANSPORT: ${KINWARD_HONCHO_CHAT_TRANSPORT:-openai}
+  DIALECTIC_LEVELS__medium__MODEL_CONFIG__MODEL: ${KINWARD_HONCHO_CHAT_MODEL:-gpt-5.4-mini}
+  DIALECTIC_LEVELS__medium__MODEL_CONFIG__OVERRIDES__BASE_URL: ${KINWARD_HONCHO_CHAT_BASE_URL:-}
+  DIALECTIC_LEVELS__high__MODEL_CONFIG__TRANSPORT: ${KINWARD_HONCHO_CHAT_TRANSPORT:-openai}
+  DIALECTIC_LEVELS__high__MODEL_CONFIG__MODEL: ${KINWARD_HONCHO_CHAT_MODEL:-gpt-5.4-mini}
+  DIALECTIC_LEVELS__high__MODEL_CONFIG__OVERRIDES__BASE_URL: ${KINWARD_HONCHO_CHAT_BASE_URL:-}
+  DIALECTIC_LEVELS__max__MODEL_CONFIG__TRANSPORT: ${KINWARD_HONCHO_CHAT_TRANSPORT:-openai}
+  DIALECTIC_LEVELS__max__MODEL_CONFIG__MODEL: ${KINWARD_HONCHO_CHAT_MODEL:-gpt-5.4-mini}
+  DIALECTIC_LEVELS__max__MODEL_CONFIG__OVERRIDES__BASE_URL: ${KINWARD_HONCHO_CHAT_BASE_URL:-}
 
 services:
   honcho-db:
@@ -43,6 +81,27 @@ services:
       retries: 10
     restart: unless-stopped
 
+  # One-shot: applies migrations, then ALTERs the pgvector embedding columns to
+  # EMBEDDING_VECTOR_DIMENSIONS via Honcho's own scripts/configure_embeddings.py.
+  # Refuses to touch populated tables, so it is safe to re-run after a schema/model
+  # change as long as no embeddings have been written yet (see Honcho's
+  # docs/v3/contributing/changing-embeddings.mdx - dimension is otherwise immutable
+  # for the life of a deployment).
+  honcho-configure-embeddings:
+    build:
+      context: ./vendor/honcho
+    profiles: ["honcho"]
+    depends_on:
+      honcho-db:
+        condition: service_healthy
+    entrypoint:
+      - sh
+      - -c
+      - /app/.venv/bin/python scripts/provision_db.py && /app/.venv/bin/python scripts/configure_embeddings.py --yes
+    environment:
+      <<: *honcho-env
+    restart: "no"
+
   honcho-api:
     build:
       context: ./vendor/honcho
@@ -52,6 +111,8 @@ services:
         condition: service_healthy
       honcho-redis:
         condition: service_healthy
+      honcho-configure-embeddings:
+        condition: service_completed_successfully
     environment:
       <<: *honcho-env
     ports:
