@@ -88,6 +88,34 @@ views:
       - type: grid
         cards:
           - type: heading
+            heading: Assistants
+          # Epic 3 Story 3.7's catalog, rendered with a core card so no opt-in
+          # frontend resource is required by default - visualStage/visualStageIcon
+          # are public identity fields only (never `personality`, which never enters
+          # HA entity state at all). Swap this markdown card for
+          # `type: custom:kinward-assistant-card` (with `assistant_id` or
+          # `assistant_name` set) if you want the richer, generic pack-driven visual
+          # instead - it auto-registers with no separate "add resource" step
+          # (Epic 10 Story 10.5).
+          - type: markdown
+            title: Assistants
+            content: |-
+              {% set assistants = state_attr('sensor.kinward_assistants', 'assistants') %}
+              {% if assistants %}
+              | Name | Pack | Stage |
+              | --- | --- | --- |
+              {% for assistant in assistants -%}
+              | {{ assistant.name }} | {{ assistant.visual_pack_id }} | {{ assistant.visual_stage }} |
+              {% endfor %}
+              {% else %}
+              No assistants yet.
+              {% endif %}
+          # - type: custom:kinward-assistant-card
+          #   assistant_name: "Replace with your assistant's name"
+
+      - type: grid
+        cards:
+          - type: heading
             heading: Household roster
           - type: markdown
             title: People
