@@ -359,7 +359,11 @@ model_api_key="$(get_env KINWARD_MODEL_API_KEY "")"
 if [[ -z "${model_provider}" ]]; then
   reused=no
   if [[ "${WITH_HONCHO}" == yes && "$(get_env KINWARD_HONCHO_LLM_PROVIDER)" == local ]]; then
-    if [[ "$(ask_yn "Use the same local model you just configured for Honcho (${chat_model} @ ${chat_base_url}) for Kinward's own assistant conversations too?" yes)" == yes ]]; then
+    reuse_local_model=yes
+    if [[ "${NONINTERACTIVE}" != true ]]; then
+      reuse_local_model="$(ask_yn "Use the same local model you just configured for Honcho (${chat_model} @ ${chat_base_url}) for Kinward's own assistant conversations too?" yes)"
+    fi
+    if [[ "${reuse_local_model}" == yes ]]; then
       model_provider="openai-compatible"
       model_base_url="${chat_base_url}"
       model_name="${chat_model}"
@@ -367,7 +371,10 @@ if [[ -z "${model_provider}" ]]; then
       reused=yes
     fi
   fi
-  if [[ "${reused}" == no ]]; then
+  if [[ "${reused}" == no && "${NONINTERACTIVE}" == true ]]; then
+    model_provider="none"
+  fi
+  if [[ "${reused}" == no && "${NONINTERACTIVE}" != true ]]; then
     if [[ "$(ask_yn "Configure a conversation model for Kinward's own assistants now? (skip to leave this for the Kinward integration's Options screen in Home Assistant later)" yes)" == yes ]]; then
       model_provider="$(ask "Model provider (openai/anthropic/openai-compatible)" openai)"
       case "${model_provider}" in
