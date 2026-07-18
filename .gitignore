@@ -31,9 +31,6 @@ backups/
 .volumes/
 .contextception/
 
-# Vendored optional-peer checkouts (Honcho, LLM-Wiki), cloned by scripts/kinward-setup.sh
-vendor/
-
 # In Memoria
 in-memoria.db
 .in-memoria/cache/

@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 # Static validation for the optional Honcho/LLM-Wiki compose fragments.
 #
-# Does not build or start anything (their build contexts live in ./vendor/,
-# only populated by scripts/kinward-setup.sh) - just proves the fragments
-# parse, merge cleanly with compose.yaml, and expose the expected services
-# only behind their profiles.
+# Does not pull or start anything - just proves the fragments parse, merge
+# cleanly with compose.yaml, and expose the expected services only behind
+# their profiles.
 set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

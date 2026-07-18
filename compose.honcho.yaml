@@ -2,8 +2,9 @@
 #
 # Absent from the default `docker compose up` inventory. Enabled explicitly with
 # `--profile honcho`, normally via `scripts/kinward-setup.sh` rather than by hand.
-# Honcho is vendored as a git checkout at ./vendor/honcho (see scripts/kinward-setup.sh)
-# and built from source, matching how plastic-labs/honcho ships (no published image).
+# Uses plastic-labs/honcho's own published image (ghcr.io/plastic-labs/honcho) -
+# no local build, no vendored source checkout. Override KINWARD_HONCHO_IMAGE to pin
+# a specific tag/digest instead of tracking `latest`.
 #
 # LLM/embedding routing: KINWARD_HONCHO_CHAT_* drives every text-generation feature
 # (deriver, summary, dream, dialectic); KINWARD_HONCHO_EMBEDDING_* drives the embedding
@@ -88,8 +89,7 @@ services:
   # docs/v3/contributing/changing-embeddings.mdx - dimension is otherwise immutable
   # for the life of a deployment).
   honcho-configure-embeddings:
-    build:
-      context: ./vendor/honcho
+    image: ${KINWARD_HONCHO_IMAGE:-ghcr.io/plastic-labs/honcho:latest}
     profiles: ["honcho"]
     depends_on:
       honcho-db:
@@ -103,8 +103,7 @@ services:
     restart: "no"
 
   honcho-api:
-    build:
-      context: ./vendor/honcho
+    image: ${KINWARD_HONCHO_IMAGE:-ghcr.io/plastic-labs/honcho:latest}
     profiles: ["honcho"]
     depends_on:
       honcho-db:
@@ -132,8 +131,7 @@ services:
     restart: unless-stopped
 
   honcho-deriver:
-    build:
-      context: ./vendor/honcho
+    image: ${KINWARD_HONCHO_IMAGE:-ghcr.io/plastic-labs/honcho:latest}
     profiles: ["honcho"]
     entrypoint: ["/app/.venv/bin/python", "-m", "src.deriver"]
     depends_on:

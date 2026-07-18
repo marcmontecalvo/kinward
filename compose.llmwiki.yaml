@@ -2,12 +2,12 @@
 #
 # Absent from the default `docker compose up` inventory. Enabled explicitly with
 # `--profile llm-wiki`, normally via `scripts/kinward-setup.sh` rather than by hand.
-# Vendored as a git checkout at ./vendor/llm_wiki (see scripts/kinward-setup.sh) and
-# built from source; there is no published image.
+# Uses marcmontecalvo/llm_wiki's own published image (ghcr.io/marcmontecalvo/llm_wiki)
+# - no local build, no vendored source checkout. Override KINWARD_LLM_WIKI_IMAGE to
+# pin a specific tag/digest instead of tracking `latest`.
 services:
   llm-wiki:
-    build:
-      context: ./vendor/llm_wiki
+    image: ${KINWARD_LLM_WIKI_IMAGE:-ghcr.io/marcmontecalvo/llm_wiki:latest}
     profiles: ["llm-wiki"]
     volumes:
       - kinward-llm-wiki-data:/wiki_system

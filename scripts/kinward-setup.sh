@@ -17,7 +17,6 @@ readonly ROOT
 cd "${ROOT}"
 
 readonly ENV_FILE="${ROOT}/.env"
-readonly VENDOR_DIR="${ROOT}/vendor"
 
 # whiptail/dialog and `read` prompts must talk to the controlling terminal, not
 # stdin - this script is commonly invoked via `curl ... | bash`, where stdin is
@@ -204,18 +203,6 @@ except (ValueError, KeyError, IndexError, TypeError):
 ' 2>/dev/null
 }
 
-clone_vendor() {
-  local name="$1" url="$2"
-  mkdir -p "${VENDOR_DIR}"
-  if [[ -d "${VENDOR_DIR}/${name}/.git" ]]; then
-    log "Updating vendored ${name}..."
-    git -C "${VENDOR_DIR}/${name}" pull --ff-only --quiet || warn "could not fast-forward ${name}; using the existing checkout"
-  else
-    log "Cloning ${name} into vendor/${name}..."
-    git clone --depth 1 --quiet "${url}" "${VENDOR_DIR}/${name}"
-  fi
-}
-
 # ---------------------------------------------------------------------------
 # Component selection
 # ---------------------------------------------------------------------------
@@ -247,7 +234,6 @@ COMPOSE_FILES=(-f compose.yaml)
 COMPOSE_PROFILES=()
 
 if [[ "${WITH_HONCHO}" == yes ]]; then
-  clone_vendor honcho https://github.com/plastic-labs/honcho.git
   COMPOSE_FILES+=(-f compose.honcho.yaml)
   COMPOSE_PROFILES+=(--profile honcho)
 
@@ -362,7 +348,6 @@ if [[ "${WITH_HONCHO}" == yes ]]; then
 fi
 
 if [[ "${WITH_LLM_WIKI}" == yes ]]; then
-  clone_vendor llm_wiki https://github.com/marcmontecalvo/llm_wiki.git
   COMPOSE_FILES+=(-f compose.llmwiki.yaml)
   COMPOSE_PROFILES+=(--profile llm-wiki)
   [[ -n "$(get_env KINWARD_LLM_WIKI_UI_PASSWORD)" ]] || set_env KINWARD_LLM_WIKI_UI_PASSWORD "$(random_secret 16)"
@@ -504,8 +489,8 @@ KINWARD_SETUP_AUTHORIZATION="$(random_secret 24)"
 extras=""
 [[ "${WITH_HONCHO}" == yes ]] && extras+=" + Honcho"
 [[ "${WITH_LLM_WIKI}" == yes ]] && extras+=" + LLM-Wiki"
-log "Building and starting Kinward${extras} (this can take a while on first run)..."
-docker compose --env-file "${ENV_FILE}" "${COMPOSE_FILES[@]}" "${COMPOSE_PROFILES[@]}" up --build -d
+log "Starting Kinward${extras} (pulling pre-built images the first time - no local build)..."
+docker compose --env-file "${ENV_FILE}" "${COMPOSE_FILES[@]}" "${COMPOSE_PROFILES[@]}" up -d
 
 wait_for_healthy api
 wait_for_healthy worker

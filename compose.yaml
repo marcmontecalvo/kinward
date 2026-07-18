@@ -1,5 +1,5 @@
 x-backend: &backend
-  image: kinward-backend:local
+  image: ${KINWARD_IMAGE:-ghcr.io/marcmontecalvo/kinward:latest}
   environment: &backend-environment
     KINWARD_ENVIRONMENT: ${KINWARD_ENVIRONMENT:-production}
     KINWARD_DATABASE_URL: ${KINWARD_DATABASE_URL:-sqlite+aiosqlite:////data/kinward.db}

@@ -27,7 +27,8 @@ and hands off to an interactive wizard that:
   household knowledge) are both selected by default, along with their own prerequisites (Postgres
   with pgvector, Redis); a Home Assistant dev/test container is offered but off by default, since
   most households already run HA elsewhere;
-- builds and starts everything with `docker compose`;
+- pulls published images and starts everything with `docker compose` - no local build, no vendored
+  source checkouts for Kinward, Honcho, or LLM-Wiki;
 - walks you through household setup (name, fallback assistant) and calls the bootstrap API for you;
 - mints a Home Assistant integration token and prints the exact next steps to add
   `custom_components/kinward` to your existing Home Assistant instance.
@@ -96,7 +97,9 @@ core exactly as follows:
 docker compose up
 ```
 
-Compose builds three default services:
+Compose pulls the published `ghcr.io/marcmontecalvo/kinward` image (set `KINWARD_IMAGE` to pin a
+different tag, or run `docker compose up --build` to build from `services/kinward` instead) for
+three default services:
 
 - `migrate` applies the sole root revision, `001_initial_single_household`, then exits with status 0.
 - `worker` records durable SQL heartbeat readiness and exposes no later-story action semantics.
@@ -187,14 +190,14 @@ No Redis, memory, knowledge, calendar, Home Assistant, or observability service 
 default topology. Model, memory, and knowledge peers are opt-in adapter profiles like PostgreSQL:
 
 ```bash
-docker compose -f compose.yaml -f compose.honcho.yaml --profile honcho up --build
-docker compose -f compose.yaml -f compose.llmwiki.yaml --profile llm-wiki up --build
+docker compose -f compose.yaml -f compose.honcho.yaml --profile honcho up
+docker compose -f compose.yaml -f compose.llmwiki.yaml --profile llm-wiki up
 ```
 
-Both build from source (`./vendor/honcho`, `./vendor/llm_wiki`) rather than a published image, so a
-checkout of each must exist first; `scripts/kinward-setup.sh` (see "Automated setup" above) handles
-cloning them, generating their secrets, and pointing Kinward's provider settings at them. Doing this
-by hand means: `git clone` each repo into `vendor/`, set `KINWARD_HONCHO_POSTGRES_PASSWORD` and one of
+Both pull published images (`ghcr.io/plastic-labs/honcho`, `ghcr.io/marcmontecalvo/llm_wiki`) rather
+than building from source, so no vendored checkout is needed; `scripts/kinward-setup.sh` (see
+"Automated setup" above) handles generating their secrets and pointing Kinward's provider settings at
+them. Doing this by hand means: set `KINWARD_HONCHO_POSTGRES_PASSWORD` and one of
 `KINWARD_HONCHO_LLM_OPENAI_API_KEY`/`KINWARD_HONCHO_LLM_ANTHROPIC_API_KEY`/`KINWARD_HONCHO_LLM_GEMINI_API_KEY`
 for Honcho (it will not start without one) and `KINWARD_LLM_WIKI_UI_PASSWORD` for LLM-Wiki, then set
 `memoryBackend`/`honchoUrl`
