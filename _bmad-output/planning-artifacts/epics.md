@@ -71,7 +71,9 @@ All non-UI requirements in the PRD and architecture remain active unless this do
 9. HA action success means submitted. Kinward marks an action completed only after the required fresh confirming observation.
 10. Optional providers degrade independently and truthfully.
 11. The default distributable dashboard uses only core HA cards. Optional HACS enhancements must be additive.
-12. Custom frontend cards or panels are deferred until real household usage proves a core-card limitation.
+12. Custom frontend cards or panels are deferred until real household usage proves a core-card limitation
+    (named, scoped exception: Epic 10 Story 10.5, the assistant visual-identity card, committed
+    2026-07-18 rather than evidence-gated - see that story for why).
 
 ## 4. Epic summary
 
@@ -81,7 +83,7 @@ Status as of `implementationReviewDate` above; see [§8](#8-story-by-story-statu
 | --- | --- | --- |
 | 1 | A healthy Kinward backend and HA 2026.7.2 integration can be installed and used today. | **Built and verified.** The manual day-one trial (1.7) ran end-to-end on 2026-07-17; two defects were found (one fixed, one deferred to Epic 9) — see `docs/ha-native/household-trial.md`. |
 | 2 | Household members can speak or type to their private Kinward assistant through Assist with truthful lifecycle behavior. | **Built.** Mapping, conversation entity, cancellation, and topic CRUD all exist; the fallback-assistant privacy boundary (2.5) now has a dedicated regression test. |
-| 3 | The household and account graph is safely established and managed through backend workflows and HA-hosted configuration entry points. | **Done** for everything still in scope (invitations/local accounts were cut, not just deferred). |
+| 3 | The household and account graph is safely established and managed through backend workflows and HA-hosted configuration entry points. | **Core (3.1–3.4) done.** New scope added 2026-07-17: a conversational personality interview (3.5), persona-document import (3.6), and a swappable visual-identity catalog (3.7) — none started. |
 | 4 | Topics, memory, knowledge, and corrections remain private, inspectable, and portable across authorized HA interactions. | **Core lifecycle built.** Auto-extracting facts from a live conversation, and reclassifying a confirmed fact's sharing class, are not wired. |
 | 5 | Kinward produces useful briefings and calendar-aware attention without becoming a notification feed. | **v0 built.** HA calendar entities are read directly (no per-person provider credentials - deferred to v1), meaningful-change detection is deterministic, attention items carry the full six-state lifecycle, the briefing is a live projection Assist also grounds on, and deduplicated HA notifications are delivered. No quiet-hours policy yet. |
 | 6 | Meaningful actions and household coordination are approved, executed, reconciled, and recorded safely. | **v0 slice only.** Approval state machine covers HA-capability actions with no resource owner; the general multi-principal/quorum case (needed for cross-person actions like a calendar reschedule) and assistant-to-assistant coordination are unbuilt, and both are blocked on Epic 5's v1 (person-owned calendars) specifically, not v0 (Epic 5 v0's calendars are household-shared, giving this case nothing to own yet). |
@@ -89,7 +91,7 @@ Status as of `implementationReviewDate` above; see [§8](#8-story-by-story-statu
 | 8 | Administration, health, activity, and diagnostics are available without exposing protected content. | **Partial.** Health/diagnostics, most admin actions, and config-flow reauthentication all exist; there is still no read/query API for activity records (only writes). |
 | 8 | Administration, health, activity, and diagnostics are available without exposing protected content. | **Partial.** Health/diagnostics, most admin actions, and an authorized/filtered activity read API all exist; config-flow reauthentication is being implemented in a parallel pass (check its own PR for status). |
 | 9 | Backup, restore, import, retention, deletion, and recovery preserve the complete household authority model. | **Backup/restore/import deliberately deferred to v2.** Retention taxonomy and admin-invariant-safe deletion are done for what isn't blocked on Epic 6. |
-| 10 | Advanced generated views, custom cards, and broader clients remain evidence-gated extensions rather than foundation blockers. | **Correctly not started** — gated on real household usage evidence, per its own goal. |
+| 10 | Advanced generated views, custom cards, and broader clients remain evidence-gated extensions rather than foundation blockers. | **10.1–10.4 correctly not started** — gated on real household usage evidence, per its own goal. **10.5 (assistant visual-identity card) is a named exception** — committed 2026-07-18, not evidence-gated; not started. |
 
 # Epic 1: Installable HA-Native Household Foundation
 
@@ -401,6 +403,96 @@ Safely manage household people and assistant ownership while keeping initial HA-
 > another assistant something on its owner's behalf, e.g. "check with Lisa's AI about Monday") is a
 > meaningful action that can affect another person's data - it needs Epic 6's approval/quorum machinery
 > before it exists, not a standalone feature built around that safety net. See Epic 6 note below.
+
+### Story 3.5: Conduct a rich personality & interaction interview
+
+- Every newly-synced person's first personal assistant offers a warm, conversational interview covering
+  the same dimensions already stored in `AssistantRecord.personality` (communication style, urgency
+  handling, humor/warmth, formality register, response length), asked as natural questions - never a
+  technical field-by-field form.
+- The interview is delivered entirely through the person's own `conversation.kinward` turn (text or
+  voice, whatever Assist client they're already using) - not a separate app screen, since none exists in
+  the HA-native shell. Each question offers 3-4 example answers inline in the assistant's reply text (the
+  conversational equivalent of Homefront's "quick chips") but always accepts free-form natural language
+  instead.
+- Each answer is distilled into its dimension value and persisted immediately, so the interview survives
+  being abandoned mid-conversation; the next conversation with that assistant resumes at the first
+  unanswered dimension rather than restarting.
+- Skippable at any question ("ask me later" / "just use a sensible default for now") and re-enterable at
+  any time afterward as an explicit "let's redo how you talk to me" request - never required to use the
+  assistant for anything else, and never blocking any other Kinward capability.
+- Offered unprompted exactly once per assistant (tracked via a new `AssistantRecord` interview-state
+  field, not inferred from `personality` being empty - an owner may legitimately want an empty/default
+  personality without being re-asked every session).
+
+> **Design note (2026-07-17):** this reframes Homefront's Epic 16.12 "forming-orb interview" for a shell
+> that doesn't exist here - there is no standalone Kinward frontend to host a chat-bubble UI, orb, or
+> reveal animation (see §2's "Removed from committed scope" and cross-cutting rule 12). The *content*
+> Homefront proved out (five warm dimensions, chip-style examples, incremental persist-and-resume,
+> always-skippable) survives; the *delivery mechanism* becomes the assistant's own conversation turn,
+> consistent with Epic 2's Assist-native design rather than a new UI surface. See Story 3.7 for where the
+> visual "reveal" moment Homefront built instead belongs.
+
+### Story 3.6: Import an existing assistant persona document
+
+- An owner may provide an existing freeform persona document instead of, or in addition to, the
+  interview - e.g. a `soul.md`, an `AGENTS.md`-style character file, or any other system-prompt/character
+  description used by another agent framework (Hermes-based agents and others). There is no standard
+  format across these in the wild, so import relies on model-assisted extraction rather than a
+  per-product parser.
+- Import is submitted through the Kinward integration's options/config flow (a text field or file paste),
+  matching the established pattern for admin-configured settings (`ProviderSettingsRecord`,
+  `AssistantPolicyRecord`) rather than a bespoke upload UI.
+- The raw document is never applied verbatim or unreviewed. A model-assisted extraction step (the same
+  kind of seam as `application/knowledge.py`'s `extract_candidate_observations`) maps it onto the
+  interview's own dimensions, plus a bounded free-text "grounding notes" field for whatever doesn't fit a
+  dimension (backstory, voice, catchphrases). Results are always presented back for the owner to
+  confirm or edit before anything is written to `AssistantRecord.personality` - the same propose-then-
+  confirm shape Story 4.3 already uses for inferred knowledge, never silently trusted.
+- Import and the interview are explicitly not mutually exclusive, in either order: an import pre-fills
+  the interview so it becomes "confirm/adjust what we read from your file" instead of starting blank; an
+  already-interviewed assistant can later import a file to layer in supplemental grounding notes.
+- Imported text is subject to the same household-safety and public-repository-safety review as any other
+  content that reaches a system prompt or is written to disk (AGENTS.md's public-repository-safety
+  rules apply to fixtures/examples derived from this feature same as anywhere else) - an admin pasting an
+  arbitrary file is not an exemption from that review.
+
+### Story 3.7: Give every assistant a flexible, swappable visual identity
+
+- Each assistant's visual representation is a catalog entry (`visual_pack_id` plus the owner's chosen
+  accent/color) rather than a hardcoded shape. The catalog ships more than one built-in pack (e.g. an
+  abstract "orb," a "robot," an animal companion, a simple portrait) so that adding a new one is
+  authoring a new catalog entry, never a code branch on "is this an orb."
+- A pack manifest declares: id, display name, category, an ordered set of named lifecycle stages generic
+  to any visual metaphor (a pack's own choice of names - e.g. `quiet`/`active`/`speaking` - never
+  orb-specific terms baked into the engine), and an HA `mdi:` icon per stage plus an optional static
+  preview image per stage.
+- Authoring a new pack should be cheap: a scaffolding script/skill (e.g. `make new-visual-pack NAME=dog`)
+  generates the manifest template and the icon/asset folder convention, so adding "dog" or "robot" is
+  data authoring, not an engine change.
+- **Scope boundary (separation of concerns, not a capability gap):** this story is the data/catalog
+  layer only - it does not itself ship a renderer. Every assistant's icon/accent selection surfaces
+  through standard HA entity attributes (`icon`, and `entity_picture` if a static image is wanted) on
+  the assistant's representative entity regardless of whether a richer renderer exists, so the catalog
+  is useful with or without one. The actual Lovelace card that renders a pack's stages visually is
+  Story 10.5 - committed scope (2026-07-18), not evidence-gated, but still a separate story because the
+  catalog format and its renderer should be independently replaceable (a second, better renderer could
+  read the same catalog later without touching this story).
+
+> **Design note (2026-07-17):** Kinward's earlier visual-foundation work (Story 1.6, "Kept Light"/"Hy3
+> quiet line" directions, Gate A approved 2026-07-15) already resolved the humanoid question in this
+> feature's favor - Marc removed AC7's "non-humanoid" constraint and separately described a per-person
+> avatar idea (Tamagotchi-style: hatches and grows as a household member "cares for" it; "could be a
+> pulsing circle, a digital tree frog, a person, anything") as a deliberately future epic, not Story
+> 1.6's own scope. What actually cut Story 1.6 from committed scope was the *unrelated* HA-native pivot
+> (§2) - it assumed a Kinward-owned rendering surface, which no longer exists. This story is that
+> deferred future epic, arriving now: it keeps the catalog/format itself HA-native (icon selection only,
+> no rendering) so it ships inside the current architecture, while representing humanoid/animal/robot
+> options as inert data from day one per Marc's 2026-07-15 direction. The growth/evolution ("hatches from
+> an egg") and voice/room-based fallback-to-generic-house-avatar ideas from that same note remain
+> unbuilt and are not claimed by this story - only the flexible visual-pack format is in scope here.
+> A renderer of that catalog (Story 10.5) is committed too as of 2026-07-18, ahead of the rest of Epic
+> 10's evidence gate - see that story's decision note for why this one card is the exception.
 
 # Epic 4: Topics, Memory, Knowledge, and Corrections
 
@@ -1197,6 +1289,10 @@ Preserve the whole household authority graph and all unresolved safety obligatio
 
 Expand presentation only after the household trial demonstrates a concrete need.
 
+> **Named exception (2026-07-18):** Story 10.5 (the assistant visual-identity card) is committed scope,
+> not evidence-gated - a direct product decision, not a reading of household-usage evidence. Stories
+> 10.1-10.4 are unaffected and still follow this epic's goal exactly as written.
+
 ### Story 10.1: Evaluate custom Kinward cards
 
 - A custom card is authorized only when core cards cannot represent a validated daily-use need safely.
@@ -1221,6 +1317,42 @@ Expand presentation only after the household trial demonstrates a concrete need.
 - A standalone web/mobile client requires an explicit future PRD and architecture amendment.
 - Evidence must show a need such as non-HA households, appliance-grade shell control, or workflows HA cannot host.
 - The HA integration and backend remain first-class even if another client is later added.
+
+### Story 10.5: Ship the assistant visual-identity Lovelace card
+
+- Renders generically from any registered Story 3.7 visual pack: given a pack manifest plus an
+  assistant's current stage and accent, the card displays that stage's asset. Orb, robot, animal,
+  humanoid, and any future pack all render through the same component - the card never hardcodes a
+  shape, exactly like the catalog it reads from.
+- Ships as an additive HACS-style frontend resource bundled with `custom_components/kinward` (rule 11's
+  "optional HACS enhancements must be additive"). The default core-card dashboard remains fully
+  functional without it; installing the card is opt-in, never required to use an assistant.
+- Thin client only: reads the assistant's own already-authorization-checked entity attributes (icon/
+  accent/stage from Story 3.7) plus safe summary text (assistant name, and the personality's distilled
+  fragment/summary if one exists) - no direct database access, no bypassing backend privacy checks,
+  matching Story 10.1's existing constraint.
+- Privacy-aware per surface: a personal surface shows that person's own accessible assistant(s); a
+  shared display shows only the household-fallback assistant's identity (or a neutral "house"
+  representation), never another person's private assistant - the same shared/private disclosure
+  boundary already enforced everywhere else (Story 3.3, `can_address_assistant`).
+- Respects `prefers-reduced-motion`: any stage change is an instant swap, not an animation, when reduced
+  motion is requested, and the static state alone must always be fully representative - no information
+  conveyed only through motion.
+- Accessibility, mobile layout, and stale/error states (assistant not found, referenced pack missing or
+  removed) tested per Story 10.1's existing bar.
+- Explicitly does not attempt Homefront's specific forming-orb choreography (per-dimension animated
+  growth, held-breath reveal, firelight glow) - this story ships a solid static-per-stage card, not a
+  recreation of that motion design. A richer animated treatment stays a future, separately-evidenced
+  enhancement on top of this card, not a blocker to shipping it.
+
+> **Decision (2026-07-18):** unlike Stories 10.1-10.4, this story is a direct product decision, not an
+> evidence-gated one - Marc decided one custom card, specifically for the assistant's visual identity, is
+> worth building now, since a bare HA icon meaningfully undersells the personalization work in Stories
+> 3.5-3.7. Cross-cutting rule 12 and this epic's goal continue to govern every other potential custom
+> card (10.1-10.4 remain gated on real household usage). This mirrors the one precedent already set in
+> this feature area under Homefront: the forming-orb interview (Epic 16.12) was built "per Marc's
+> explicit instruction despite [an] unapproved gate" rather than waiting - a scoped override of a
+> default, not a reopening of the HA-native pivot's "core cards only" default in general.
 
 ## 5. Story 1.1–1.6 historical disposition
 
@@ -1362,6 +1494,9 @@ Legend: **Done** / **Partial** (gap noted) / **Not started** / **Deferred** (int
 | 3.2 Bind invitations without duplicate profiles | N/A | Superseded — HA owns user management; nothing to build. |
 | 3.3 Enforce account/role/privacy/ownership/authority separately | Done | — (`application/people.reclassify_person`) |
 | 3.4 Configure the primary assistant | Done | — (multi-assistant, policy, access modes, ADR-002 v0 all implemented) |
+| 3.5 Conduct a rich personality & interaction interview | **Not started** (added 2026-07-17) | Whole story: interview-state tracking on `AssistantRecord`, question/dimension config, conversational delivery through `handle_conversation_request`. |
+| 3.6 Import an existing assistant persona document | **Not started** (added 2026-07-17) | Whole story: options-flow import field, extraction seam, propose/confirm review UI (options-flow based, no bespoke frontend). |
+| 3.7 Give every assistant a flexible, swappable visual identity | **Not started** (added 2026-07-17) | Whole story: visual-pack catalog/manifest schema, HA icon/entity_picture wiring, scaffolding skill for new packs. Rendering lives in a separate story — see Story 10.5 (committed 2026-07-18, not evidence-gated). |
 
 ### Epic 4 — Topics, Memory, Knowledge, and Corrections
 
@@ -1435,6 +1570,7 @@ push/webhook delivery, and calendar mutation via Epic 6's approval machinery.
 | Story | Status | Remaining work |
 | --- | --- | --- |
 | 10.1–10.4 | **Correctly not started** | All four are explicitly gated on real household usage evidence per the epic's own goal. Do not start until Story 1.7's trial (and ideally some weeks of real use) produces that evidence. |
+| 10.5 Ship the assistant visual-identity Lovelace card | **Not started** (added 2026-07-17, promoted to committed scope 2026-07-18) | Whole story: the card itself, plus its dependency, Story 3.7's catalog (also not started). Not evidence-gated, unlike 10.1–10.4 — see the epic body's decision note. |
 
 ### Roll-up: what's actually left to reach a fuller release
 
@@ -1450,5 +1586,10 @@ push/webhook delivery, and calendar mutation via Epic 6's approval machinery.
    reached a v0 slice of every story as of 2026-07-17 - remaining polish (options-flow UI surfacing
    for tool-policy/resource-labels, tiered reference-resolution ranking, a persisted
    `recent_actions`/`active_timers` store) can also trail real usage rather than blocking it.
-6. Backup/restore/import (9.1–9.3) and evidence-gated extensions (Epic 10) are intentionally not
-   next — revisit only after the above is running for real.
+6. Backup/restore/import (9.1–9.3) and Epic 10's evidence-gated stories (10.1–10.4) are intentionally
+   not next — revisit only after the above is running for real.
+7. New scope added 2026-07-17/2026-07-18, not yet prioritized against the above: Epic 3's assistant
+   personalization stories (3.5 conversational interview, 3.6 persona-document import, 3.7 swappable
+   visual-identity catalog) plus Story 10.5, its Lovelace-card renderer. None of the four are blocked on
+   other unfinished work. Unlike the rest of Epic 10, 10.5 is committed rather than evidence-gated
+   (2026-07-18 decision) - it can be sequenced whenever 3.7 is, not deferred to "after real usage."
