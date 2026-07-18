@@ -328,7 +328,8 @@ if [[ "${WITH_HONCHO}" == yes ]]; then
   esac
 
   set_env KINWARD_HONCHO_LLM_PROVIDER "${provider}"
-  [[ -n "$(get_env KINWARD_HONCHO_POSTGRES_PASSWORD)" ]] || set_env KINWARD_HONCHO_POSTGRES_PASSWORD "$(random_secret 24)"
+  honcho_postgres_password="$(get_env KINWARD_HONCHO_POSTGRES_PASSWORD)"
+  [[ -n "${honcho_postgres_password}" ]] || { honcho_postgres_password="$(random_secret 24)"; set_env KINWARD_HONCHO_POSTGRES_PASSWORD "${honcho_postgres_password}"; }
   set_env KINWARD_HONCHO_URL "http://honcho-api:8000"
   set_env KINWARD_MEMORY_BACKEND "honcho"
 fi
@@ -417,21 +418,49 @@ wait_for_healthy() {
   fail "${service} did not become healthy in time - check: docker compose logs ${service}"
 }
 
-wait_for_exit_success() {
-  local service="$1" attempts="${2:-60}" container_id status
-  local error_hint="${3:-check: docker compose logs ${service}}"
-  for ((attempt = 1; attempt <= attempts; attempt++)); do
-    container_id="$(docker compose --env-file "${ENV_FILE}" "${COMPOSE_FILES[@]}" ps -aq "${service}" 2>/dev/null)"
+honcho_migration_failed_on_password() {
+  docker compose --env-file "${ENV_FILE}" "${COMPOSE_FILES[@]}" logs honcho-configure-embeddings 2>/dev/null \
+    | grep -qi "password authentication failed"
+}
+
+run_honcho_migration() {
+  # honcho-db's POSTGRES_PASSWORD env var only takes effect the first time its data
+  # directory is initialized. A volume left over from an earlier attempt - a different
+  # random password generated on a prior wizard run, or a `docker compose up` done
+  # outside the wizard entirely - leaves Postgres out of sync with .env, and
+  # honcho-configure-embeddings fails auth before it ever gets to the schema. Detect
+  # that specific failure once and reconcile the password via honcho-db's own
+  # Unix-socket trust auth (no data is touched), then retry.
+  local retry="${1:-false}"
+  if [[ "${retry}" == true ]]; then
+    docker compose --env-file "${ENV_FILE}" "${COMPOSE_FILES[@]}" "${COMPOSE_PROFILES[@]}" \
+      up -d --force-recreate honcho-configure-embeddings >/dev/null
+  fi
+
+  local container_id status attempt
+  for ((attempt = 1; attempt <= 60; attempt++)); do
+    container_id="$(docker compose --env-file "${ENV_FILE}" "${COMPOSE_FILES[@]}" ps -aq honcho-configure-embeddings 2>/dev/null)"
     if [[ -n "${container_id}" ]]; then
       status="$(docker inspect --format '{{.State.Status}}' "${container_id}")"
       if [[ "${status}" == "exited" ]]; then
         [[ "$(docker inspect --format '{{.State.ExitCode}}' "${container_id}")" == "0" ]] && return 0
-        fail "${error_hint}"
+        break
       fi
     fi
     sleep 2
   done
-  fail "${service} did not finish in time - check: docker compose logs ${service}"
+
+  if [[ "${retry}" != true ]] && honcho_migration_failed_on_password; then
+    warn "honcho-db's password doesn't match .env - its data volume was likely initialized by an earlier"
+    warn "attempt with a different password. Reconciling it via honcho-db's local trust socket (no data is touched)..."
+    docker compose --env-file "${ENV_FILE}" "${COMPOSE_FILES[@]}" exec -T honcho-db \
+      psql -U honcho -d honcho -c "ALTER USER honcho WITH PASSWORD '${honcho_postgres_password}';" >/dev/null \
+      || fail "could not reconcile honcho-db's password via its local trust socket - check: docker compose logs honcho-db"
+    run_honcho_migration true
+    return
+  fi
+
+  fail "honcho-configure-embeddings failed - check: docker compose logs honcho-configure-embeddings (a common cause is the embedding dimension changing on a deployment that already has embeddings written; see the warning above, or wipe the honcho volumes with 'docker compose ... down --volumes' for a clean local dev reset)"
 }
 
 log "Generating a one-time household setup authorization..."
@@ -449,8 +478,7 @@ wait_for_healthy worker
 
 if [[ "${WITH_HONCHO}" == yes ]]; then
   log "Applying Honcho's database migrations and pgvector dimension..."
-  wait_for_exit_success honcho-configure-embeddings 60 \
-    "honcho-configure-embeddings failed - check: docker compose logs honcho-configure-embeddings (a common cause is the embedding dimension changing on a deployment that already has embeddings written; see the warning above, or wipe the honcho volumes with 'docker compose ... down --volumes' for a clean local dev reset)"
+  run_honcho_migration
   wait_for_healthy honcho-api 90
 fi
 [[ "${WITH_HA}" == yes ]] && wait_for_healthy homeassistant 90
