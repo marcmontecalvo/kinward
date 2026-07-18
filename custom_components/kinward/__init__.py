@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 import voluptuous as vol
 
+from homeassistant.components.frontend import add_extra_js_url
+from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse, SupportsResponse
 from homeassistant.exceptions import ConfigEntryNotReady, ServiceValidationError
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -17,6 +20,7 @@ from .api import (
     ContextSuccess,
     KinwardApiClient,
     PeopleFailure,
+    PersonaImportFailure,
     action_outcome_event,
     approval_resolution_event,
 )
@@ -53,6 +57,45 @@ REQUEST_ACTION_SCHEMA = vol.Schema(
 )
 RESOLVE_ACTION_SCHEMA = vol.Schema({vol.Required("approval_id"): cv.string})
 RESOLVE_ATTENTION_ITEM_SCHEMA = vol.Schema({vol.Required("item_id"): cv.string})
+RESTART_INTERVIEW_SCHEMA = vol.Schema({vol.Required("name"): cv.string})
+IMPORT_PERSONA_SCHEMA = vol.Schema(
+    {vol.Required("name"): cv.string, vol.Required("document_text"): cv.string}
+)
+CONFIRM_PERSONA_IMPORT_SCHEMA = vol.Schema(
+    {
+        vol.Required("name"): cv.string,
+        vol.Optional("dimensions", default=dict): dict,
+        vol.Optional("grounding_notes", default=""): cv.string,
+    }
+)
+
+
+_FRONTEND_RESOURCE_URL = "/kinward_static/kinward-assistant-card.js"
+_FRONTEND_REGISTERED_KEY = f"{DOMAIN}_frontend_registered"
+
+
+async def _async_register_frontend_resource(hass: HomeAssistant) -> None:
+    """Register the Story 10.5 Lovelace card so it's available without a manual
+
+    Lovelace resource step - an optional, additive enhancement (cross-cutting
+    rule 11) whose failure must never block the rest of the integration from
+    working (AGENTS.md: "optional integrations must degrade safely").
+    """
+    if hass.data.get(_FRONTEND_REGISTERED_KEY):
+        return
+    try:
+        www_path = Path(__file__).parent / "www" / "kinward-assistant-card.js"
+        await hass.http.async_register_static_paths(
+            [StaticPathConfig(_FRONTEND_RESOURCE_URL, str(www_path), cache_headers=False)]
+        )
+        add_extra_js_url(hass, _FRONTEND_RESOURCE_URL)
+        hass.data[_FRONTEND_REGISTERED_KEY] = True
+    except Exception:  # noqa: BLE001 - cosmetic frontend registration must never block setup
+        _LOGGER.warning(
+            "Kinward could not register the optional kinward-assistant-card frontend "
+            "resource; core-card dashboards are unaffected.",
+            exc_info=True,
+        )
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -71,6 +114,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(_async_reload_entry))
+    await _async_register_frontend_resource(hass)
 
     async def _handle_refresh(_call: ServiceCall) -> None:
         for stored_coordinator in hass.data.get(DOMAIN, {}).values():
@@ -165,6 +209,91 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             )
             if isinstance(result, AssistantActionFailure):
                 raise ServiceValidationError(result.reason)
+
+    async def _handle_restart_interview(call: ServiceCall) -> None:
+        """Explicitly redo one of the caller's own assistants' personality interview
+
+        (Story 3.5) - clears its interview-dimension answers and starts fresh on the
+        assistant's next conversation turn.
+        """
+        ha_user_id = call.context.user_id
+        if not ha_user_id:
+            raise ServiceValidationError(
+                "kinward.restart_assistant_interview must be called by an authenticated user."
+            )
+        name = call.data["name"]
+        for stored_coordinator in hass.data.get(DOMAIN, {}).values():
+            listed = await stored_coordinator.client.async_list_assistants(ha_user_id=ha_user_id)
+            if isinstance(listed, AssistantActionFailure):
+                raise ServiceValidationError(listed.reason)
+            match = next((assistant for assistant in listed if assistant.name == name), None)
+            if match is None:
+                raise ServiceValidationError(f"No assistant named {name!r} for this user.")
+            result = await stored_coordinator.client.async_restart_interview(
+                ha_user_id=ha_user_id, assistant_id=match.id
+            )
+            if isinstance(result, AssistantActionFailure):
+                raise ServiceValidationError(result.reason)
+            await stored_coordinator.async_request_refresh()
+
+    async def _handle_import_persona(call: ServiceCall) -> ServiceResponse:
+        """Story 3.6 step one: extract a proposal from a pasted persona document -
+
+        never commits anything. Returns the proposal as a service response so the
+        caller can review it before calling
+        ``kinward.confirm_assistant_persona_import``.
+        """
+        ha_user_id = call.context.user_id
+        if not ha_user_id:
+            raise ServiceValidationError(
+                "kinward.import_assistant_persona must be called by an authenticated user."
+            )
+        name = call.data["name"]
+        for stored_coordinator in hass.data.get(DOMAIN, {}).values():
+            listed = await stored_coordinator.client.async_list_assistants(ha_user_id=ha_user_id)
+            if isinstance(listed, AssistantActionFailure):
+                raise ServiceValidationError(listed.reason)
+            match = next((assistant for assistant in listed if assistant.name == name), None)
+            if match is None:
+                raise ServiceValidationError(f"No assistant named {name!r} for this user.")
+            result = await stored_coordinator.client.async_import_persona(
+                ha_user_id=ha_user_id,
+                assistant_id=match.id,
+                document_text=call.data["document_text"],
+            )
+            if isinstance(result, PersonaImportFailure):
+                raise ServiceValidationError(result.error)
+            return {"dimensions": result.dimensions, "grounding_notes": result.grounding_notes}
+        return {"dimensions": {}, "grounding_notes": ""}
+
+    async def _handle_confirm_persona_import(call: ServiceCall) -> None:
+        """Story 3.6 step two: commit an owner-confirmed (possibly hand-edited)
+
+        proposal - the only path anything from ``kinward.import_assistant_persona``
+        can reach ``AssistantRecord.personality`` through.
+        """
+        ha_user_id = call.context.user_id
+        if not ha_user_id:
+            raise ServiceValidationError(
+                "kinward.confirm_assistant_persona_import must be called by an authenticated user."
+            )
+        name = call.data["name"]
+        for stored_coordinator in hass.data.get(DOMAIN, {}).values():
+            listed = await stored_coordinator.client.async_list_assistants(ha_user_id=ha_user_id)
+            if isinstance(listed, AssistantActionFailure):
+                raise ServiceValidationError(listed.reason)
+            match = next((assistant for assistant in listed if assistant.name == name), None)
+            if match is None:
+                raise ServiceValidationError(f"No assistant named {name!r} for this user.")
+            result = await stored_coordinator.client.async_confirm_persona_import(
+                ha_user_id=ha_user_id,
+                assistant_id=match.id,
+                dimensions=call.data.get("dimensions") or {},
+                grounding_notes=call.data.get("grounding_notes") or "",
+            )
+            if isinstance(result, AssistantActionFailure):
+                raise ServiceValidationError(result.reason)
+            await stored_coordinator.async_request_refresh()
 
     async def _handle_request_action(call: ServiceCall) -> None:
         """Ask Kinward to submit an HA service call on behalf of one of the caller's
@@ -334,6 +463,28 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             _handle_set_assistant_access,
             schema=SET_ASSISTANT_ACCESS_SCHEMA,
         )
+    if not hass.services.has_service(DOMAIN, "restart_assistant_interview"):
+        hass.services.async_register(
+            DOMAIN,
+            "restart_assistant_interview",
+            _handle_restart_interview,
+            schema=RESTART_INTERVIEW_SCHEMA,
+        )
+    if not hass.services.has_service(DOMAIN, "import_assistant_persona"):
+        hass.services.async_register(
+            DOMAIN,
+            "import_assistant_persona",
+            _handle_import_persona,
+            schema=IMPORT_PERSONA_SCHEMA,
+            supports_response=SupportsResponse.ONLY,
+        )
+    if not hass.services.has_service(DOMAIN, "confirm_assistant_persona_import"):
+        hass.services.async_register(
+            DOMAIN,
+            "confirm_assistant_persona_import",
+            _handle_confirm_persona_import,
+            schema=CONFIRM_PERSONA_IMPORT_SCHEMA,
+        )
     if not hass.services.has_service(DOMAIN, "request_action"):
         hass.services.async_register(
             DOMAIN, "request_action", _handle_request_action, schema=REQUEST_ACTION_SCHEMA
@@ -369,4 +520,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             hass.services.async_remove(DOMAIN, "generate_briefing")
             hass.services.async_remove(DOMAIN, "acknowledge_attention_item")
             hass.services.async_remove(DOMAIN, "dismiss_attention_item")
+            hass.services.async_remove(DOMAIN, "restart_assistant_interview")
+            hass.services.async_remove(DOMAIN, "import_assistant_persona")
+            hass.services.async_remove(DOMAIN, "confirm_assistant_persona_import")
     return unloaded

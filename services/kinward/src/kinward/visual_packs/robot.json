@@ -1,0 +1,11 @@
+{
+  "id": "robot",
+  "display_name": "Robot",
+  "category": "robot",
+  "default_accent": "#3AA6FF",
+  "stages": [
+    { "name": "dormant", "mdi_icon": "mdi:robot-off-outline" },
+    { "name": "booting", "mdi_icon": "mdi:robot-confused-outline" },
+    { "name": "online", "mdi_icon": "mdi:robot-happy-outline" }
+  ]
+}

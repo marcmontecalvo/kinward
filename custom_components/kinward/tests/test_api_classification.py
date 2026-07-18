@@ -5,6 +5,8 @@ from kinward.api import (
     ActionResult,
     Assistant,
     AssistantActionFailure,
+    AssistantIdentitiesFailure,
+    AssistantIdentity,
     AssistantPolicy,
     AssistantPolicyFailure,
     AttentionItem,
@@ -20,6 +22,8 @@ from kinward.api import (
     PendingAction,
     PendingActionsFailure,
     Person,
+    PersonaImportFailure,
+    PersonaImportProposal,
     Pet,
     PetsFailure,
     PetsSuccess,
@@ -32,8 +36,12 @@ from kinward.api import (
     SyncedPerson,
     SyncPeopleFailure,
     SyncPeopleSuccess,
+    VisualPack,
+    VisualPackStage,
+    VisualPacksFailure,
     classify_action_result_response,
     classify_assistant_action_response,
+    classify_assistant_identities_response,
     classify_assistant_policy_response,
     classify_attention_item_action_response,
     classify_attention_items_response,
@@ -43,12 +51,14 @@ from kinward.api import (
     classify_list_assistants_response,
     classify_pending_actions_response,
     classify_people_response,
+    classify_persona_import_response,
     classify_pets_response,
     classify_provider_settings_response,
     classify_send_message_response,
     classify_set_calendar_entity_response,
     classify_summary_response,
     classify_sync_people_response,
+    classify_visual_packs_response,
 )
 from kinward.api import (
     EVENT_ACTION_EXECUTED,
@@ -393,6 +403,9 @@ def _assistant_payload(**overrides: object) -> dict[str, object]:
         "personality": {},
         "accessMode": "owner_only",
         "allowedPersonIds": [],
+        "visualPackId": "orb",
+        "interviewState": "completed",
+        "visualStage": "formed",
     }
     payload.update(overrides)
     return payload
@@ -405,6 +418,9 @@ def _assistant(**overrides: object) -> Assistant:
         "personality": {},
         "access_mode": "owner_only",
         "allowed_person_ids": [],
+        "visual_pack_id": "orb",
+        "interview_state": "completed",
+        "visual_stage": "formed",
     }
     defaults.update(overrides)
     return Assistant(**defaults)  # type: ignore[arg-type]
@@ -693,3 +709,110 @@ def test_classify_attention_item_action_response_failure_carries_the_code() -> N
     payload = {"detail": {"code": "not_open"}}
     result = classify_attention_item_action_response(409, payload)
     assert result == ActionFailure(reason="not_open")
+
+
+def _assistant_identity_payload(**overrides: object) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "id": "assistant-1",
+        "name": "Calopex",
+        "ownerPersonId": "person-1",
+        "visualPackId": "orb",
+        "visualStage": "formed",
+        "visualStageIcon": "mdi:orbit-variant",
+        "visualStagePreviewImage": None,
+        "accent": "#6C63FF",
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_classify_assistant_identities_response_success() -> None:
+    result = classify_assistant_identities_response(200, [_assistant_identity_payload()])
+    assert result == [
+        AssistantIdentity(
+            id="assistant-1",
+            name="Calopex",
+            owner_person_id="person-1",
+            visual_pack_id="orb",
+            visual_stage="formed",
+            visual_stage_icon="mdi:orbit-variant",
+            visual_stage_preview_image=None,
+            accent="#6C63FF",
+        )
+    ]
+
+
+def test_classify_assistant_identities_response_allows_null_owner_for_shared_assistant() -> None:
+    result = classify_assistant_identities_response(
+        200, [_assistant_identity_payload(ownerPersonId=None)]
+    )
+    assert isinstance(result, list)
+    assert result[0].owner_person_id is None
+
+
+def test_classify_assistant_identities_response_never_carries_personality() -> None:
+    """The identity payload has no ``personality`` key at all - proves the client
+
+    can't accidentally surface it even if a future backend response included it.
+    """
+    payload = _assistant_identity_payload()
+    payload["personality"] = {"communication_style": "should never reach here"}
+    result = classify_assistant_identities_response(200, [payload])
+    assert isinstance(result, list)
+    assert not hasattr(result[0], "personality")
+
+
+def test_classify_assistant_identities_response_malformed_is_a_failure() -> None:
+    result = classify_assistant_identities_response(200, {"not": "a list"})
+    assert isinstance(result, AssistantIdentitiesFailure)
+
+
+def _visual_pack_payload(**overrides: object) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "id": "orb",
+        "displayName": "Orb",
+        "category": "abstract",
+        "defaultAccent": "#6C63FF",
+        "stages": [{"name": "quiet", "mdiIcon": "mdi:circle-outline", "previewImage": None}],
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_classify_visual_packs_response_success() -> None:
+    result = classify_visual_packs_response(200, [_visual_pack_payload()])
+    assert result == [
+        VisualPack(
+            id="orb",
+            display_name="Orb",
+            category="abstract",
+            default_accent="#6C63FF",
+            stages=[VisualPackStage(name="quiet", mdi_icon="mdi:circle-outline", preview_image=None)],
+        )
+    ]
+
+
+def test_classify_visual_packs_response_malformed_is_a_failure() -> None:
+    result = classify_visual_packs_response(200, {"not": "a list"})
+    assert isinstance(result, VisualPacksFailure)
+
+
+def test_classify_persona_import_response_success() -> None:
+    payload = {
+        "dimensions": {"communication_style": "Direct"},
+        "groundingNotes": "Likes dry humor.",
+    }
+    result = classify_persona_import_response(200, payload)
+    assert result == PersonaImportProposal(
+        dimensions={"communication_style": "Direct"}, grounding_notes="Likes dry humor."
+    )
+
+
+def test_classify_persona_import_response_malformed_is_a_failure() -> None:
+    result = classify_persona_import_response(200, {"not": "the right shape"})
+    assert isinstance(result, PersonaImportFailure)
+
+
+def test_classify_persona_import_response_error_status_is_a_failure() -> None:
+    result = classify_persona_import_response(409, {"detail": {"code": "household_not_configured"}})
+    assert result == PersonaImportFailure(error="household_not_configured")

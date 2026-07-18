@@ -3,6 +3,7 @@
   "name": "Kinward",
   "codeowners": ["@kinward-maintainers"],
   "config_flow": true,
+  "dependencies": ["http", "frontend"],
   "documentation": "https://github.com/kinward/kinward/blob/main/custom_components/kinward/README.md",
   "issue_tracker": "https://github.com/kinward/kinward/issues",
   "integration_type": "hub",

@@ -188,3 +188,74 @@ dismiss_attention_item:
       required: true
       selector:
         text:
+
+restart_assistant_interview:
+  name: Restart assistant interview
+  description: >-
+    Redo one of your own assistants' personality interview (Story 3.5) -
+    clears its interview answers and starts fresh on its next conversation
+    turn. Never touches another person's assistant.
+  fields:
+    name:
+      name: Name
+      description: The assistant's name, exactly as shown.
+      required: true
+      example: "Jarvis"
+      selector:
+        text:
+
+import_assistant_persona:
+  name: Import assistant persona
+  description: >-
+    Extract a proposal (interaction-dimension values plus free-text grounding
+    notes) from an existing persona document - a soul.md, an AGENTS.md-style
+    character file, or a similar system-prompt/character description from
+    another AI project. Never applies anything automatically: review the
+    returned proposal, then call kinward.confirm_assistant_persona_import
+    with the (optionally edited) values to actually save them.
+  fields:
+    name:
+      name: Name
+      description: The assistant's name, exactly as shown.
+      required: true
+      example: "Jarvis"
+      selector:
+        text:
+    document_text:
+      name: Document text
+      description: The persona document's full text.
+      required: true
+      selector:
+        text:
+          multiline: true
+
+confirm_assistant_persona_import:
+  name: Confirm assistant persona import
+  description: >-
+    Commit a proposal from kinward.import_assistant_persona (or your own
+    hand-edited version of it) to one of your own assistants. This is the
+    only path an imported document can reach the assistant's personality
+    through - nothing is ever saved automatically.
+  fields:
+    name:
+      name: Name
+      description: The assistant's name, exactly as shown.
+      required: true
+      example: "Jarvis"
+      selector:
+        text:
+    dimensions:
+      name: Dimensions
+      description: >-
+        A map of interaction-dimension name to short value, e.g.
+        {"communication_style": "Direct and warm"}.
+      required: false
+      selector:
+        object:
+    grounding_notes:
+      name: Grounding notes
+      description: Free-text backstory/voice notes to keep alongside the dimensions.
+      required: false
+      selector:
+        text:
+          multiline: true

@@ -1,4 +1,4 @@
-.PHONY: install lock dev api worker migrate test lint typecheck build check smoke smoke-ha up down
+.PHONY: install lock dev api worker migrate test lint typecheck build check smoke smoke-ha up down new-visual-pack
 
 install:
 	mise install
@@ -39,6 +39,12 @@ smoke:
 
 smoke-ha:
 	bash scripts/ha-dev-smoke.sh
+
+# Scaffold a new assistant visual-identity pack (Epic 3 Story 3.7).
+# Usage: make new-visual-pack NAME=dog DISPLAY_NAME="Dog" CATEGORY=animal
+new-visual-pack:
+	uv run --project services/kinward python scripts/new_visual_pack.py "$(NAME)" \
+		--display-name "$(DISPLAY_NAME)" --category "$(CATEGORY)"
 
 down:
 	docker compose down

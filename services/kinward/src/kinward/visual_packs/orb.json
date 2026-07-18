@@ -1,0 +1,11 @@
+{
+  "id": "orb",
+  "display_name": "Orb",
+  "category": "abstract",
+  "default_accent": "#6C63FF",
+  "stages": [
+    { "name": "quiet", "mdi_icon": "mdi:circle-outline" },
+    { "name": "gathering", "mdi_icon": "mdi:circle-slice-4" },
+    { "name": "formed", "mdi_icon": "mdi:orbit-variant" }
+  ]
+}

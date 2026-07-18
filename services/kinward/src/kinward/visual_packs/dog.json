@@ -1,0 +1,11 @@
+{
+  "id": "dog",
+  "display_name": "Dog",
+  "category": "animal",
+  "default_accent": "#D98E4A",
+  "stages": [
+    { "name": "napping", "mdi_icon": "mdi:sleep" },
+    { "name": "getting_acquainted", "mdi_icon": "mdi:paw" },
+    { "name": "companion", "mdi_icon": "mdi:dog-side" }
+  ]
+}

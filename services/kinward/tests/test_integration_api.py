@@ -691,6 +691,220 @@ async def test_owner_can_customize_their_own_assistant_via_api() -> None:
         assert unmapped.json()["detail"]["code"] == "assistant_not_found"
 
 
+async def test_assistant_payload_includes_visual_identity_fields() -> None:
+    client, factory = await _client()
+    async with client:
+        await _seed_household(factory)
+        token = await _issue_token(factory)
+        headers = {"Authorization": f"Bearer {token}"}
+        await client.put(
+            "/api/v1/integration/people/sync",
+            headers=headers,
+            json=[{"haPersonId": "ha-person-marc", "haUserId": "ha-user-marc", "displayName": "Marc"}],
+        )
+
+        listed = await client.get(
+            "/api/v1/integration/assistants?haUserId=ha-user-marc", headers=headers
+        )
+        assistant = listed.json()[0]
+        assert assistant["visualPackId"] == "orb"
+        assert assistant["interviewState"] == "not_started"
+        assert assistant["visualStage"] == "quiet"
+
+
+async def test_household_assistants_endpoint_exposes_identity_only_never_personality() -> None:
+    client, factory = await _client()
+    async with client:
+        await _seed_household(factory)
+        token = await _issue_token(factory)
+        headers = {"Authorization": f"Bearer {token}"}
+        await client.put(
+            "/api/v1/integration/people/sync",
+            headers=headers,
+            json=[
+                {"haPersonId": "ha-person-marc", "haUserId": "ha-user-marc", "displayName": "Marc"},
+                {"haPersonId": "ha-person-lisa", "haUserId": "ha-user-lisa", "displayName": "Lisa"},
+            ],
+        )
+        assistant_id = (
+            await client.get("/api/v1/integration/assistants?haUserId=ha-user-marc", headers=headers)
+        ).json()[0]["id"]
+        await client.patch(
+            f"/api/v1/integration/assistants/{assistant_id}",
+            headers=headers,
+            json={"haUserId": "ha-user-marc", "personality": {"communication_style": "Very private"}},
+        )
+
+        response = await client.get("/api/v1/integration/assistants/household", headers=headers)
+
+        assert response.status_code == 200
+        body = response.json()
+        assert len(body) == 2
+        marcs = next(item for item in body if item["id"] == assistant_id)
+        assert marcs["name"]
+        assert marcs["visualPackId"] == "orb"
+        assert marcs["visualStage"]
+        assert marcs["accent"]
+        assert "personality" not in marcs
+        assert "interviewState" not in marcs
+        assert all("personality" not in item for item in body)
+
+
+async def test_owner_can_swap_visual_pack_via_api() -> None:
+    client, factory = await _client()
+    async with client:
+        await _seed_household(factory)
+        token = await _issue_token(factory)
+        headers = {"Authorization": f"Bearer {token}"}
+        await client.put(
+            "/api/v1/integration/people/sync",
+            headers=headers,
+            json=[{"haPersonId": "ha-person-marc", "haUserId": "ha-user-marc", "displayName": "Marc"}],
+        )
+        assistant_id = (
+            await client.get("/api/v1/integration/assistants?haUserId=ha-user-marc", headers=headers)
+        ).json()[0]["id"]
+
+        response = await client.patch(
+            f"/api/v1/integration/assistants/{assistant_id}",
+            headers=headers,
+            json={"haUserId": "ha-user-marc", "visualPackId": "robot"},
+        )
+        assert response.status_code == 200
+        assert response.json()["visualPackId"] == "robot"
+
+        rejected = await client.patch(
+            f"/api/v1/integration/assistants/{assistant_id}",
+            headers=headers,
+            json={"haUserId": "ha-user-marc", "visualPackId": "not-a-pack"},
+        )
+        assert rejected.status_code == 422
+        assert rejected.json()["detail"]["code"] == "invalid_visual_pack"
+
+
+async def test_visual_packs_catalog_endpoint_lists_built_in_packs() -> None:
+    client, factory = await _client()
+    async with client:
+        await _seed_household(factory)
+        token = await _issue_token(factory)
+        headers = {"Authorization": f"Bearer {token}"}
+
+        response = await client.get("/api/v1/integration/visual-packs", headers=headers)
+
+        assert response.status_code == 200
+        ids = {pack["id"] for pack in response.json()}
+        assert {"orb", "robot", "dog", "portrait"} <= ids
+        orb = next(pack for pack in response.json() if pack["id"] == "orb")
+        assert orb["stages"]
+        assert "mdiIcon" in orb["stages"][0]
+
+
+async def test_visual_packs_catalog_requires_a_token() -> None:
+    client, _factory = await _client()
+    async with client:
+        response = await client.get("/api/v1/integration/visual-packs")
+        assert response.status_code == 401
+
+
+async def test_first_conversation_turn_opens_the_personality_interview() -> None:
+    client, factory = await _client()
+    async with client:
+        await _seed_household(factory)
+        token = await _issue_token(factory)
+        headers = {"Authorization": f"Bearer {token}"}
+        await client.put(
+            "/api/v1/integration/people/sync",
+            headers=headers,
+            json=[{"haPersonId": "ha-person-marc", "haUserId": "ha-user-marc", "displayName": "Marc"}],
+        )
+
+        first = await client.post(
+            "/api/v1/integration/conversation",
+            headers=headers,
+            json={"haUserId": "ha-user-marc", "text": "hello"},
+        )
+        assert first.status_code == 200
+        first_body = first.json()
+        assert first_body["outcome"] == "completed"
+        assert "how would you like me to talk with you" in first_body["responseText"].lower()
+
+        assistant_id = (
+            await client.get("/api/v1/integration/assistants?haUserId=ha-user-marc", headers=headers)
+        ).json()[0]["id"]
+        assistant_after = (
+            await client.get("/api/v1/integration/assistants?haUserId=ha-user-marc", headers=headers)
+        ).json()[0]
+        assert assistant_after["interviewState"] == "in_progress"
+
+        # Skip ends it deterministically, no model provider needed.
+        second = await client.post(
+            "/api/v1/integration/conversation",
+            headers=headers,
+            json={
+                "haUserId": "ha-user-marc",
+                "text": "skip",
+                "conversationId": first_body["conversationId"],
+            },
+        )
+        assert second.status_code == 200
+        assert "default for now" in second.json()["responseText"].lower()
+
+        restarted = await client.post(
+            f"/api/v1/integration/assistants/{assistant_id}/interview/restart",
+            headers=headers,
+            json={"haUserId": "ha-user-marc"},
+        )
+        assert restarted.status_code == 200
+        assert restarted.json()["interviewState"] == "not_started"
+
+
+async def test_persona_import_proposes_then_requires_explicit_confirm() -> None:
+    client, factory = await _client()
+    async with client:
+        await _seed_household(factory)
+        token = await _issue_token(factory)
+        headers = {"Authorization": f"Bearer {token}"}
+        await client.put(
+            "/api/v1/integration/people/sync",
+            headers=headers,
+            json=[{"haPersonId": "ha-person-marc", "haUserId": "ha-user-marc", "displayName": "Marc"}],
+        )
+        assistant_id = (
+            await client.get("/api/v1/integration/assistants?haUserId=ha-user-marc", headers=headers)
+        ).json()[0]["id"]
+
+        proposed = await client.post(
+            f"/api/v1/integration/assistants/{assistant_id}/persona-import",
+            headers=headers,
+            json={"haUserId": "ha-user-marc", "documentText": "# soul.md\nI am direct and warm."},
+        )
+        assert proposed.status_code == 200
+        # No model provider is configured in this test household, so extraction degrades to
+        # an empty proposal (never fabricated) - the important thing is nothing was committed yet.
+        assert proposed.json() == {"dimensions": {}, "groundingNotes": ""}
+
+        unchanged = await client.get(
+            "/api/v1/integration/assistants?haUserId=ha-user-marc", headers=headers
+        )
+        assert unchanged.json()[0]["personality"] == {}
+        assert unchanged.json()[0]["interviewState"] == "not_started"
+
+        confirmed = await client.post(
+            f"/api/v1/integration/assistants/{assistant_id}/persona-import/confirm",
+            headers=headers,
+            json={
+                "haUserId": "ha-user-marc",
+                "dimensions": {"communication_style": "Direct and warm"},
+                "groundingNotes": "Likes dry humor.",
+            },
+        )
+        assert confirmed.status_code == 200
+        body = confirmed.json()
+        assert body["personality"]["communication_style"] == "Direct and warm"
+        assert body["personality"]["grounding_notes"] == "Likes dry humor."
+        assert body["interviewState"] == "in_progress"
+
+
 async def test_a_person_can_have_more_than_one_assistant_create_list_and_delete() -> None:
     client, factory = await _client()
     async with client:
