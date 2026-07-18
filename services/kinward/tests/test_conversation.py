@@ -24,6 +24,7 @@ from kinward.application.conversation import (
     list_topics,
     update_topic,
 )
+from kinward.application.knowledge import list_confirmed_facts
 from kinward.integrations.home_assistant import HomeAssistantClient
 from kinward.llm.contracts import ModelMessage, ModelReply
 from kinward.llm.providers import NO_MODEL_RESPONSE
@@ -968,6 +969,86 @@ async def test_household_fallback_assistant_never_leaks_a_persons_private_memory
 
         # The two fallback conversations are themselves isolated topics.
         assert fallback_result_owner.conversation_id != fallback_result_other.conversation_id
+
+
+async def test_ha_admin_role_never_discloses_another_persons_private_knowledge_or_memory() -> None:
+    """Cross-cutting rule 4: an HA administrator is a Kinward administrator too, but that
+
+    household role never by itself grants access to another adult's private data - role
+    and privacy authorization remain separate axes (Story 3.3). This seeds person_one as
+    an actual admin (``_seed_mapped_person``'s default) and proves their admin role does
+    not widen either ``list_confirmed_facts`` or conversational-memory grounding beyond
+    their own person id - the same person_id-only scoping a non-admin gets.
+    """
+    factory = await _factory()
+    async with factory() as session:
+        household, person_one = await _seed_mapped_person(session)
+        person_two = await _add_other_mapped_person(
+            session, household, ha_person_id="ha-person-2", ha_user_id="ha-user-2"
+        )
+        assert person_one.role == "admin"
+        assert person_two.role == "member"
+        atlas = await _get_assistant(session, owner_person_id=person_one.id)
+        nova = await _get_assistant(session, owner_person_id=person_two.id)
+
+        # A confirmed, sensitive fact owned by the non-admin person_two.
+        session.add(
+            KnowledgeFactRecord(
+                household_id=household.id,
+                owner_person_id=person_two.id,
+                subject="Other Adult",
+                predicate="medical_condition",
+                value="Type 1 diabetes",
+                privacy="sensitive",
+                source_system="test-seed",
+                recurrence_key="test-recurrence-key",
+                knowledge_state="confirmed",
+            )
+        )
+        await session.commit()
+
+        # The admin querying their own facts must not see person_two's - admin role is
+        # not a target-person parameter and grants no widened query.
+        admin_facts = await list_confirmed_facts(session, ha_user_id="ha-user-1")
+        assert admin_facts == []
+
+        # person_two's own memory session must never be reached by the admin's private
+        # conversation with their own assistant, even though the admin could, if this
+        # boundary broke, resolve any (person, assistant) pair in the household.
+        private_session_for_two = HonchoMemoryProvider.session_id(person_two.id, nova.id)
+
+        seen_paths: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen_paths.append(request.url.path)
+            if request.url.path.endswith("/search"):
+                if private_session_for_two in request.url.path:
+                    return httpx.Response(
+                        200,
+                        json={"items": [{"id": "m1", "content": "Type 1 diabetes", "score": 0.9}]},
+                    )
+                return httpx.Response(200, json={"items": []})
+            return httpx.Response(201, json={"items": [{"id": "m2"}]})
+
+        memory = HonchoMemoryProvider(base_url="http://honcho.invalid", transport=httpx.MockTransport(handler))
+
+        admin_model = RecordingModelProvider()
+        admin_result = await handle_conversation_request(
+            session,
+            ha_user_id="ha-user-1",
+            text="what medical conditions does anyone in this house have?",
+            conversation_id=None,
+            language="en",
+            assistant_id=atlas.id,
+            model=admin_model,
+            memory_provider=memory,
+        )
+        await session.commit()
+
+        assert isinstance(admin_result, Completed)
+        assert not any(private_session_for_two in path for path in seen_paths)
+        admin_prompt, _admin_messages = admin_model.calls[0]
+        assert "Type 1 diabetes" not in admin_prompt
 
 
 async def test_allowlist_mode_allows_only_listed_people() -> None:

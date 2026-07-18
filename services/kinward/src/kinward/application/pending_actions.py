@@ -14,6 +14,7 @@ from kinward.domain.assistant_access import can_address_assistant
 from kinward.domain.expected_state import expected_state_for
 from kinward.domain.pending_action import (
     ApprovalResolutionError,
+    can_cancel_approval,
     can_resolve_approval,
     revalidate_before_execution,
 )
@@ -90,6 +91,11 @@ class Denied:
     pass
 
 
+@dataclass(frozen=True)
+class Cancelled:
+    pass
+
+
 RequestActionOutcome = (
     Unmapped
     | AssistantNotFound
@@ -104,6 +110,8 @@ RequestActionOutcome = (
 ResolveActionOutcome = (
     Unmapped | NotAdmin | ApprovalNotFound | ApprovalResolutionError | Denied | Executed | Failed
 )
+
+CancelActionOutcome = Unmapped | ApprovalNotFound | ApprovalResolutionError | Cancelled
 
 
 async def get_or_create_tool_policy(
@@ -448,3 +456,56 @@ async def resolve_pending_action(
     )
     await session.flush()
     return Executed() if approval_state == "executed" else Failed()
+
+
+async def cancel_pending_action(
+    session: AsyncSession, *, household_id: str, approval_id: str, ha_user_id: str
+) -> CancelActionOutcome:
+    """Let the person who requested a pending action withdraw it before anyone
+
+    resolves it (Epic 6 Story 6.1's ``cancelled`` state, defined since migration
+    ``010_meaningful_action_approvals`` but unreachable until now). Unlike
+    ``resolve_pending_action``, this is gated on being the original requester, not
+    admin status - see ``domain.pending_action.can_cancel_approval``.
+    """
+    person = await resolve_person(session, ha_user_id=ha_user_id)
+    if isinstance(person, Unmapped):
+        return person
+
+    approval = await session.get(ApprovalRecord, approval_id)
+    if approval is None or approval.household_id != household_id:
+        return ApprovalNotFound()
+
+    now = _now()
+    assert approval.expires_at is not None, "every approval created by request_action has an expiry"
+    expires_at = _aware(approval.expires_at)
+    ok, error = can_cancel_approval(
+        state=approval.state,
+        requester_is_owner=person.id == approval.requested_by_person_id,
+        expires_at=expires_at,
+        now=now,
+    )
+    if error is not None:
+        if error.code == "expired" and approval.state == "pending":
+            approval.state = "expired"
+            approval.resolved_at = now
+            approval.record_version += 1
+            await session.flush()
+        return error
+
+    approval.state = "cancelled"
+    approval.resolved_by_person_id = person.id
+    approval.resolved_at = now
+    approval.record_version += 1
+    session.add(
+        ActivityRecord(
+            household_id=household_id,
+            assistant_id=approval.assistant_id,
+            person_id=person.id,
+            summary=f"Cancelled pending action: {approval.action}",
+            outcome="cancelled",
+            detail={"approval_id": approval.id},
+        )
+    )
+    await session.flush()
+    return Cancelled()

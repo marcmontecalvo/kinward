@@ -29,6 +29,8 @@ from kinward.api import (
     PetsSuccess,
     ProviderSettings,
     ProviderSettingsFailure,
+    ResourceLabel,
+    ResourceLabelFailure,
     SendMessageFailure,
     SendMessageSuccess,
     SummaryFailure,
@@ -36,6 +38,8 @@ from kinward.api import (
     SyncedPerson,
     SyncPeopleFailure,
     SyncPeopleSuccess,
+    ToolPolicy,
+    ToolPolicyFailure,
     VisualPack,
     VisualPackStage,
     VisualPacksFailure,
@@ -54,10 +58,13 @@ from kinward.api import (
     classify_persona_import_response,
     classify_pets_response,
     classify_provider_settings_response,
+    classify_resource_label_response,
+    classify_resource_labels_response,
     classify_send_message_response,
     classify_set_calendar_entity_response,
     classify_summary_response,
     classify_sync_people_response,
+    classify_tool_policy_response,
     classify_visual_packs_response,
 )
 from kinward.api import (
@@ -380,6 +387,90 @@ def test_classify_assistant_policy_response_invalid_auth() -> None:
     assert classify_assistant_policy_response(401, {}) == AssistantPolicyFailure("invalid_auth")
 
 
+def test_classify_tool_policy_response_success() -> None:
+    payload = {
+        "permissions": {
+            "control_lights": "allow",
+            "control_switches": "allow",
+            "manage_household_timers": "allow",
+            "control_locks": "deny",
+            "control_alarm_system": "deny",
+        }
+    }
+    result = classify_tool_policy_response(200, payload)
+    assert result == ToolPolicy(permissions=payload["permissions"])
+
+
+def test_classify_tool_policy_response_invalid_auth() -> None:
+    assert classify_tool_policy_response(401, {}) == ToolPolicyFailure("invalid_auth")
+
+
+def test_classify_tool_policy_response_household_not_configured() -> None:
+    assert classify_tool_policy_response(409, {}) == ToolPolicyFailure("household_not_configured")
+
+
+def test_classify_tool_policy_response_malformed_is_unknown() -> None:
+    assert classify_tool_policy_response(200, {"permissions": "not-a-dict"}) == ToolPolicyFailure(
+        "unknown"
+    )
+    assert classify_tool_policy_response(200, {}) == ToolPolicyFailure("unknown")
+    assert classify_tool_policy_response(
+        200, {"permissions": {"control_lights": 1}}
+    ) == ToolPolicyFailure("unknown")
+
+
+def _resource_label_payload(**overrides: object) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "entityId": "light.kitchen",
+        "label": "Kitchen light",
+        "recordVersion": 1,
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_classify_resource_labels_response_success() -> None:
+    result = classify_resource_labels_response(200, [_resource_label_payload()])
+    assert result == [
+        ResourceLabel(entity_id="light.kitchen", label="Kitchen light", record_version=1)
+    ]
+
+
+def test_classify_resource_labels_response_empty_list() -> None:
+    assert classify_resource_labels_response(200, []) == []
+
+
+def test_classify_resource_labels_response_malformed_item_is_unknown() -> None:
+    assert classify_resource_labels_response(
+        200, [{"entityId": "light.kitchen"}]
+    ) == ResourceLabelFailure("unknown")
+
+
+def test_classify_resource_labels_response_invalid_auth() -> None:
+    assert classify_resource_labels_response(401, []) == ResourceLabelFailure("invalid_auth")
+
+
+def test_classify_resource_labels_response_household_not_configured() -> None:
+    assert classify_resource_labels_response(409, []) == ResourceLabelFailure(
+        "household_not_configured"
+    )
+
+
+def test_classify_resource_label_response_success() -> None:
+    result = classify_resource_label_response(200, _resource_label_payload())
+    assert result == ResourceLabel(entity_id="light.kitchen", label="Kitchen light", record_version=1)
+
+
+def test_classify_resource_label_response_malformed_is_unknown() -> None:
+    assert classify_resource_label_response(200, {"entityId": "light.kitchen"}) == (
+        ResourceLabelFailure("unknown")
+    )
+
+
+def test_classify_resource_label_response_invalid_auth() -> None:
+    assert classify_resource_label_response(401, {}) == ResourceLabelFailure("invalid_auth")
+
+
 def test_classify_people_response_success() -> None:
     payload = [{"id": "person-1", "displayName": "Marc"}, {"id": "person-2", "displayName": "Lisa"}]
     assert classify_people_response(200, payload) == [
@@ -587,6 +678,15 @@ def test_approval_resolution_event_carries_approval_id_decision_and_outcome() ->
     assert deny_event == BusEvent(
         EVENT_APPROVAL_RESOLVED,
         {"approval_id": "approval-1", "decision": "deny", "outcome": "denied"},
+    )
+
+    cancelled_result = ActionResult(outcome="cancelled", approval_id=None)
+    cancel_event = approval_resolution_event(
+        cancelled_result, approval_id="approval-1", decision="cancel"
+    )
+    assert cancel_event == BusEvent(
+        EVENT_APPROVAL_RESOLVED,
+        {"approval_id": "approval-1", "decision": "cancel", "outcome": "cancelled"},
     )
 
 

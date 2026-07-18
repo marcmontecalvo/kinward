@@ -153,6 +153,21 @@ deny_action:
       selector:
         text:
 
+cancel_action:
+  name: Cancel action
+  description: >-
+    Withdraw a pending action you requested, before anyone approves or denies
+    it, as shown on sensor.kinward_pending_approvals. Only the person who
+    requested it may cancel it - this is not an administrator power like
+    approve_action/deny_action.
+  fields:
+    approval_id:
+      name: Approval ID
+      description: The pending action's id, from sensor.kinward_pending_approvals.
+      required: true
+      selector:
+        text:
+
 generate_briefing:
   name: Generate briefing
   description: >-

@@ -17,6 +17,10 @@ from .api import (
     KinwardApiClient,
     ProviderSettings,
     ProviderSettingsFailure,
+    ResourceLabel,
+    ResourceLabelFailure,
+    ToolPolicy,
+    ToolPolicyFailure,
 )
 from .const import (
     CONF_BASE_URL,
@@ -30,12 +34,17 @@ from .const import (
     CONF_MODEL_NAME,
     CONF_MODEL_PROVIDER,
     CONF_REQUIRE_ADMIN_APPROVAL_FOR_ASSISTANT_CREATION,
+    CONF_RESOURCE_LABEL_ENTITY_ID,
+    CONF_RESOURCE_LABEL_LABEL,
     CONF_TOKEN,
     DOMAIN,
     KNOWLEDGE_BACKENDS,
     MEMORY_BACKENDS,
     MODEL_PROVIDERS,
     NO_ASSISTANT_CAP,
+    TOOL_POLICY_CAPABILITIES,
+    TOOL_POLICY_DEFAULTS,
+    TOOL_POLICY_VALUES,
 )
 
 STEP_USER_SCHEMA = vol.Schema(
@@ -144,21 +153,33 @@ class KinwardConfigFlow(ConfigFlow, domain=DOMAIN):
 
 class KinwardOptionsFlowHandler(OptionsFlow):
     """Lets an admin change what LLM provider and which of the two memory systems
-    (Honcho, llm_wiki) this Kinward household talks to, and the household's policy
-    for creating additional personal assistants - without touching backend
-    deployment config. All of it lives server-side; this flow only reads/writes it
-    through the backend's admin API.
+    (Honcho, llm_wiki) this Kinward household talks to, the household's policy for
+    creating additional personal assistants, per-capability Home Assistant write
+    permissions (Story 7.3), and household-language entity label overrides
+    (Story 7.1) - without touching backend deployment config. All of it lives
+    server-side; this flow only reads/writes it through the backend's admin API.
     """
+
+    def _client(self) -> KinwardApiClient:
+        entry = self.config_entry
+        session = async_get_clientsession(self.hass)
+        return KinwardApiClient(
+            session, base_url=entry.data[CONF_BASE_URL], token=entry.data[CONF_TOKEN]
+        )
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        errors: dict[str, str] = {}
-        entry = self.config_entry
-        session = async_get_clientsession(self.hass)
-        client = KinwardApiClient(
-            session, base_url=entry.data[CONF_BASE_URL], token=entry.data[CONF_TOKEN]
+        return self.async_show_menu(
+            step_id="init",
+            menu_options=["provider_settings", "tool_policy", "resource_labels"],
         )
+
+    async def async_step_provider_settings(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        errors: dict[str, str] = {}
+        client = self._client()
 
         if user_input is not None:
             provider_result = await client.async_update_provider_settings(
@@ -256,4 +277,95 @@ class KinwardOptionsFlowHandler(OptionsFlow):
                 ): selector.BooleanSelector(),
             }
         )
-        return self.async_show_form(step_id="init", data_schema=schema, errors=errors)
+        return self.async_show_form(step_id="provider_settings", data_schema=schema, errors=errors)
+
+    async def async_step_tool_policy(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Story 7.3's ``HomeAssistantToolPolicyRecord`` - per-capability ``allow``/
+
+        ``approval_required``/``deny`` for the five HA write capabilities in
+        ``CAPABILITY_SERVICE_ALLOWLIST``. Previously callable via the REST contract
+        only; this is that contract's first options-flow surface.
+        """
+        errors: dict[str, str] = {}
+        client = self._client()
+
+        if user_input is not None:
+            result = await client.async_update_tool_policy(
+                permissions={
+                    capability: user_input[capability] for capability in TOOL_POLICY_CAPABILITIES
+                }
+            )
+            if isinstance(result, ToolPolicyFailure):
+                errors["base"] = result.error
+            else:
+                return self.async_create_entry(title="", data={})
+
+        current = await client.async_fetch_tool_policy()
+        defaults = current.permissions if isinstance(current, ToolPolicy) else {}
+
+        schema = vol.Schema(
+            {
+                vol.Required(
+                    capability, default=defaults.get(capability, TOOL_POLICY_DEFAULTS[capability])
+                ): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=TOOL_POLICY_VALUES, mode=selector.SelectSelectorMode.DROPDOWN
+                    )
+                )
+                for capability in TOOL_POLICY_CAPABILITIES
+            }
+        )
+        return self.async_show_form(step_id="tool_policy", data_schema=schema, errors=errors)
+
+    async def async_step_resource_labels(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Story 7.1's ``home_assistant_resource_labels`` override table - one
+
+        entity/label pair per submission (blank label deletes the override, falling
+        back to HA's own ``friendly_name`` then the raw entity id). Previously
+        callable via the REST contract only; this is that contract's first
+        options-flow surface. Existing overrides are listed in the form
+        description since there's no HA options-flow list editor to edit them
+        inline.
+        """
+        errors: dict[str, str] = {}
+        client = self._client()
+
+        if user_input is not None:
+            entity_id = user_input[CONF_RESOURCE_LABEL_ENTITY_ID]
+            label = user_input.get(CONF_RESOURCE_LABEL_LABEL, "").strip()
+            label_result: ResourceLabel | ResourceLabelFailure | None
+            if label:
+                label_result = await client.async_set_resource_label(
+                    entity_id=entity_id, label=label
+                )
+            else:
+                label_result = await client.async_delete_resource_label(entity_id=entity_id)
+            if isinstance(label_result, ResourceLabelFailure):
+                errors["base"] = label_result.error
+            else:
+                return self.async_create_entry(title="", data={})
+
+        current = await client.async_list_resource_labels()
+        existing = current if isinstance(current, list) else []
+        current_labels = (
+            "\n".join(f"- {item.entity_id}: {item.label}" for item in existing)
+            if existing
+            else "(none set)"
+        )
+
+        schema = vol.Schema(
+            {
+                vol.Required(CONF_RESOURCE_LABEL_ENTITY_ID): selector.EntitySelector(),
+                vol.Optional(CONF_RESOURCE_LABEL_LABEL, default=""): selector.TextSelector(),
+            }
+        )
+        return self.async_show_form(
+            step_id="resource_labels",
+            data_schema=schema,
+            errors=errors,
+            description_placeholders={"current_labels": current_labels},
+        )

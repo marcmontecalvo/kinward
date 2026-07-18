@@ -11,11 +11,13 @@ from kinward.application.conversation import AccessDenied, AssistantNotFound, Un
 from kinward.application.pending_actions import (
     ApprovalNotFound,
     CapabilityDenied,
+    Cancelled,
     Denied,
     Executed,
     Failed,
     InvalidTarget,
     PendingApprovalCreated,
+    cancel_pending_action,
     list_pending_actions,
     request_action,
     resolve_pending_action,
@@ -583,6 +585,196 @@ async def test_expired_approval_transitions_to_expired_on_resolution_attempt() -
         approval = await session.get(ApprovalRecord, created.approval_id)
         assert approval is not None
         assert approval.state == "expired"
+
+
+async def test_requester_can_cancel_their_own_pending_action() -> None:
+    factory = await _factory()
+    async with factory() as session:
+        household, owner, _admin, assistant = await _seed(session)
+        await update_tool_policy(
+            session, household_id=household.id, permissions={"control_locks": "approval_required"}
+        )
+        created = await request_action(
+            session,
+            household_id=household.id,
+            ha_user_id="ha-user-marc",
+            assistant_id=assistant.id,
+            domain="lock",
+            service="unlock",
+            entity_id="lock.front_door",
+            data=None,
+            explanation="x",
+            ha_client=_ok_ha_client(),
+        )
+        await session.commit()
+        assert isinstance(created, PendingApprovalCreated)
+
+        result = await cancel_pending_action(
+            session,
+            household_id=household.id,
+            approval_id=created.approval_id,
+            ha_user_id="ha-user-marc",
+        )
+        await session.commit()
+        assert isinstance(result, Cancelled)
+
+        approval = await session.get(ApprovalRecord, created.approval_id)
+        assert approval is not None
+        assert approval.state == "cancelled"
+        assert approval.resolved_by_person_id == owner.id
+        assert approval.resolved_at is not None
+
+        assert await list_pending_actions(session, household_id=household.id) == []
+
+
+async def test_admin_cannot_cancel_someone_elses_pending_action() -> None:
+    """Cancelling is the requester's own retraction, not an admin power - the
+
+    admin resolution path (approve/deny) is separate and unaffected.
+    """
+    factory = await _factory()
+    async with factory() as session:
+        household, _owner, _admin, assistant = await _seed(session)
+        await update_tool_policy(
+            session, household_id=household.id, permissions={"control_locks": "approval_required"}
+        )
+        created = await request_action(
+            session,
+            household_id=household.id,
+            ha_user_id="ha-user-marc",
+            assistant_id=assistant.id,
+            domain="lock",
+            service="unlock",
+            entity_id="lock.front_door",
+            data=None,
+            explanation="x",
+            ha_client=_ok_ha_client(),
+        )
+        await session.commit()
+        assert isinstance(created, PendingApprovalCreated)
+
+        result = await cancel_pending_action(
+            session,
+            household_id=household.id,
+            approval_id=created.approval_id,
+            ha_user_id="ha-user-lisa",
+        )
+        assert isinstance(result, ApprovalResolutionError)
+        assert result.code == "not_requester"
+
+        approval = await session.get(ApprovalRecord, created.approval_id)
+        assert approval is not None
+        assert approval.state == "pending"
+
+
+async def test_unmapped_caller_cannot_cancel_a_pending_action() -> None:
+    factory = await _factory()
+    async with factory() as session:
+        household, _owner, _admin, _assistant = await _seed(session)
+        result = await cancel_pending_action(
+            session,
+            household_id=household.id,
+            approval_id="does-not-exist",
+            ha_user_id="ha-user-stranger",
+        )
+        assert isinstance(result, Unmapped)
+
+
+async def test_cancelling_an_unknown_approval_id_fails_closed() -> None:
+    factory = await _factory()
+    async with factory() as session:
+        household, _owner, _admin, _assistant = await _seed(session)
+        result = await cancel_pending_action(
+            session,
+            household_id=household.id,
+            approval_id="does-not-exist",
+            ha_user_id="ha-user-marc",
+        )
+        assert isinstance(result, ApprovalNotFound)
+
+
+async def test_expired_action_transitions_to_expired_on_cancel_attempt() -> None:
+    factory = await _factory()
+    async with factory() as session:
+        household, _owner, _admin, assistant = await _seed(session)
+        await update_tool_policy(
+            session, household_id=household.id, permissions={"control_locks": "approval_required"}
+        )
+        created = await request_action(
+            session,
+            household_id=household.id,
+            ha_user_id="ha-user-marc",
+            assistant_id=assistant.id,
+            domain="lock",
+            service="unlock",
+            entity_id="lock.front_door",
+            data=None,
+            explanation="x",
+            ha_client=_ok_ha_client(),
+        )
+        await session.commit()
+        assert isinstance(created, PendingApprovalCreated)
+
+        approval = await session.get(ApprovalRecord, created.approval_id)
+        assert approval is not None
+        approval.expires_at = datetime.now(timezone.utc) - timedelta(hours=1)
+        await session.commit()
+
+        result = await cancel_pending_action(
+            session,
+            household_id=household.id,
+            approval_id=created.approval_id,
+            ha_user_id="ha-user-marc",
+        )
+        await session.commit()
+        assert isinstance(result, ApprovalResolutionError)
+        assert result.code == "expired"
+
+        approval = await session.get(ApprovalRecord, created.approval_id)
+        assert approval is not None
+        assert approval.state == "expired"
+
+
+async def test_already_resolved_action_cannot_be_cancelled() -> None:
+    factory = await _factory()
+    async with factory() as session:
+        household, _owner, _admin, assistant = await _seed(session)
+        await update_tool_policy(
+            session, household_id=household.id, permissions={"control_locks": "approval_required"}
+        )
+        created = await request_action(
+            session,
+            household_id=household.id,
+            ha_user_id="ha-user-marc",
+            assistant_id=assistant.id,
+            domain="lock",
+            service="unlock",
+            entity_id="lock.front_door",
+            data=None,
+            explanation="x",
+            ha_client=_ok_ha_client(),
+        )
+        await session.commit()
+        assert isinstance(created, PendingApprovalCreated)
+
+        resolved = await resolve_pending_action(
+            session,
+            household_id=household.id,
+            approval_id=created.approval_id,
+            ha_user_id="ha-user-lisa",
+            decision="deny",
+        )
+        await session.commit()
+        assert isinstance(resolved, Denied)
+
+        result = await cancel_pending_action(
+            session,
+            household_id=household.id,
+            approval_id=created.approval_id,
+            ha_user_id="ha-user-marc",
+        )
+        assert isinstance(result, ApprovalResolutionError)
+        assert result.code == "not_pending"
 
 
 async def test_ha_never_configured_marks_the_action_failed_deterministically() -> None:

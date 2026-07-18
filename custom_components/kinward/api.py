@@ -217,6 +217,43 @@ AssistantPolicyResult = AssistantPolicy | AssistantPolicyFailure
 
 
 @dataclass(frozen=True)
+class ToolPolicy:
+    """Per-capability HA write permission (Epic 7 Story 7.3): ``allow`` /
+
+    ``approval_required`` / ``deny``, keyed by capability name (e.g.
+    ``control_lights``, ``control_locks``).
+    """
+
+    permissions: dict[str, str]
+
+
+@dataclass(frozen=True)
+class ToolPolicyFailure:
+    error: ConfigFlowErrorCode
+
+
+ToolPolicyResult = ToolPolicy | ToolPolicyFailure
+
+
+@dataclass(frozen=True)
+class ResourceLabel:
+    """One admin-set household-language label override for an HA entity id (Story 7.1)."""
+
+    entity_id: str
+    label: str
+    record_version: int
+
+
+@dataclass(frozen=True)
+class ResourceLabelFailure:
+    error: ConfigFlowErrorCode
+
+
+ResourceLabelResult = ResourceLabel | ResourceLabelFailure
+ResourceLabelsResult = list[ResourceLabel] | ResourceLabelFailure
+
+
+@dataclass(frozen=True)
 class Assistant:
     id: str
     name: str
@@ -461,6 +498,67 @@ def classify_assistant_policy_response(status_code: int, payload: Any) -> Assist
         max_assistants_per_person=max_assistants,
         require_admin_approval_for_creation=require_approval,
     )
+
+
+def classify_tool_policy_response(status_code: int, payload: Any) -> ToolPolicyResult:
+    if status_code == 401:
+        return ToolPolicyFailure("invalid_auth")
+    if status_code == 409:
+        return ToolPolicyFailure("household_not_configured")
+    if status_code != 200:
+        return ToolPolicyFailure("unknown")
+    if not isinstance(payload, dict):
+        return ToolPolicyFailure("unknown")
+    permissions = payload.get("permissions")
+    if not isinstance(permissions, dict) or not all(
+        isinstance(k, str) and isinstance(v, str) for k, v in permissions.items()
+    ):
+        return ToolPolicyFailure("unknown")
+    return ToolPolicy(permissions=dict(permissions))
+
+
+def _resource_label_from(payload: Any) -> ResourceLabel | None:
+    if not isinstance(payload, dict):
+        return None
+    entity_id = payload.get("entityId")
+    label = payload.get("label")
+    record_version = payload.get("recordVersion")
+    if (
+        not isinstance(entity_id, str)
+        or not isinstance(label, str)
+        or not isinstance(record_version, int)
+    ):
+        return None
+    return ResourceLabel(entity_id=entity_id, label=label, record_version=record_version)
+
+
+def classify_resource_labels_response(status_code: int, payload: Any) -> ResourceLabelsResult:
+    if status_code == 401:
+        return ResourceLabelFailure("invalid_auth")
+    if status_code == 409:
+        return ResourceLabelFailure("household_not_configured")
+    if status_code != 200 or not isinstance(payload, list):
+        return ResourceLabelFailure("unknown")
+    labels: list[ResourceLabel] = []
+    for item in payload:
+        label = _resource_label_from(item)
+        if label is None:
+            return ResourceLabelFailure("unknown")
+        labels.append(label)
+    return labels
+
+
+def classify_resource_label_response(status_code: int, payload: Any) -> ResourceLabelResult:
+    if status_code == 401:
+        return ResourceLabelFailure("invalid_auth")
+    if status_code == 409:
+        return ResourceLabelFailure("household_not_configured")
+    if status_code != 200:
+        return ResourceLabelFailure("unknown")
+    label = _resource_label_from(payload)
+    if label is None:
+        return ResourceLabelFailure("unknown")
+    return label
 
 
 def classify_list_assistants_response(
@@ -1016,9 +1114,11 @@ def action_outcome_event(
 
 
 def approval_resolution_event(
-    result: ActionResult, *, approval_id: str, decision: Literal["approve", "deny"]
+    result: ActionResult, *, approval_id: str, decision: Literal["approve", "deny", "cancel"]
 ) -> BusEvent:
-    """The HA bus event for a ``kinward.approve_action``/``kinward.deny_action`` outcome.
+    """The HA bus event for a ``kinward.approve_action``/``kinward.deny_action``/
+
+    ``kinward.cancel_action`` outcome.
 
     Correlates by ``approval_id`` alone rather than looking up the resolved action's
     domain/service/entity_id - the automation author already has that from whatever created
@@ -1185,6 +1285,62 @@ class KinwardApiClient:
         except (TimeoutError, aiohttp.ClientError):
             return AssistantPolicyFailure("cannot_connect")
         return classify_assistant_policy_response(status, payload)
+
+    async def async_fetch_tool_policy(self) -> ToolPolicyResult:
+        try:
+            status, payload = await self._request(
+                "GET", "/api/v1/integration/settings/home-assistant-tool-policy"
+            )
+        except (TimeoutError, aiohttp.ClientError):
+            return ToolPolicyFailure("cannot_connect")
+        return classify_tool_policy_response(status, payload)
+
+    async def async_update_tool_policy(self, *, permissions: dict[str, str]) -> ToolPolicyResult:
+        try:
+            status, payload = await self._request(
+                "PATCH",
+                "/api/v1/integration/settings/home-assistant-tool-policy",
+                json_body={"permissions": permissions},
+            )
+        except (TimeoutError, aiohttp.ClientError):
+            return ToolPolicyFailure("cannot_connect")
+        return classify_tool_policy_response(status, payload)
+
+    async def async_list_resource_labels(self) -> ResourceLabelsResult:
+        try:
+            status, payload = await self._request(
+                "GET", "/api/v1/integration/settings/home-assistant-resource-labels"
+            )
+        except (TimeoutError, aiohttp.ClientError):
+            return ResourceLabelFailure("cannot_connect")
+        return classify_resource_labels_response(status, payload)
+
+    async def async_set_resource_label(self, *, entity_id: str, label: str) -> ResourceLabelResult:
+        try:
+            status, payload = await self._request(
+                "PUT",
+                "/api/v1/integration/settings/home-assistant-resource-labels",
+                json_body={"entityId": entity_id, "label": label},
+            )
+        except (TimeoutError, aiohttp.ClientError):
+            return ResourceLabelFailure("cannot_connect")
+        return classify_resource_label_response(status, payload)
+
+    async def async_delete_resource_label(self, *, entity_id: str) -> ResourceLabelFailure | None:
+        try:
+            status, payload = await self._request(
+                "DELETE",
+                f"/api/v1/integration/settings/home-assistant-resource-labels/{quote(entity_id)}",
+            )
+        except (TimeoutError, aiohttp.ClientError):
+            return ResourceLabelFailure("cannot_connect")
+        if status == 204:
+            return None
+        if status == 401:
+            return ResourceLabelFailure("invalid_auth")
+        if status == 409:
+            return ResourceLabelFailure("household_not_configured")
+        return ResourceLabelFailure("unknown")
 
     async def async_list_assistants(self, *, ha_user_id: str) -> list[Assistant] | AssistantActionFailure:
         try:

@@ -46,11 +46,14 @@ for a step-by-step household trial covering everything below end to end.
   default to deny). A denied call never reaches Home Assistant. An
   approval-required call becomes a pending action any current household admin
   can resolve with `kinward.approve_action` / `kinward.deny_action`, visible
-  on `sensor.kinward_pending_approvals`. There is no LLM tool-calling
+  on `sensor.kinward_pending_approvals`. The person who requested it may
+  instead withdraw it themselves with `kinward.cancel_action`, before anyone
+  resolves it - not an admin power, unlike approve/deny. There is no LLM
+  tool-calling
   integration yet, so nothing is triggered from a conversation automatically -
-  these are explicit actions today, and the tool policy itself is only
-  editable through the backend contract, not yet this integration's options
-  flow.
+  these are explicit actions today. The tool policy is editable from the
+  integration's **Configure** menu (see "Configure device control permissions
+  and entity labels" below).
 
 ## Install (development)
 
@@ -105,6 +108,28 @@ From the integration's card on **Settings -> Devices & Services**, choose
 These are household settings stored in the Kinward backend, not this
 integration's own config - changing them here just calls the backend's admin
 API and takes effect on the next conversation turn, no restart needed.
+
+## Configure device control permissions and entity labels
+
+The integration's **Configure** screen opens a menu rather than a single form:
+"Model, memory, and assistant policy" is the screen above; the other two
+entries cover the rest of the backend's admin-only settings that previously
+had no options-flow UI at all (epics.md Story 7.1/7.3):
+
+- **Home Assistant device control permissions** - `allow` /
+  `approval_required` / `deny` per capability (`control_lights`,
+  `control_switches`, `manage_household_timers`, `control_locks`,
+  `control_alarm_system`). Same policy `kinward.request_action` enforces.
+- **Entity label overrides** - give one Home Assistant entity a
+  household-language label Kinward's assistants use in place of its raw
+  entity id, one entity per submission. Submitting a blank label removes an
+  existing override, falling back to the entity's own Home Assistant
+  `friendly_name`, then its raw id. Existing overrides are listed in the form
+  description - there's no HA options-flow list editor to show or edit them
+  as a table inline.
+
+Like the model/memory/assistant settings above, both live entirely in the
+Kinward backend and take effect immediately, no restart needed.
 
 ## Sync people from Home Assistant
 
@@ -163,7 +188,8 @@ on the assistant's next conversation turn.
 
 `kinward.request_action` submits an HA service call through Kinward, subject
 to the household's tool policy; `kinward.approve_action` /
-`kinward.deny_action` resolve a pending action by id (see
+`kinward.deny_action` resolve a pending action by id (admin-only), and
+`kinward.cancel_action` withdraws one (the original requester only) (see
 `sensor.kinward_pending_approvals`). See `services.yaml` for full field
 documentation of every service.
 
@@ -181,7 +207,7 @@ household content.
 |---|---|---|
 | `kinward_action_executed` | `kinward.request_action` ran immediately (no approval was needed) | `domain`, `service`, `entity_id` |
 | `kinward_approval_requested` | `kinward.request_action` created a pending approval instead of running immediately | `approval_id`, `domain`, `service`, `entity_id` |
-| `kinward_approval_resolved` | `kinward.approve_action` / `kinward.deny_action` resolved a pending approval - `outcome` is `executed` if an approval actually ran | `approval_id`, `decision` (`approve`/`deny`), `outcome` |
+| `kinward_approval_resolved` | `kinward.approve_action` / `kinward.deny_action` / `kinward.cancel_action` resolved a pending approval - `outcome` is `executed` if an approval actually ran | `approval_id`, `decision` (`approve`/`deny`/`cancel`), `outcome` |
 
 Generic entity-state automation triggers (`state`, `numeric_state`, and so on
 against any entity Kinward controls) remain fully available and unaffected -

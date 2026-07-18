@@ -41,6 +41,35 @@ def can_resolve_approval(
     return True, None
 
 
+def can_cancel_approval(
+    *, state: str, requester_is_owner: bool, expires_at: datetime, now: datetime
+) -> tuple[Literal[True], None] | tuple[None, ApprovalResolutionError]:
+    """Whether the original requester may withdraw their own still-pending action.
+
+    ADR-002's ``cancelled`` state has been part of the enum since migration
+    ``010_meaningful_action_approvals`` but had no producer until this (Epic 6
+    Story 6.1's remaining gap). Only the person who requested the action may
+    cancel it - not an admin, not another household member. Approving/denying is
+    the admin's decision (``can_resolve_approval`` above); cancelling is the
+    requester's own retraction of a request nobody has acted on yet. Expiry and
+    already-resolved checks mirror ``can_resolve_approval`` for the same reasons.
+    """
+    if not requester_is_owner:
+        return None, ApprovalResolutionError(
+            code="not_requester",
+            message="Only the person who requested this action may cancel it.",
+        )
+    if now >= expires_at:
+        return None, ApprovalResolutionError(
+            code="expired", message="This pending action has expired."
+        )
+    if state != RESOLVABLE_STATE:
+        return None, ApprovalResolutionError(
+            code="not_pending", message=f"This pending action is already {state}."
+        )
+    return True, None
+
+
 def revalidate_before_execution(
     *, state: str, expires_at: datetime, now: datetime
 ) -> tuple[Literal[True], None] | tuple[None, ApprovalResolutionError]:
