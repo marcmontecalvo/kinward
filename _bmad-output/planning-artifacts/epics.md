@@ -929,8 +929,7 @@ Use HA as the physical-world authority while Kinward adds household language, po
 > (`HomeAssistantResourceLabelRecord`, migration `012_ha_resource_labels`) holds admin-set,
 > versioned (`record_version`) household-language labels keyed by HA `entity_id`, editable via
 > `GET`/`PUT`/`DELETE /settings/home-assistant-resource-labels[/​{entity_id}]` (same
-> integration-token gating as `/settings/home-assistant-tool-policy`; not yet surfaced in the
-> options flow UI, same gap already tracked for that endpoint). `domain/household_resource_labels.
+> integration-token gating as `/settings/home-assistant-tool-policy`). `domain/household_resource_labels.
 > resolve_label` is the actual mapping: admin override, else HA's own `attributes.friendly_name`
 > (already household language - the homeowner named it in HA), else the raw `entity_id` - each
 > tier fails safely into the next (a blank/whitespace override is treated as absent, never
@@ -944,6 +943,17 @@ Use HA as the physical-world authority while Kinward adds household language, po
 > diagnostics.py` and the REST contract itself - "authorized technical diagnostics" - unaffected by
 > this pass. Tests in `tests/test_household_resource_labels.py`, `tests/test_resource_labels.py`,
 > `tests/test_conversation.py`, `tests/test_integration_api.py`.
+>
+> **Implemented (2026-07-18), options-flow UI:** `custom_components/kinward/config_flow.py`'s
+> options flow is now a menu (`async_step_init`) rather than one form - "Entity label overrides"
+> is a new step that reads/writes this endpoint one entity/label pair per submission
+> (`EntitySelector` + blank-to-remove text field), listing existing overrides in the form
+> description since HA's options flow has no native list-editor widget. `api.py` gained
+> `ResourceLabel`/`ResourceLabelFailure`, `classify_resource_label(s)_response`, and
+> `async_list_resource_labels`/`async_set_resource_label`/`async_delete_resource_label`. Tests in
+> `custom_components/kinward/tests/test_api_classification.py`; `config_flow.py` itself remains
+> outside this integration's test harness (see Story 10.5's "known simplifications" note - no
+> `homeassistant`-runtime coverage exists for any platform file here).
 
 ### Story 7.2: Read fresh HA state through a provider-neutral port
 
@@ -1021,9 +1031,9 @@ Use HA as the physical-world authority while Kinward adds household language, po
 > `manage_household_timers` default `allow`; `control_locks`/`control_alarm_system` default `deny` -
 > matching ADR-002 sec. 4's example split. Permissions are admin-editable per household
 > (`HomeAssistantToolPolicyRecord`, `GET`/`PATCH /settings/home-assistant-tool-policy`, mirroring
-> `AssistantPolicyRecord`'s pattern) but **not yet surfaced in the integration's options-flow UI** -
-> callable via the REST contract only for now, same kind of gap Story 8.1 already tracks for other
-> settings. `application/pending_actions.request_action`/`resolve_pending_action` run identity
+> `AssistantPolicyRecord`'s pattern); surfaced in the integration's options-flow UI as of
+> 2026-07-18 (see the Story 7.1 note above - same options-flow menu addition, "Home Assistant
+> device control permissions"). `application/pending_actions.request_action`/`resolve_pending_action` run identity
 > (`resolve_person`/`resolve_admin`), assistant-access, and capability-permission checks before
 > submission - "resource authority" is a cheap in-process check that `entity_id`'s domain prefix
 > matches the requested HA `domain` (`InvalidTarget` otherwise), not a live HA existence lookup.
@@ -1632,9 +1642,9 @@ push/webhook delivery, and calendar mutation via Epic 6's approval machinery.
 
 | Story | Status | Remaining work |
 | --- | --- | --- |
-| 7.1 Map Kinward household concepts to HA resources | **Done (v0)** | Admin-editable, versioned per-entity label overrides (`home_assistant_resource_labels`) fall back to HA's own `friendly_name`, then the raw entity id; wired into the conversation grounding path. Not yet surfaced in the integration's options-flow UI (REST contract only), same gap already tracked for the tool-policy endpoint. |
+| 7.1 Map Kinward household concepts to HA resources | **Done** | Admin-editable, versioned per-entity label overrides (`home_assistant_resource_labels`) fall back to HA's own `friendly_name`, then the raw entity id; wired into the conversation grounding path. Surfaced in the integration's options-flow UI as of 2026-07-18 ("Entity label overrides" menu step). |
 | 7.2 Read fresh HA state through a provider-neutral port | **Done (v0)** | Read-path grounding, the live "recent device/timer" heuristic, and now explicit per-entity availability/freshness metadata (`domain/ha_observation.py`) all exist - unavailable/stale entities are omitted from what's presented as current state. Still no persisted `recent_actions`/`active_timers` store (deliberately deferred until live-lookup proves insufficient) and freshness checking is close to a no-op absent a caching layer. |
-| 7.3 Execute and reconcile HA mutations | **Done (v0)** | v0 write path (capability allowlist, pending-action approval gating) plus a per-service expected-state confirmation matrix and an async reconciliation job (`worker.reconcile_unknown_activity`) now exist - "fresh matching HA observation" and "ambiguous... observations preserve unknown state until reconciliation" both fully hold for the five allowlisted capabilities. Reconciliation gives up (resolves to `failed`) after a fixed one-hour window rather than retrying indefinitely. |
+| 7.3 Execute and reconcile HA mutations | **Done** | v0 write path (capability allowlist, pending-action approval gating) plus a per-service expected-state confirmation matrix and an async reconciliation job (`worker.reconcile_unknown_activity`) now exist - "fresh matching HA observation" and "ambiguous... observations preserve unknown state until reconciliation" both fully hold for the five allowlisted capabilities. Reconciliation gives up (resolves to `failed`) after a fixed one-hour window rather than retrying indefinitely. Tool policy surfaced in the integration's options-flow UI as of 2026-07-18 ("Home Assistant device control permissions" menu step). |
 | 7.4 Purpose-specific HA automation hooks | **Done (v0)** | Three documented HA bus events (`kinward_action_executed`/`kinward_approval_requested`/`kinward_approval_resolved`) fire from the existing action/approval service handlers, payload limited to structural HA target + correlation ids (no explanation text, no person identifiers). |
 
 ### Epic 8 — Administration, Activity, Health, and Diagnostics
@@ -1674,9 +1684,12 @@ push/webhook delivery, and calendar mutation via Epic 6's approval machinery.
 5. One epic partially blocked *by* Epic 5's v1 (not v0): general approval/coordination (6.2/6.3)
    needs a person-owned calendar resource to exist before the person-owned-resource approval case
    has anything to approve, so it stays lower-priority and can trail real usage. Epic 7 (7.1–7.4)
-   reached a v0 slice of every story as of 2026-07-17 - remaining polish (options-flow UI surfacing
-   for tool-policy/resource-labels, tiered reference-resolution ranking, a persisted
-   `recent_actions`/`active_timers` store) can also trail real usage rather than blocking it.
+   reached a v0 slice of every story as of 2026-07-17; the options-flow UI surfacing for
+   tool-policy/resource-labels was the one ready (not evidence-gated) piece of that remaining
+   polish and shipped 2026-07-18. What's left - tiered reference-resolution ranking and a
+   persisted `recent_actions`/`active_timers` store - is explicitly evidence-gated (only worth
+   building "if household testing shows HA's state can't support reliable cross-node lookup",
+   per the Story 7.2 note above), so it stays parked pending real usage, not next.
 6. Backup/restore/import (9.1–9.3) and Epic 10's evidence-gated stories (10.1–10.4) are intentionally
    not next — revisit only after the above is running for real.
 7. ~~New scope added 2026-07-17: Epic 3's assistant personalization stories~~ — **done (2026-07-18)**;

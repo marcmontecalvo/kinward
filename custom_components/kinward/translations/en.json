@@ -33,6 +33,13 @@
   "options": {
     "step": {
       "init": {
+        "menu_options": {
+          "provider_settings": "Model, memory, and assistant policy",
+          "tool_policy": "Home Assistant device control permissions",
+          "resource_labels": "Entity label overrides"
+        }
+      },
+      "provider_settings": {
         "title": "Model, memory, and assistant policy",
         "description": "Choose what LLM this household's assistants use, and which of the two memory systems (Honcho for conversation memory, llm_wiki for household facts) they connect to. Leave a backend set to \"none\" to keep it truthfully disabled. Also sets household policy for creating additional personal assistants - a person may already have more than one.",
         "data": {
@@ -46,6 +53,25 @@
           "llm_wiki_url": "llm_wiki URL",
           "max_assistants_per_person": "Max assistants per person (0 = no limit)",
           "require_admin_approval_for_assistant_creation": "Require admin approval to create additional assistants"
+        }
+      },
+      "tool_policy": {
+        "title": "Home Assistant device control permissions",
+        "description": "Set whether each Kinward assistant capability may control Home Assistant devices freely, only after admin approval, or never. Routine shared devices default to allowed; locks and the alarm system default to denied.",
+        "data": {
+          "control_lights": "Control lights",
+          "control_switches": "Control switches",
+          "manage_household_timers": "Manage household timers",
+          "control_locks": "Control locks",
+          "control_alarm_system": "Control the alarm system"
+        }
+      },
+      "resource_labels": {
+        "title": "Entity label overrides",
+        "description": "Give a Home Assistant entity a household-language name Kinward's assistants use instead of its raw entity id. Leave the label blank and submit to remove an existing override - the entity then falls back to its Home Assistant friendly name, then its raw id.\n\nCurrent overrides:\n{current_labels}",
+        "data": {
+          "resource_label_entity_id": "Entity",
+          "resource_label_label": "Label (blank to remove)"
         }
       }
     },
