@@ -1578,6 +1578,72 @@ async def test_approval_workflow_requires_admin_and_round_trips() -> None:
         _ = admin_id
 
 
+async def test_cancel_action_lets_the_requester_withdraw_their_own_pending_action() -> None:
+    client, factory = await _client()
+    async with client:
+        await _seed_household(factory)
+        token = await _issue_token(factory)
+        headers = {"Authorization": f"Bearer {token}"}
+        assistant_id, _admin_id = await _sync_owner_and_admin(client, headers)
+
+        policy = await client.patch(
+            "/api/v1/integration/settings/home-assistant-tool-policy",
+            headers=headers,
+            json={"permissions": {"control_locks": "approval_required"}},
+        )
+        assert policy.status_code == 200
+
+        requested = await client.post(
+            "/api/v1/integration/actions",
+            headers=headers,
+            json={
+                "haUserId": "ha-user-marc",
+                "assistantId": assistant_id,
+                "domain": "lock",
+                "service": "unlock",
+                "entityId": "lock.front_door",
+                "explanation": "Let the dog walker in.",
+            },
+        )
+        assert requested.status_code == 200
+        approval_id = requested.json()["approvalId"]
+
+        forbidden = await client.post(
+            f"/api/v1/integration/actions/{approval_id}/cancel",
+            headers=headers,
+            json={"haUserId": "ha-user-lisa"},
+        )
+        assert forbidden.status_code == 403
+        assert forbidden.json()["detail"]["code"] == "not_requester"
+
+        cancelled = await client.post(
+            f"/api/v1/integration/actions/{approval_id}/cancel",
+            headers=headers,
+            json={"haUserId": "ha-user-marc"},
+        )
+        assert cancelled.status_code == 200
+        assert cancelled.json()["outcome"] == "cancelled"
+
+        pending = await client.get("/api/v1/integration/actions", headers=headers)
+        assert pending.json() == []
+
+        again = await client.post(
+            f"/api/v1/integration/actions/{approval_id}/cancel",
+            headers=headers,
+            json={"haUserId": "ha-user-marc"},
+        )
+        assert again.status_code == 409
+        assert again.json()["detail"]["code"] == "not_pending"
+
+        missing = await client.post(
+            "/api/v1/integration/actions/does-not-exist/cancel",
+            headers=headers,
+            json={"haUserId": "ha-user-marc"},
+        )
+        assert missing.status_code == 404
+        assert missing.json()["detail"]["code"] == "approval_not_found"
+
+
 async def test_activity_endpoint_filters_by_caller_role() -> None:
     client, factory = await _client()
     async with client:

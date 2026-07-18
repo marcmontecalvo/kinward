@@ -46,7 +46,10 @@ for a step-by-step household trial covering everything below end to end.
   default to deny). A denied call never reaches Home Assistant. An
   approval-required call becomes a pending action any current household admin
   can resolve with `kinward.approve_action` / `kinward.deny_action`, visible
-  on `sensor.kinward_pending_approvals`. There is no LLM tool-calling
+  on `sensor.kinward_pending_approvals`. The person who requested it may
+  instead withdraw it themselves with `kinward.cancel_action`, before anyone
+  resolves it - not an admin power, unlike approve/deny. There is no LLM
+  tool-calling
   integration yet, so nothing is triggered from a conversation automatically -
   these are explicit actions today. The tool policy is editable from the
   integration's **Configure** menu (see "Configure device control permissions
@@ -185,7 +188,8 @@ on the assistant's next conversation turn.
 
 `kinward.request_action` submits an HA service call through Kinward, subject
 to the household's tool policy; `kinward.approve_action` /
-`kinward.deny_action` resolve a pending action by id (see
+`kinward.deny_action` resolve a pending action by id (admin-only), and
+`kinward.cancel_action` withdraws one (the original requester only) (see
 `sensor.kinward_pending_approvals`). See `services.yaml` for full field
 documentation of every service.
 
@@ -203,7 +207,7 @@ household content.
 |---|---|---|
 | `kinward_action_executed` | `kinward.request_action` ran immediately (no approval was needed) | `domain`, `service`, `entity_id` |
 | `kinward_approval_requested` | `kinward.request_action` created a pending approval instead of running immediately | `approval_id`, `domain`, `service`, `entity_id` |
-| `kinward_approval_resolved` | `kinward.approve_action` / `kinward.deny_action` resolved a pending approval - `outcome` is `executed` if an approval actually ran | `approval_id`, `decision` (`approve`/`deny`), `outcome` |
+| `kinward_approval_resolved` | `kinward.approve_action` / `kinward.deny_action` / `kinward.cancel_action` resolved a pending approval - `outcome` is `executed` if an approval actually ran | `approval_id`, `decision` (`approve`/`deny`/`cancel`), `outcome` |
 
 Generic entity-state automation triggers (`state`, `numeric_state`, and so on
 against any entity Kinward controls) remain fully available and unaffected -

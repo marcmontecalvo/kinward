@@ -1114,9 +1114,11 @@ def action_outcome_event(
 
 
 def approval_resolution_event(
-    result: ActionResult, *, approval_id: str, decision: Literal["approve", "deny"]
+    result: ActionResult, *, approval_id: str, decision: Literal["approve", "deny", "cancel"]
 ) -> BusEvent:
-    """The HA bus event for a ``kinward.approve_action``/``kinward.deny_action`` outcome.
+    """The HA bus event for a ``kinward.approve_action``/``kinward.deny_action``/
+
+    ``kinward.cancel_action`` outcome.
 
     Correlates by ``approval_id`` alone rather than looking up the resolved action's
     domain/service/entity_id - the automation author already has that from whatever created

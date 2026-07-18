@@ -85,11 +85,13 @@ from kinward.application.knowledge import (
 from kinward.application.pending_actions import (
     ApprovalNotFound,
     CapabilityDenied,
+    Cancelled,
     Denied,
     Executed,
     Failed,
     InvalidTarget,
     PendingApprovalCreated,
+    cancel_pending_action,
     get_or_create_tool_policy,
     list_pending_actions,
     request_action,
@@ -1629,7 +1631,9 @@ def _approval_not_found() -> HTTPException:
 
 def _resolution_blocked(error: ApprovalResolutionError) -> HTTPException:
     status_code = (
-        status.HTTP_403_FORBIDDEN if error.code == "admin_required" else status.HTTP_409_CONFLICT
+        status.HTTP_403_FORBIDDEN
+        if error.code in ("admin_required", "not_requester")
+        else status.HTTP_409_CONFLICT
     )
     return HTTPException(status_code=status_code, detail={"code": error.code, "message": error.message})
 
@@ -1747,6 +1751,38 @@ async def integration_deny_action(
     approval_id: str, body: ResolveActionRequest, _token: IntegrationToken, session: Session, settings: AppSettings
 ) -> ActionResultPayload:
     return await _resolve_action(approval_id, body, session, settings, decision="deny")
+
+
+class CancelActionRequest(BaseModel):
+    ha_user_id: str = Field(alias="haUserId", min_length=1, max_length=64)
+
+
+@router.post("/actions/{approval_id}/cancel", response_model=ActionResultPayload)
+async def integration_cancel_action(
+    approval_id: str, body: CancelActionRequest, _token: IntegrationToken, session: Session
+) -> ActionResultPayload:
+    """Lets the person who requested a pending action withdraw it before anyone
+
+    resolves it (Story 6.1's ``cancelled`` state) - gated on being the original
+    requester, not admin status, unlike ``approve``/``deny`` above. No information
+    leak versus a plain 404: every household member can already see every pending
+    action's existence via ``GET /actions`` (household-shared, non-private data).
+    """
+    summary = await fetch_household_summary(session)
+    if summary is None:
+        raise _household_not_configured()
+    result = await cancel_pending_action(
+        session, household_id=summary.id, approval_id=approval_id, ha_user_id=body.ha_user_id
+    )
+    if isinstance(result, (Unmapped, ApprovalNotFound)):
+        await session.rollback()
+        raise _approval_not_found()
+    if isinstance(result, ApprovalResolutionError):
+        await session.rollback()
+        raise _resolution_blocked(result)
+    assert isinstance(result, Cancelled)
+    await session.commit()
+    return ActionResultPayload(outcome="cancelled")
 
 
 @router.get("/activity", response_model=list[ActivityPayload])

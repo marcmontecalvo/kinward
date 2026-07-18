@@ -84,12 +84,11 @@ Status as of `implementationReviewDate` above; see [§8](#8-story-by-story-statu
 | 1 | A healthy Kinward backend and HA 2026.7.2 integration can be installed and used today. | **Built and verified.** The manual day-one trial (1.7) ran end-to-end on 2026-07-17; two defects were found (one fixed, one deferred to Epic 9) — see `docs/ha-native/household-trial.md`. |
 | 2 | Household members can speak or type to their private Kinward assistant through Assist with truthful lifecycle behavior. | **Built.** Mapping, conversation entity, cancellation, and topic CRUD all exist; the fallback-assistant privacy boundary (2.5) now has a dedicated regression test. |
 | 3 | The household and account graph is safely established and managed through backend workflows and HA-hosted configuration entry points. | **Done.** 3.1–3.4 as before; the personalization stories added 2026-07-17 (3.5 conversational interview, 3.6 persona-document import, 3.7 visual-identity catalog) all shipped 2026-07-18. |
-| 4 | Topics, memory, knowledge, and corrections remain private, inspectable, and portable across authorized HA interactions. | **Core lifecycle built.** Auto-extracting facts from a live conversation, and reclassifying a confirmed fact's sharing class, are not wired. |
+| 4 | Topics, memory, knowledge, and corrections remain private, inspectable, and portable across authorized HA interactions. | **Done.** Structured extraction of candidate observations is wired into `handle_conversation_request` (4.3), and reclassifying a confirmed fact's sharing class is implemented (`application/knowledge.reclassify_fact`, 4.4). |
 | 5 | Kinward produces useful briefings and calendar-aware attention without becoming a notification feed. | **v0 built.** HA calendar entities are read directly (no per-person provider credentials - deferred to v1), meaningful-change detection is deterministic, attention items carry the full six-state lifecycle, the briefing is a live projection Assist also grounds on, and deduplicated HA notifications are delivered. No quiet-hours policy yet. |
 | 6 | Meaningful actions and household coordination are approved, executed, reconciled, and recorded safely. | **v0 slice only.** Approval state machine covers HA-capability actions with no resource owner; the general multi-principal/quorum case (needed for cross-person actions like a calendar reschedule) and assistant-to-assistant coordination are unbuilt, and both are blocked on Epic 5's v1 (person-owned calendars) specifically, not v0 (Epic 5 v0's calendars are household-shared, giving this case nothing to own yet). |
-| 7 | Home Assistant state and actions are used through policy-bound, observation-confirmed adapters. | **v0 read/write built.** No formal HA-resource mapping/versioning layer, no automation hooks (7.4), and completion still trusts a synchronous service-call response rather than a confirmed fresh observation. |
-| 8 | Administration, health, activity, and diagnostics are available without exposing protected content. | **Partial.** Health/diagnostics, most admin actions, and config-flow reauthentication all exist; there is still no read/query API for activity records (only writes). |
-| 8 | Administration, health, activity, and diagnostics are available without exposing protected content. | **Partial.** Health/diagnostics, most admin actions, and an authorized/filtered activity read API all exist; config-flow reauthentication is being implemented in a parallel pass (check its own PR for status). |
+| 7 | Home Assistant state and actions are used through policy-bound, observation-confirmed adapters. | **v0 read/write built.** Automation hooks (7.4), a per-service expected-state confirmation matrix, and an async reconciliation job for ambiguous outcomes all now exist. Still no formal HA-resource mapping/versioning layer beyond the per-entity label override table (7.1). |
+| 8 | Administration, health, activity, and diagnostics are available without exposing protected content. | **Done.** Health/diagnostics, admin actions, config-flow reauthentication, and an authorized/filtered activity read API all exist. |
 | 9 | Backup, restore, import, retention, deletion, and recovery preserve the complete household authority model. | **Backup/restore/import deliberately deferred to v2.** Retention taxonomy and admin-invariant-safe deletion are done for what isn't blocked on Epic 6. |
 | 10 | Advanced generated views, custom cards, and broader clients remain evidence-gated extensions rather than foundation blockers. | **10.1–10.4 correctly not started** — gated on real household usage evidence, per its own goal. **10.5 (assistant visual-identity card) is a named exception** — committed and built 2026-07-18, not evidence-gated. |
 
@@ -848,8 +847,8 @@ Every meaningful external action is authorized, approved where required, submitt
 > the state machine for ADR-002's *capability-risk-tier* case only (Epic 7 Story 7.3's HA device
 > control - see that story's note below), not the general multi-principal/quorum case Story 6.2
 > describes. States used: `pending`, `approved`, `denied`, `expired`, `executed`, `failed` (the full
-> ADR-002 seven-value enum, now CHECK-constrained in migration `010_meaningful_action_approvals` -
-> `cancelled` is defined but has no producer yet). Re-validation immediately before execution
+> ADR-002 seven-value enum, now CHECK-constrained in migration `010_meaningful_action_approvals`).
+> Re-validation immediately before execution
 > (`domain/pending_action.revalidate_before_execution`) covers expiry and approval-state, the subset of
 > AD-20's five re-check conditions meaningful for a resource with no separate existence/ownership to
 > re-verify (an HA entity isn't "deleted" the way a calendar event is). "Submitted never means completed"
@@ -857,6 +856,18 @@ Every meaningful external action is authorized, approved where required, submitt
 > returns a non-`None` result (see the Story 7.3 note for what `None` now means). Tests in
 > `tests/test_pending_action.py` (domain), `tests/test_pending_actions.py` (application), and
 > `tests/test_integration_api.py::test_approval_workflow_requires_admin_and_round_trips`.
+>
+> **Implemented (2026-07-18), the `cancelled` producer:** `domain/pending_action.can_cancel_approval`
+> plus `application/pending_actions.cancel_pending_action` let the person who requested a pending
+> action withdraw it themselves, before anyone resolves it - gated on being the original requester
+> (`requested_by_person_id`), not admin status, the opposite gate from `can_resolve_approval`.
+> Exposed as `POST /actions/{approval_id}/cancel` and the new `kinward.cancel_action` HA service
+> (mirrors `approve_action`/`deny_action`'s shape exactly, reusing the client's existing generic
+> `async_resolve_action(decision=...)`). The `cancelled` value has had a real producer since this
+> pass; every state in ADR-002's seven-value enum is now reachable except the general
+> multi-principal/quorum case's own states, which remain Story 6.2/6.3's unbuilt scope. Tests in
+> `tests/test_pending_action.py`, `tests/test_pending_actions.py`, and
+> `tests/test_integration_api.py::test_cancel_action_lets_the_requester_withdraw_their_own_pending_action`.
 
 ### Story 6.2: Enforce general multi-principal approval
 
@@ -1633,7 +1644,7 @@ push/webhook delivery, and calendar mutation via Epic 6's approval machinery.
 
 | Story | Status | Remaining work |
 | --- | --- | --- |
-| 6.1 Meaningful-action state machine | **Partial** | v0 covers the capability-risk-tier case only (HA device control, no resource owner). The general multi-principal/quorum case is unbuilt; `cancelled` state has no producer yet. |
+| 6.1 Meaningful-action state machine | **Partial** | v0 covers the capability-risk-tier case only (HA device control, no resource owner). The general multi-principal/quorum case is unbuilt. `cancelled` now has a producer as of 2026-07-18 (`kinward.cancel_action` - the requester withdraws their own pending action). |
 | 6.2 General multi-principal approval | **Partial** | Only the no-owner HA-capability case is built. The person-owned-resource case (ADR-002's worked example: reschedule another person's calendar event) is unbuilt - Epic 5 v0's calendars are household-shared, not person-owned, so this stays blocked on Epic 5's v1 direct-provider work specifically, not v0. |
 | 6.3 Bounded household coordination | **Not started** | Assistant-to-assistant delegation deliberately deferred until 6.1/6.2's general approval machinery exists. |
 | 6.4 Expose safe HA actions | Done | — (`kinward.request_action`/`approve_action`/`deny_action` services, `POST /api/v1/integration/actions`) |

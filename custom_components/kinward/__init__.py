@@ -383,6 +383,29 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             )
             hass.bus.async_fire(event.event_type, event.data)
 
+    async def _handle_cancel_action(call: ServiceCall) -> None:
+        """Withdraw a pending action the caller themselves requested, as shown on
+
+        ``sensor.kinward_pending_approvals`` - gated on being the original
+        requester, not admin status (unlike approve/deny above).
+        """
+        ha_user_id = call.context.user_id
+        if not ha_user_id:
+            raise ServiceValidationError(
+                "kinward.cancel_action must be called by an authenticated user."
+            )
+        for stored_coordinator in hass.data.get(DOMAIN, {}).values():
+            result = await stored_coordinator.client.async_resolve_action(
+                approval_id=call.data["approval_id"], ha_user_id=ha_user_id, decision="cancel"
+            )
+            if isinstance(result, ActionFailure):
+                raise ServiceValidationError(result.reason)
+            await stored_coordinator.async_request_refresh()
+            event = approval_resolution_event(
+                result, approval_id=call.data["approval_id"], decision="cancel"
+            )
+            hass.bus.async_fire(event.event_type, event.data)
+
     async def _handle_acknowledge_attention_item(call: ServiceCall) -> None:
         """Acknowledge a calendar attention item by id, as shown on
         ``sensor.kinward_attention``'s ``items`` attribute - it stays visible but
@@ -497,6 +520,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.services.async_register(
             DOMAIN, "deny_action", _handle_deny_action, schema=RESOLVE_ACTION_SCHEMA
         )
+    if not hass.services.has_service(DOMAIN, "cancel_action"):
+        hass.services.async_register(
+            DOMAIN, "cancel_action", _handle_cancel_action, schema=RESOLVE_ACTION_SCHEMA
+        )
 
     return True
 
@@ -517,6 +544,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             hass.services.async_remove(DOMAIN, "request_action")
             hass.services.async_remove(DOMAIN, "approve_action")
             hass.services.async_remove(DOMAIN, "deny_action")
+            hass.services.async_remove(DOMAIN, "cancel_action")
             hass.services.async_remove(DOMAIN, "generate_briefing")
             hass.services.async_remove(DOMAIN, "acknowledge_attention_item")
             hass.services.async_remove(DOMAIN, "dismiss_attention_item")

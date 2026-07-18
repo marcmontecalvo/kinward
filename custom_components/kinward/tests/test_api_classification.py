@@ -680,6 +680,15 @@ def test_approval_resolution_event_carries_approval_id_decision_and_outcome() ->
         {"approval_id": "approval-1", "decision": "deny", "outcome": "denied"},
     )
 
+    cancelled_result = ActionResult(outcome="cancelled", approval_id=None)
+    cancel_event = approval_resolution_event(
+        cancelled_result, approval_id="approval-1", decision="cancel"
+    )
+    assert cancel_event == BusEvent(
+        EVENT_APPROVAL_RESOLVED,
+        {"approval_id": "approval-1", "decision": "cancel", "outcome": "cancelled"},
+    )
+
 
 def _calendar_entity_payload(**overrides: object) -> dict[str, object]:
     payload: dict[str, object] = {"entityId": "calendar.family", "enabled": True, "knownToHa": True}

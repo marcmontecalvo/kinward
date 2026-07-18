@@ -1,6 +1,10 @@
 from datetime import datetime, timedelta, timezone
 
-from kinward.domain.pending_action import can_resolve_approval, revalidate_before_execution
+from kinward.domain.pending_action import (
+    can_cancel_approval,
+    can_resolve_approval,
+    revalidate_before_execution,
+)
 
 NOW = datetime(2026, 7, 16, 12, 0, tzinfo=timezone.utc)
 LATER = NOW + timedelta(hours=1)
@@ -71,3 +75,45 @@ def test_execution_requires_the_approved_state() -> None:
     assert ok is None
     assert error is not None
     assert error.code == "not_approved"
+
+
+def test_non_requester_cannot_cancel_a_pending_approval() -> None:
+    ok, error = can_cancel_approval(
+        state="pending", requester_is_owner=False, expires_at=LATER, now=NOW
+    )
+    assert ok is None
+    assert error is not None
+    assert error.code == "not_requester"
+
+
+def test_requester_can_cancel_their_own_pending_approval_before_expiry() -> None:
+    assert can_cancel_approval(
+        state="pending", requester_is_owner=True, expires_at=LATER, now=NOW
+    ) == (True, None)
+
+
+def test_expired_approval_cannot_be_cancelled() -> None:
+    ok, error = can_cancel_approval(
+        state="pending", requester_is_owner=True, expires_at=EARLIER, now=NOW
+    )
+    assert ok is None
+    assert error is not None
+    assert error.code == "expired"
+
+
+def test_already_resolved_approval_cannot_be_cancelled() -> None:
+    ok, error = can_cancel_approval(
+        state="approved", requester_is_owner=True, expires_at=LATER, now=NOW
+    )
+    assert ok is None
+    assert error is not None
+    assert error.code == "not_pending"
+
+
+def test_cancel_expiry_check_takes_priority_over_state_check() -> None:
+    ok, error = can_cancel_approval(
+        state="denied", requester_is_owner=True, expires_at=EARLIER, now=NOW
+    )
+    assert ok is None
+    assert error is not None
+    assert error.code == "expired"
