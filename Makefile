@@ -1,4 +1,4 @@
-.PHONY: install lock dev api worker migrate test lint typecheck build check smoke smoke-ha up down new-visual-pack
+.PHONY: install lock dev api worker migrate test lint typecheck build check smoke smoke-ha smoke-peers setup up down new-visual-pack
 
 install:
 	mise install
@@ -39,6 +39,14 @@ smoke:
 
 smoke-ha:
 	bash scripts/ha-dev-smoke.sh
+
+smoke-peers:
+	bash scripts/optional-peers-smoke.sh
+
+# Interactive first-run wizard: choose Honcho/LLM-Wiki/HA-dev, bring the stack
+# up, bootstrap the household, and mint a Home Assistant integration token.
+setup:
+	bash scripts/kinward-setup.sh
 
 # Scaffold a new assistant visual-identity pack (Epic 3 Story 3.7).
 # Usage: make new-visual-pack NAME=dog DISPLAY_NAME="Dog" CATEGORY=animal

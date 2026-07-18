@@ -1,0 +1,28 @@
+# Optional LLM-Wiki (curated household knowledge) peer.
+#
+# Absent from the default `docker compose up` inventory. Enabled explicitly with
+# `--profile llm-wiki`, normally via `scripts/kinward-setup.sh` rather than by hand.
+# Vendored as a git checkout at ./vendor/llm_wiki (see scripts/kinward-setup.sh) and
+# built from source; there is no published image.
+services:
+  llm-wiki:
+    build:
+      context: ./vendor/llm_wiki
+    profiles: ["llm-wiki"]
+    volumes:
+      - kinward-llm-wiki-data:/wiki_system
+    environment:
+      WIKI_ROOT: /wiki_system
+      WIKI_CONFIG_DIR: /wiki_system/config
+      WIKI_UI_USER: admin
+      WIKI_UI_PASSWORD: ${KINWARD_LLM_WIKI_UI_PASSWORD:?Run scripts/kinward-setup.sh to generate this}
+      WIKI_WEBUI_ENABLED: "false"
+      WIKI_TUI_ENABLED: "false"
+      WIKI_HONCHO_PUSH: "false"
+    ports:
+      - "${KINWARD_LLM_WIKI_PORT:-3050}:3050"
+    # Healthcheck is inherited from the llm_wiki image's own HEALTHCHECK directive.
+    restart: unless-stopped
+
+volumes:
+  kinward-llm-wiki-data:

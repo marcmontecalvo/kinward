@@ -10,6 +10,39 @@ Selective migration is underway. The repository now contains the authoritative p
 
 Kinward's own standalone frontend has been retired in favor of a Home Assistant-native application shell: Home Assistant owns dashboards, responsive rendering, and voice, and Kinward exposes household intelligence through the [`custom_components/kinward`](custom_components/kinward/README.md) integration. See [the HA-native reset](_bmad-output/implementation-artifacts/ha-native-reset-2026-07-15.md) and [migration status](docs/pivot/migration-status.md) for the final-gate disposition of each subsystem.
 
+## Automated setup
+
+The fastest path to a running household, on a host that already has Home Assistant elsewhere and
+just needs Docker:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/marcmontecalvo/kinward/main/scripts/get-kinward.sh | bash
+```
+
+This installs Docker if it is missing (via Docker's own `get-docker.sh`), clones this repository,
+and hands off to an interactive wizard that:
+
+- lets you pick which optional peers to install alongside Kinward - [Honcho](https://github.com/plastic-labs/honcho)
+  (conversational memory) and [LLM-Wiki](https://github.com/marcmontecalvo/llm_wiki) (curated
+  household knowledge) are both selected by default, along with their own prerequisites (Postgres
+  with pgvector, Redis); a Home Assistant dev/test container is offered but off by default, since
+  most households already run HA elsewhere;
+- builds and starts everything with `docker compose`;
+- walks you through household setup (name, fallback assistant) and calls the bootstrap API for you;
+- mints a Home Assistant integration token and prints the exact next steps to add
+  `custom_components/kinward` to your existing Home Assistant instance.
+
+Already have the repository checked out? Run the wizard directly instead:
+
+```bash
+make setup
+# or: bash scripts/kinward-setup.sh --non-interactive --household-name="The Smiths" \
+#       --with-honcho --with-llm-wiki
+```
+
+Everything below this section documents what the wizard automates, for manual setups, CI, and
+debugging.
+
 ## Product principles
 
 - One private deployment serves one household.
@@ -89,6 +122,9 @@ and reason values, never provider payloads, credentials, database URLs, or priva
 
 ### Establish the household
 
+`scripts/kinward-setup.sh` (see "Automated setup" above) does everything in this section for you,
+interactively. What follows is the manual/scripted equivalent.
+
 Household setup is deliberately unavailable unless the operator supplies a random one-time setup
 authorization. Generate it locally, keep it out of shell history and files, and supply it through a
 secret-aware process environment when starting the clean deployment. For example, a POSIX shell can
@@ -147,8 +183,23 @@ operator environment or a secret-management wrapper before opting in:
 docker compose --profile postgres up postgres
 ```
 
-No Redis service or dependency exists. Model, memory, knowledge, calendar, Home Assistant,
-observability, and development peers are also absent from the default topology.
+No Redis, memory, knowledge, calendar, Home Assistant, or observability service exists in the
+default topology. Model, memory, and knowledge peers are opt-in adapter profiles like PostgreSQL:
+
+```bash
+docker compose -f compose.yaml -f compose.honcho.yaml --profile honcho up --build
+docker compose -f compose.yaml -f compose.llmwiki.yaml --profile llm-wiki up --build
+```
+
+Both build from source (`./vendor/honcho`, `./vendor/llm_wiki`) rather than a published image, so a
+checkout of each must exist first; `scripts/kinward-setup.sh` (see "Automated setup" above) handles
+cloning them, generating their secrets, and pointing Kinward's provider settings at them. Doing this
+by hand means: `git clone` each repo into `vendor/`, set `KINWARD_HONCHO_POSTGRES_PASSWORD` and one of
+`KINWARD_HONCHO_LLM_OPENAI_API_KEY`/`KINWARD_HONCHO_LLM_ANTHROPIC_API_KEY`/`KINWARD_HONCHO_LLM_GEMINI_API_KEY`
+for Honcho (it will not start without one) and `KINWARD_LLM_WIKI_UI_PASSWORD` for LLM-Wiki, then set
+`memoryBackend`/`honchoUrl`
+and `knowledgeBackend`/`llmWikiUrl` via `PATCH /api/v1/integration/settings/providers` (or the
+Kinward integration's Options flow in Home Assistant) once they're healthy.
 
 Run the reproducible Milestone A deployment gate with `make smoke`. The script owns synthetic,
 project-scoped containers and volumes, validates migration failure gating, idempotency, restart
