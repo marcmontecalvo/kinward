@@ -66,6 +66,16 @@ BOOTSTRAP_RECORD_LIFECYCLES: dict[str, RecordLifecycle] = {
         "quarantine",
         "delete with household; may reappear from Home Assistant sync if the condition still exists",
     ),
+    "external_account": RecordLifecycle(
+        "private-person",
+        True,
+        False,
+        "quarantine",
+        "delete with owner; encrypted tokens are re-validated (or reauthorization is requested) on restore",
+    ),
+    "oauth_connect_state": RecordLifecycle(
+        "system-operational", False, False, "regenerate", "delete after consumption or expiry"
+    ),
 }
 
 # Maps each persisted SQLAlchemy table (kinward.persistence.models) to the
@@ -94,6 +104,8 @@ TABLE_LIFECYCLE_KEYS: dict[str, tuple[str, ...]] = {
     "calendar_entities": ("calendar_entity",),
     "calendar_event_observations": ("calendar_event_observation",),
     "attention_items": ("attention_item",),
+    "external_accounts": ("external_account",),
+    "oauth_connect_states": ("oauth_connect_state",),
 }
 
 # Persisted tables with no lifecycle entry yet. A table lands here only with an

@@ -15,6 +15,8 @@ from kinward.api import (
     BriefingStatus,
     CalendarEntitiesFailure,
     CalendarEntity,
+    ConnectedAccount,
+    ConnectedAccountsFailure,
     ContextFailure,
     ContextSuccess,
     NextEventStatus,
@@ -50,6 +52,7 @@ from kinward.api import (
     classify_attention_item_action_response,
     classify_attention_items_response,
     classify_calendar_entities_response,
+    classify_connected_accounts_response,
     classify_context_response,
     classify_delete_assistant_response,
     classify_list_assistants_response,
@@ -916,3 +919,67 @@ def test_classify_persona_import_response_malformed_is_a_failure() -> None:
 def test_classify_persona_import_response_error_status_is_a_failure() -> None:
     result = classify_persona_import_response(409, {"detail": {"code": "household_not_configured"}})
     assert result == PersonaImportFailure(error="household_not_configured")
+
+
+def _connected_account_payload(**overrides: object) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "id": "account-1",
+        "provider": "google",
+        "providerAccountEmail": "marc@example.com",
+        "status": "connected",
+        "ownerPersonId": "person-1",
+        "ownerDisplayName": "Marc",
+        "lastSyncedAt": "2026-07-19T12:00:00+00:00",
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_classify_connected_accounts_response_success() -> None:
+    result = classify_connected_accounts_response(200, [_connected_account_payload()])
+    assert result == [
+        ConnectedAccount(
+            id="account-1",
+            provider="google",
+            provider_account_email="marc@example.com",
+            status="connected",
+            owner_person_id="person-1",
+            owner_display_name="Marc",
+            last_synced_at="2026-07-19T12:00:00+00:00",
+        )
+    ]
+
+
+def test_classify_connected_accounts_response_null_last_synced_at() -> None:
+    result = classify_connected_accounts_response(200, [_connected_account_payload(lastSyncedAt=None)])
+    assert result == [
+        ConnectedAccount(
+            id="account-1",
+            provider="google",
+            provider_account_email="marc@example.com",
+            status="connected",
+            owner_person_id="person-1",
+            owner_display_name="Marc",
+            last_synced_at=None,
+        )
+    ]
+
+
+def test_classify_connected_accounts_response_empty_list() -> None:
+    assert classify_connected_accounts_response(200, []) == []
+
+
+def test_classify_connected_accounts_response_malformed_item_is_unknown() -> None:
+    assert classify_connected_accounts_response(200, [{"id": "account-1"}]) == ConnectedAccountsFailure(
+        "unknown"
+    )
+
+
+def test_classify_connected_accounts_response_invalid_auth() -> None:
+    assert classify_connected_accounts_response(401, []) == ConnectedAccountsFailure("invalid_auth")
+
+
+def test_classify_connected_accounts_response_household_not_configured() -> None:
+    assert classify_connected_accounts_response(409, []) == ConnectedAccountsFailure(
+        "household_not_configured"
+    )

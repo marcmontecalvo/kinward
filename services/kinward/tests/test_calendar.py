@@ -3,9 +3,11 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 import httpx
+from cryptography.fernet import Fernet
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+import kinward.application.calendar as calendar_module
 from kinward.application.calendar import (
     AttentionItemNotFound,
     acknowledge_attention_item,
@@ -18,12 +20,14 @@ from kinward.application.calendar import (
     sync_household_calendars,
 )
 from kinward.application.conversation import Unmapped
+from kinward.config import Settings
 from kinward.domain.attention_item import InvalidTransition
 from kinward.integrations.home_assistant import HomeAssistantClient
 from kinward.persistence.models import (
     AttentionItemRecord,
     Base,
     CalendarEventObservationRecord,
+    ExternalAccountRecord,
     HouseholdRecord,
     PersonRecord,
 )
@@ -475,3 +479,98 @@ async def test_notification_dedup_only_flags_active_items_not_yet_notified() -> 
 
         pending_after_change = await list_items_needing_notification(session, household_id=household.id)
         assert [row.id for row in pending_after_change] == [item.id]
+
+
+async def test_connected_external_account_events_sync_alongside_ha_calendars(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Epic 5 v1 roadmap item 1: a connected Google/Microsoft account's events flow
+    through the exact same detection/attention pipeline as HA calendar entities, keyed
+    by the synthetic ``"{provider}:{account_id}"`` entity_id - no HA client involvement,
+    no ``CalendarEntityRecord`` opt-in row needed (connecting the account itself is the
+    opt-in). ``fetch_external_account_events`` (the token-refresh/HTTP boundary) is
+    monkeypatched here so this test stays about the wiring, not OAuth mechanics -
+    ``test_accounts.py`` covers that boundary directly.
+    """
+    factory = await _factory()
+    async with factory() as session:
+        household, person = await _seed(session)
+        account = ExternalAccountRecord(
+            household_id=household.id,
+            owner_person_id=person.id,
+            provider="google",
+            provider_account_email="marc@example.com",
+            scopes=[],
+            access_token_encrypted="unused-in-this-test",
+            refresh_token_encrypted=None,
+            token_expires_at=NOW + timedelta(hours=1),
+            status="connected",
+        )
+        session.add(account)
+        await session.flush()
+        account_id = account.id
+
+        async def fake_fetch_external_account_events(session, *, account, start, end, settings):  # type: ignore[no-untyped-def]
+            return [
+                _event(
+                    uid="g1",
+                    summary="Standup",
+                    start=NOW + timedelta(days=1),
+                    end=NOW + timedelta(days=1, hours=1),
+                )
+            ]
+
+        monkeypatch.setattr(
+            calendar_module, "fetch_external_account_events", fake_fetch_external_account_events
+        )
+
+        settings = Settings(
+            environment="test",
+            database_url="sqlite+aiosqlite:///:memory:",
+            account_token_encryption_key=Fernet.generate_key().decode(),
+        )
+        client = _FakeCalendarClient({})
+        result = await sync_household_calendars(
+            session, household_id=household.id, ha_client=client, settings=settings, now=NOW
+        )
+        await session.commit()
+
+        assert result.entities_synced == 1
+        assert result.events_observed == 1
+        observations = list(await session.scalars(select(CalendarEventObservationRecord)))
+        assert len(observations) == 1
+        assert observations[0].entity_id == f"google:{account_id}"
+
+        refreshed = await session.get(ExternalAccountRecord, account_id)
+        assert refreshed is not None
+        assert refreshed.last_synced_at == NOW
+
+
+async def test_omitting_settings_skips_external_accounts() -> None:
+    """A deployment with no external accounts configured (most tests, most
+    deployments) never even queries ``ExternalAccountRecord`` - ``settings`` is
+    optional precisely so callers don't have to thread one through for this."""
+    factory = await _factory()
+    async with factory() as session:
+        household, person = await _seed(session)
+        session.add(
+            ExternalAccountRecord(
+                household_id=household.id,
+                owner_person_id=person.id,
+                provider="google",
+                provider_account_email="marc@example.com",
+                scopes=[],
+                access_token_encrypted="unused-in-this-test",
+                token_expires_at=NOW + timedelta(hours=1),
+                status="connected",
+            )
+        )
+        await session.flush()
+
+        client = _FakeCalendarClient({})
+        result = await sync_household_calendars(
+            session, household_id=household.id, ha_client=client, now=NOW
+        )
+        await session.commit()
+
+        assert result.entities_synced == 0
+        observations = list(await session.scalars(select(CalendarEventObservationRecord)))
+        assert observations == []

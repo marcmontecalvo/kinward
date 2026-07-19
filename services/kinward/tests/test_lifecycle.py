@@ -30,6 +30,8 @@ def test_every_bootstrap_record_has_explicit_lifecycle_metadata() -> None:
         "calendar_entity",
         "calendar_event_observation",
         "attention_item",
+        "external_account",
+        "oauth_connect_state",
     }
     for lifecycle in BOOTSTRAP_RECORD_LIFECYCLES.values():
         assert lifecycle.classification

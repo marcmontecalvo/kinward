@@ -216,6 +216,47 @@ and one transaction; the single-household SQL model remains authoritative; and o
 startup. No legacy tenant, entitlement, control-plane, support-access, or routine behavior is
 carried into this deployment foundation.
 
+### Connect Google/Microsoft calendar accounts
+
+Off-script by product decision: this is the one Kinward-owned webpage in the system (everywhere
+else, Home Assistant's own core cards are the UI). Connecting an account requires a real browser
+redirect to Google's or Microsoft's consent screen and back, which no Lovelace card or
+`kinward.*` service call can do, so it is served directly by the `api` container at
+`{KINWARD_OAUTH_REDIRECT_BASE_URL}/setup/accounts`.
+
+Both providers are entirely optional and independently gated - a household with neither configured
+sees no change. To enable one:
+
+1. Register an OAuth app with the provider and add
+   `{KINWARD_OAUTH_REDIRECT_BASE_URL}/api/v1/setup/accounts/{google|microsoft}/callback` as an
+   allowed redirect URI:
+   - Google: [Google Cloud Console](https://console.cloud.google.com/apis/credentials) → OAuth
+     client ID (Web application), with the Calendar API enabled.
+   - Microsoft: [Azure App registrations](https://portal.azure.com) → new registration, with a
+     `Calendars.Read`/`offline_access`/`User.Read` delegated permission grant.
+2. Set `KINWARD_GOOGLE_CLIENT_ID`/`KINWARD_GOOGLE_CLIENT_SECRET` and/or
+   `KINWARD_MICROSOFT_CLIENT_ID`/`KINWARD_MICROSOFT_CLIENT_SECRET`, plus
+   `KINWARD_OAUTH_REDIRECT_BASE_URL` (the externally reachable URL Kinward itself is served at, no
+   trailing slash).
+3. Generate and set `KINWARD_ACCOUNT_TOKEN_ENCRYPTION_KEY` (stored tokens are Fernet-encrypted at
+   rest, distinct from any HA or setup secret):
+   ```bash
+   python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+   ```
+4. Generate and set `KINWARD_ACCOUNTS_SETUP_TOKEN` (a long-lived shared secret, at least 24
+   characters - unlike `KINWARD_SETUP_AUTHORIZATION` this one is not single-use and is not removed
+   after use; it gates the setup page itself).
+5. Restart `api`, then visit `{KINWARD_OAUTH_REDIRECT_BASE_URL}/setup/accounts`, enter the setup
+   token, and connect an account per household member.
+
+Once connected, an account's events flow through the exact same detection/attention/briefing
+pipeline Epic 5's Home Assistant calendars already use (`sensor.kinward_attention`, the Briefings
+Card) - no separate surface. `sensor.kinward_connected_accounts` reports connection status
+(including when a token needs reauthorization) and carries the setup page's URL as an attribute, so
+it's discoverable from Home Assistant without leaving it. Disconnecting removes the stored
+credentials immediately (best-effort revoked with the provider for Google) and stops that
+account's events from syncing on the next pass.
+
 ## Home Assistant development
 
 A pinned Home Assistant 2026.7.2 development instance is available under the `ha` compose profile. It

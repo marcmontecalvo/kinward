@@ -13,6 +13,8 @@ from .api import (
     AssistantIdentity,
     AttentionItem,
     AttentionItemsFailure,
+    ConnectedAccount,
+    ConnectedAccountsFailure,
     HaPerson,
     KinwardApiClient,
     PendingAction,
@@ -50,6 +52,7 @@ class KinwardDataUpdateCoordinator(DataUpdateCoordinator[SummarySuccess]):
         self.pending_actions: list[PendingAction] = []
         self.attention_items: list[AttentionItem] = []
         self.assistant_identities: list[AssistantIdentity] = []
+        self.connected_accounts: list[ConnectedAccount] = []
 
     @property
     def client(self) -> KinwardApiClient:
@@ -110,12 +113,20 @@ class KinwardDataUpdateCoordinator(DataUpdateCoordinator[SummarySuccess]):
             return
         self.assistant_identities = result
 
+    async def _async_fetch_connected_accounts(self) -> None:
+        result = await self._client.async_fetch_connected_accounts()
+        if isinstance(result, ConnectedAccountsFailure):
+            _LOGGER.warning("Kinward connected accounts fetch failed: %s", result.error)
+            return
+        self.connected_accounts = result
+
     async def _async_update_data(self) -> SummarySuccess:
         await self._async_sync_people()
         await self._async_fetch_pets()
         await self._async_fetch_pending_actions()
         await self._async_fetch_attention_items()
         await self._async_fetch_assistant_identities()
+        await self._async_fetch_connected_accounts()
         result = await self._client.async_fetch_summary()
         if isinstance(result, SummaryFailure):
             if result.error == "invalid_auth":

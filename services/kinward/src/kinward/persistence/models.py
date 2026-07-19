@@ -596,3 +596,76 @@ class BootstrapAttemptRecord(Base):
     record_version: Mapped[int] = mapped_column(default=1, nullable=False)
     classification: Mapped[str] = mapped_column(String(32), default="system-operational", nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
+
+
+class ExternalAccountRecord(Base):
+    """A person-owned direct Google/Microsoft account connection (Epic 5 v1 roadmap
+    item 1/2: "direct Google Calendar / Microsoft Outlook connections," "person-owned
+    calendar credentials"). Off-script per product owner - the household-shared,
+    HA-``calendar.*``-only v0 model (``CalendarEntityRecord``) is left untouched;
+    this is a parallel, additive event source merged into the same sync pass
+    (``application/calendar.py::sync_household_calendars``) by tagging its synthetic
+    ``entity_id`` (``"{provider}:{id}"``) rather than reusing HA's schema.
+
+    Tokens are Fernet-encrypted at rest (``kinward.crypto``) keyed by
+    ``KINWARD_ACCOUNT_TOKEN_ENCRYPTION_KEY`` - this is real third-party credential
+    material, unlike the local self-hosted URLs ``ProviderSettingsRecord`` stores.
+    ``classification`` is ``private-person`` (not ``household-shared``, unlike
+    ``CalendarEntityRecord``): each row is one person's own account, connected by
+    that person, per Story 5.1's "calendar credentials are person-owned."
+    """
+
+    __tablename__ = "external_accounts"
+    __table_args__ = (
+        UniqueConstraint(
+            "household_id", "provider", "owner_person_id", name="uq_external_accounts_owner"
+        ),
+        CheckConstraint("provider IN ('google', 'microsoft')", name="ck_external_accounts_provider"),
+        CheckConstraint(
+            "status IN ('connected', 'reauthorization_required', 'disconnected')",
+            name="ck_external_accounts_status",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    household_id: Mapped[str] = mapped_column(ForeignKey("households.id", ondelete="CASCADE"), nullable=False)
+    owner_person_id: Mapped[str] = mapped_column(ForeignKey("people.id", ondelete="CASCADE"), nullable=False)
+    provider: Mapped[str] = mapped_column(String(16), nullable=False)
+    provider_account_email: Mapped[str] = mapped_column(String(255), nullable=False)
+    scopes: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    access_token_encrypted: Mapped[str] = mapped_column(Text, nullable=False)
+    refresh_token_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    token_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    status: Mapped[str] = mapped_column(String(24), default="connected", nullable=False)
+    last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_sync_error: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    record_version: Mapped[int] = mapped_column(default=1, nullable=False)
+    classification: Mapped[str] = mapped_column(String(32), default="private-person", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now, nullable=False)
+
+
+class OAuthConnectStateRecord(Base):
+    """A single-use CSRF/PKCE handshake for one in-flight account-connect attempt
+    (``application/accounts.py::build_authorize_url``/``complete_oauth_callback``).
+
+    Mirrors ``SetupCapabilityRecord``'s hash/expires_at/consumed_at shape: the
+    ``state`` query parameter Google/Microsoft echo back is looked up by its hash,
+    never stored plaintext, and can only be consumed once. ``code_verifier`` is kept
+    server-side (not round-tripped through the browser) since this is Kinward's own
+    confidential backend completing the PKCE exchange, not a public client.
+    """
+
+    __tablename__ = "oauth_connect_states"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    household_id: Mapped[str] = mapped_column(ForeignKey("households.id", ondelete="CASCADE"), nullable=False)
+    person_id: Mapped[str] = mapped_column(ForeignKey("people.id", ondelete="CASCADE"), nullable=False)
+    provider: Mapped[str] = mapped_column(String(16), nullable=False)
+    state_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    code_verifier: Mapped[str] = mapped_column(String(128), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    record_version: Mapped[int] = mapped_column(default=1, nullable=False)
+    classification: Mapped[str] = mapped_column(String(32), default="system-operational", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
