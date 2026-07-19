@@ -15,6 +15,13 @@
         "data": {
           "token": "Integration token"
         }
+      },
+      "bootstrap": {
+        "title": "Set up your household",
+        "description": "This Kinward backend has no household yet. It will be created as \"{home_name}\" - Home Assistant's own Home Name (Settings -> System -> General) - so the two never drift apart. Enter the one-time setup authorization printed by scripts/kinward-setup.sh to continue.",
+        "data": {
+          "setup_authorization": "Setup authorization"
+        }
       }
     },
     "error": {
@@ -22,6 +29,8 @@
       "invalid_auth": "The integration token was rejected. Check the token and try again.",
       "incompatible_api": "This Kinward backend reports an API contract version this integration does not support.",
       "household_not_configured": "This Kinward backend has no household set up yet. Complete household setup first.",
+      "invalid_authorization": "That setup authorization was rejected or has expired. Re-run scripts/kinward-setup.sh's household step, or check the value it printed.",
+      "already_configured": "A household was just created on this backend by someone else. Reload this integration and reconnect with its token.",
       "unknown": "An unexpected error occurred."
     },
     "abort": {

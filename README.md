@@ -29,16 +29,19 @@ and hands off to an interactive wizard that:
   most households already run HA elsewhere;
 - pulls published images and starts everything with `docker compose` - no local build, no vendored
   source checkouts for Kinward, Honcho, or LLM-Wiki;
-- walks you through household setup (name, fallback assistant) and calls the bootstrap API for you;
 - mints a Home Assistant integration token and prints the exact next steps to add
   `custom_components/kinward` to your existing Home Assistant instance.
+
+Household setup itself happens from inside that integration's own setup step in Home Assistant
+(Settings -> Devices & Services -> Add Integration -> Kinward): it creates the household using Home
+Assistant's own Home Name (Settings -> System -> General), gated by a one-time setup authorization
+the wizard prints. This keeps the household's name and the home it manages from ever drifting apart.
 
 Already have the repository checked out? Run the wizard directly instead:
 
 ```bash
 make setup
-# or: bash scripts/kinward-setup.sh --non-interactive --household-name="The Smiths" \
-#       --with-honcho --with-llm-wiki
+# or: bash scripts/kinward-setup.sh --non-interactive --with-honcho --with-llm-wiki
 ```
 
 Everything below this section documents what the wizard automates, for manual setups, CI, and
@@ -125,8 +128,12 @@ and reason values, never provider payloads, credentials, database URLs, or priva
 
 ### Establish the household
 
-`scripts/kinward-setup.sh` (see "Automated setup" above) does everything in this section for you,
-interactively. What follows is the manual/scripted equivalent.
+The normal path is the Kinward integration's own setup step in Home Assistant (Settings -> Devices
+& Services -> Add Integration -> Kinward): once it sees a backend with no household yet, it asks for
+the one-time setup authorization `scripts/kinward-setup.sh` prints (see "Automated setup" above) and
+creates the household using Home Assistant's own Home Name (Settings -> System -> General). What
+follows is the manual/scripted equivalent - useful for automating outside Home Assistant, or for a
+household name that should differ from HA's Home Name.
 
 Household setup is deliberately unavailable unless the operator supplies a random one-time setup
 authorization. Generate it locally, keep it out of shell history and files, and supply it through a
@@ -161,9 +168,10 @@ governed separately by privacy classification (see epics.md Story 3.3). Finer-gr
 (e.g. a non-admin "manager" role) may be built later if the household actually needs them.
 
 Setup uses an explicit CSRF token and an idempotency identity. The authorization is stored only as a
-hash and becomes terminally unusable after commit. Remove the environment variable and restart `api`
-after setup. `/api/v1/setup/status` reports only whether setup is available or complete; it never
-returns a reusable setup authorization.
+hash and becomes terminally unusable after commit - a household, once created, permanently blocks any
+further bootstrap attempt regardless of whether the environment variable is still set, so removing it
+afterward is optional hardening rather than a required step. `/api/v1/setup/status` reports only
+whether setup is available or complete; it never returns a reusable setup authorization.
 
 Restart the long-running processes without rerunning the migration service:
 

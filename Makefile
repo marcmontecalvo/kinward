@@ -44,7 +44,8 @@ smoke-peers:
 	bash scripts/optional-peers-smoke.sh
 
 # Interactive first-run wizard: choose Honcho/LLM-Wiki/HA-dev, bring the stack
-# up, bootstrap the household, and mint a Home Assistant integration token.
+# up, and mint a Home Assistant integration token. The household itself is
+# bootstrapped later, from the Kinward integration's own setup step in HA.
 setup:
 	bash scripts/kinward-setup.sh
 
