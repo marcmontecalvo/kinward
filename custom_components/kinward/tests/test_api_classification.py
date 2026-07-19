@@ -12,6 +12,8 @@ from kinward.api import (
     AttentionItem,
     AttentionItemsFailure,
     AttentionStatus,
+    BootstrapFailure,
+    BootstrapSuccess,
     BriefingStatus,
     CalendarEntitiesFailure,
     CalendarEntity,
@@ -51,6 +53,7 @@ from kinward.api import (
     classify_assistant_policy_response,
     classify_attention_item_action_response,
     classify_attention_items_response,
+    classify_bootstrap_response,
     classify_calendar_entities_response,
     classify_connected_accounts_response,
     classify_context_response,
@@ -118,6 +121,31 @@ def test_classify_context_response_household_not_configured() -> None:
 def test_classify_context_response_unexpected_status_is_unknown() -> None:
     assert classify_context_response(500, {}) == ContextFailure("unknown")
     assert classify_context_response(200, "not-a-dict") == ContextFailure("unknown")
+
+
+def test_classify_bootstrap_response_success() -> None:
+    payload = {"household_id": "household-example", "fallback_assistant_id": "assistant-example"}
+    assert classify_bootstrap_response(201, payload) == BootstrapSuccess(
+        household_id="household-example", fallback_assistant_id="assistant-example"
+    )
+
+
+def test_classify_bootstrap_response_malformed_success_payload() -> None:
+    result = classify_bootstrap_response(201, {"household_id": "only-one-field"})
+    assert result == BootstrapFailure("unknown")
+
+
+def test_classify_bootstrap_response_invalid_authorization() -> None:
+    assert classify_bootstrap_response(403, {}) == BootstrapFailure("invalid_authorization")
+
+
+def test_classify_bootstrap_response_already_configured() -> None:
+    assert classify_bootstrap_response(409, {}) == BootstrapFailure("already_configured")
+
+
+def test_classify_bootstrap_response_unexpected_status_is_unknown() -> None:
+    assert classify_bootstrap_response(500, {}) == BootstrapFailure("unknown")
+    assert classify_bootstrap_response(201, "not-a-dict") == BootstrapFailure("unknown")
 
 
 def _summary_payload(**overrides: object) -> dict[str, object]:

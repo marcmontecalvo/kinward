@@ -7,6 +7,7 @@ Response classification is kept in pure functions with no ``homeassistant.*`` or
 from __future__ import annotations
 
 import asyncio
+import secrets
 from dataclasses import dataclass
 from typing import Any, Literal
 from urllib.parse import quote
@@ -37,6 +38,27 @@ class ContextFailure:
 
 
 ContextResult = ContextSuccess | ContextFailure
+
+BootstrapErrorCode = Literal[
+    "cannot_connect",
+    "invalid_authorization",
+    "already_configured",
+    "unknown",
+]
+
+
+@dataclass(frozen=True)
+class BootstrapSuccess:
+    household_id: str
+    fallback_assistant_id: str
+
+
+@dataclass(frozen=True)
+class BootstrapFailure:
+    error: BootstrapErrorCode
+
+
+BootstrapResult = BootstrapSuccess | BootstrapFailure
 
 
 @dataclass(frozen=True)
@@ -602,6 +624,20 @@ def classify_context_response(status_code: int, payload: Any) -> ContextResult:
     if status_code == 409:
         return ContextFailure("household_not_configured")
     return ContextFailure("unknown")
+
+
+def classify_bootstrap_response(status_code: int, payload: Any) -> BootstrapResult:
+    if status_code == 201 and isinstance(payload, dict):
+        household_id = payload.get("household_id")
+        fallback_assistant_id = payload.get("fallback_assistant_id")
+        if isinstance(household_id, str) and isinstance(fallback_assistant_id, str):
+            return BootstrapSuccess(household_id, fallback_assistant_id)
+        return BootstrapFailure("unknown")
+    if status_code == 403:
+        return BootstrapFailure("invalid_authorization")
+    if status_code == 409:
+        return BootstrapFailure("already_configured")
+    return BootstrapFailure("unknown")
 
 
 def _capability(payload: Any) -> CapabilityStatus:
@@ -1218,8 +1254,17 @@ class KinwardApiClient:
         """
         return self._base_url
 
-    async def _request(self, method: str, path: str, *, json_body: Any = None) -> tuple[int, Any]:
+    async def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        json_body: Any = None,
+        extra_headers: dict[str, str] | None = None,
+    ) -> tuple[int, Any]:
         headers = {"Authorization": f"Bearer {self._token}"}
+        if extra_headers:
+            headers.update(extra_headers)
         async with asyncio.timeout(REQUEST_TIMEOUT_SECONDS):
             async with self._session.request(
                 method, f"{self._base_url}{path}", headers=headers, json=json_body
@@ -1237,6 +1282,37 @@ class KinwardApiClient:
         except (TimeoutError, aiohttp.ClientError):
             return ContextFailure("cannot_connect")
         return classify_context_response(status, payload)
+
+    async def async_bootstrap_household(
+        self, *, household_name: str, fallback_assistant_name: str, setup_authorization: str
+    ) -> BootstrapResult:
+        """Create this deployment's one household (Epic 1's setup wizard, now driven from
+
+        the config flow itself so the household name can come straight from
+        ``hass.config.location_name`` rather than being typed twice). ``setup_authorization``
+        is the one-time secret printed by ``scripts/kinward-setup.sh``.
+        """
+        csrf_token = secrets.token_hex(16)
+        body = {
+            "household_name": household_name,
+            "fallback_assistant_name": fallback_assistant_name,
+            "pets": [],
+            "csrf_token": csrf_token,
+        }
+        try:
+            status, payload = await self._request(
+                "POST",
+                "/api/v1/setup/household",
+                json_body=body,
+                extra_headers={
+                    "X-Setup-Authorization": setup_authorization,
+                    "X-CSRF-Token": csrf_token,
+                    "Idempotency-Key": f"ha-config-flow-{secrets.token_hex(8)}",
+                },
+            )
+        except (TimeoutError, aiohttp.ClientError):
+            return BootstrapFailure("cannot_connect")
+        return classify_bootstrap_response(status, payload)
 
     async def async_fetch_summary(self) -> SummaryResult:
         try:

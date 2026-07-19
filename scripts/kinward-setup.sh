@@ -1,14 +1,20 @@
 #!/usr/bin/env bash
 # Interactive first-run wizard: choose optional peers (Honcho, LLM-Wiki, an HA
-# dev/test container), bring the stack up, bootstrap the household, and mint a
-# Home Assistant integration token. Run from a checkout of this repository:
+# dev/test container), bring the stack up, and mint a Home Assistant
+# integration token. Run from a checkout of this repository:
 #
 #   scripts/kinward-setup.sh
 #
 # Or non-interactively:
 #
-#   scripts/kinward-setup.sh --non-interactive --household-name="The Smiths" \
-#     --with-honcho --with-llm-wiki
+#   scripts/kinward-setup.sh --non-interactive --with-honcho --with-llm-wiki
+#
+# The household itself is created later, from inside the Kinward integration's
+# own setup step in Home Assistant (Settings -> Devices & Services -> Add
+# Integration -> Kinward) - it reads Home Assistant's own Home Name
+# (Settings -> System -> General) so the household is never named something
+# different from the home it's actually managing. This script prints the
+# one-time setup authorization that step asks for.
 #
 set -Eeuo pipefail
 
@@ -40,8 +46,6 @@ Usage: scripts/kinward-setup.sh [options]
   --with-ha-dev                        Also start a local HA dev/test container.
                                         Skip this if you already run Home Assistant
                                         elsewhere, which is the common case.
-  --household-name=NAME                Household name (skips the prompt).
-  --fallback-assistant-name=NAME       Shared fallback assistant name (default: Kinward).
   --non-interactive                    Never prompt; fail if a required value is missing.
   -h, --help                           Show this help.
 USAGE
@@ -50,8 +54,6 @@ USAGE
 WITH_HONCHO=""
 WITH_LLM_WIKI=""
 WITH_HA="no"
-HOUSEHOLD_NAME=""
-FALLBACK_NAME=""
 NONINTERACTIVE=false
 
 for arg in "$@"; do
@@ -61,8 +63,6 @@ for arg in "$@"; do
     --with-llm-wiki) WITH_LLM_WIKI=yes ;;
     --without-llm-wiki) WITH_LLM_WIKI=no ;;
     --with-ha-dev) WITH_HA=yes ;;
-    --household-name=*) HOUSEHOLD_NAME="${arg#*=}" ;;
-    --fallback-assistant-name=*) FALLBACK_NAME="${arg#*=}" ;;
     --non-interactive) NONINTERACTIVE=true ;;
     -h|--help) usage; exit 0 ;;
     *) fail "unknown option '${arg}' (see --help)" ;;
@@ -285,7 +285,7 @@ if [[ "${WITH_HONCHO}" == yes ]]; then
       else
         chat_base_url="" chat_model="" embedding_base_url="" embedding_model="" embedding_dim=""
         if [[ "${NONINTERACTIVE}" == true ]]; then
-          fail "no local Honcho LLM is configured yet; pass --household-name etc. and run interactively once first, or edit .env directly (KINWARD_HONCHO_CHAT_BASE_URL and friends)"
+          fail "no local Honcho LLM is configured yet; run interactively once first, or edit .env directly (KINWARD_HONCHO_CHAT_BASE_URL and friends)"
         fi
 
         chat_base_url="$(ask "Base URL for chat/inference (OpenAI-compatible, e.g. http://10.0.0.5:8000/v1)")"
@@ -483,9 +483,18 @@ run_honcho_migration() {
   fail "honcho-configure-embeddings failed - check: docker compose logs honcho-configure-embeddings (a common cause is the embedding dimension changing on a deployment that already has embeddings written; see the warning above, or wipe the honcho volumes with 'docker compose ... down --volumes' for a clean local dev reset)"
 }
 
-log "Generating a one-time household setup authorization..."
-export KINWARD_SETUP_AUTHORIZATION
-KINWARD_SETUP_AUTHORIZATION="$(random_secret 24)"
+# Persisted (not just exported) so it survives past this script's process -
+# the Kinward integration's own config flow in Home Assistant is what actually
+# spends it, and that can happen anywhere from seconds to hours later. It's
+# single-use and time-limited (KINWARD_SETUP_AUTHORIZATION_TTL_SECONDS, default
+# 1 hour) regardless of how long it sits here unused.
+setup_authorization="$(get_env KINWARD_SETUP_AUTHORIZATION)"
+if [[ -z "${setup_authorization}" ]]; then
+  log "Generating a one-time household setup authorization..."
+  setup_authorization="$(random_secret 24)"
+  set_env KINWARD_SETUP_AUTHORIZATION "${setup_authorization}"
+fi
+export KINWARD_SETUP_AUTHORIZATION="${setup_authorization}"
 
 extras=""
 [[ "${WITH_HONCHO}" == yes ]] && extras+=" + Honcho"
@@ -503,61 +512,8 @@ if [[ "${WITH_HONCHO}" == yes ]]; then
 fi
 [[ "${WITH_HA}" == yes ]] && wait_for_healthy homeassistant 90
 
-# ---------------------------------------------------------------------------
-# Household bootstrap
-# ---------------------------------------------------------------------------
-
 setup_status="$(curl -fsS "${BASE_URL}/api/v1/setup/status")" || fail "the Kinward API is unreachable at ${BASE_URL}"
 already_configured="$(python3 -c "import json,sys; print(json.loads(sys.argv[1])['configured'])" "${setup_status}")"
-
-if [[ "${already_configured}" == "True" ]]; then
-  log "A household is already configured on this deployment; skipping bootstrap."
-else
-  log "Let's set up your household."
-  if [[ -z "${HOUSEHOLD_NAME}" ]]; then
-    if [[ "${NONINTERACTIVE}" == true ]]; then
-      fail "--household-name is required in non-interactive mode"
-    fi
-    HOUSEHOLD_NAME="$(ask "Household name" "")"
-  fi
-  [[ -n "${HOUSEHOLD_NAME}" ]] || fail "a household name is required"
-  if [[ -z "${FALLBACK_NAME}" ]]; then
-    if [[ "${NONINTERACTIVE}" == true ]]; then
-      FALLBACK_NAME="Kinward"
-    else
-      FALLBACK_NAME="$(ask "Shared fallback assistant name" "Kinward")"
-    fi
-  fi
-
-  csrf_token="$(random_secret 24)"
-  idempotency_key="install-$(random_secret 8)"
-  bootstrap_body="$(python3 - "${HOUSEHOLD_NAME}" "${FALLBACK_NAME}" "${csrf_token}" <<'PY'
-import json, sys
-household_name, fallback_name, csrf_token = sys.argv[1:4]
-print(json.dumps({
-    "household_name": household_name,
-    "fallback_assistant_name": fallback_name,
-    "pets": [],
-    "csrf_token": csrf_token,
-}))
-PY
-)"
-
-  bootstrap_response="$(curl -fsS -X POST "${BASE_URL}/api/v1/setup/household" \
-    -H "X-Setup-Authorization: ${KINWARD_SETUP_AUTHORIZATION}" \
-    -H "Idempotency-Key: ${idempotency_key}" \
-    -H "X-CSRF-Token: ${csrf_token}" \
-    -H "Content-Type: application/json" \
-    -d "${bootstrap_body}")" || fail "household bootstrap failed - check: docker compose logs api"
-  fallback_assistant_id="$(python3 -c "import json,sys; print(json.loads(sys.argv[1])['fallback_assistant_id'])" "${bootstrap_response}")"
-  log "Household '${HOUSEHOLD_NAME}' created (fallback assistant: ${FALLBACK_NAME}, id ${fallback_assistant_id})."
-fi
-
-log "Clearing the one-time setup authorization from the running containers..."
-unset KINWARD_SETUP_AUTHORIZATION
-docker compose --env-file "${ENV_FILE}" "${COMPOSE_FILES[@]}" "${COMPOSE_PROFILES[@]}" up -d --no-build api worker
-wait_for_healthy api
-wait_for_healthy worker
 
 # ---------------------------------------------------------------------------
 # Integration token + provider wiring
@@ -611,6 +567,18 @@ fi
 # Summary
 # ---------------------------------------------------------------------------
 
+household_step=""
+if [[ "${already_configured}" != "True" ]]; then
+  household_step="
+  4. This backend has no household yet. Kinward's setup step will ask for a
+     one-time setup authorization to create it - it's named directly from
+     that Home Assistant's own Home Name (Settings -> System -> General), so
+     nothing further to type:
+       Setup authorization: ${setup_authorization}
+     (single-use; the backend starts a $(( $(get_env KINWARD_SETUP_AUTHORIZATION_TTL_SECONDS 3600) / 60 ))-minute clock the first time it's submitted, so it's fine to sit unused until then)
+"
+fi
+
 cat <<SUMMARY
 
 Kinward is running.
@@ -625,7 +593,7 @@ Next step - connect Home Assistant:
      (see custom_components/kinward/README.md for HACS/manual instructions).
   2. In Home Assistant: Settings -> Devices & Services -> Add Integration -> Kinward.
   3. Backend URL: ${BASE_URL}   (use a LAN-reachable host/IP if HA runs elsewhere)
-     Token: the value printed above
+     Token: the value printed above${household_step}
 SUMMARY
 
 if [[ -n "${model_provider}" && "${model_provider}" != none ]]; then

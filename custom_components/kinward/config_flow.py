@@ -12,6 +12,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from .api import (
     AssistantPolicy,
     AssistantPolicyFailure,
+    BootstrapSuccess,
     ContextFailure,
     ContextSuccess,
     KinwardApiClient,
@@ -36,6 +37,7 @@ from .const import (
     CONF_REQUIRE_ADMIN_APPROVAL_FOR_ASSISTANT_CREATION,
     CONF_RESOURCE_LABEL_ENTITY_ID,
     CONF_RESOURCE_LABEL_LABEL,
+    CONF_SETUP_AUTHORIZATION,
     CONF_TOKEN,
     DOMAIN,
     KNOWLEDGE_BACKENDS,
@@ -96,10 +98,63 @@ class KinwardConfigFlow(ConfigFlow, domain=DOMAIN):
                 )
 
             if isinstance(result, ContextFailure):
+                if result.error == "household_not_configured":
+                    self._base_url = base_url
+                    self._token = token
+                    return await self.async_step_bootstrap()
                 errors["base"] = result.error
 
         return self.async_show_form(
             step_id="user", data_schema=STEP_USER_SCHEMA, errors=errors
+        )
+
+    async def async_step_bootstrap(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """This backend has no household yet - create the one this deployment will ever
+
+        have (households.singleton_key), using Home Assistant's own "Home name"
+        (``hass.config.location_name``, Settings -> System -> General) rather than asking
+        for a second, possibly-divergent name. Gated by the one-time setup authorization
+        printed by ``scripts/kinward-setup.sh``, since anyone who can reach the backend
+        URL could otherwise claim the household.
+        """
+        errors: dict[str, str] = {}
+        home_name = self.hass.config.location_name
+
+        if user_input is not None:
+            session = async_get_clientsession(self.hass)
+            client = KinwardApiClient(session, base_url=self._base_url, token=self._token)
+            bootstrap_result = await client.async_bootstrap_household(
+                household_name=home_name,
+                fallback_assistant_name="Kinward",
+                setup_authorization=user_input[CONF_SETUP_AUTHORIZATION],
+            )
+
+            if isinstance(bootstrap_result, BootstrapSuccess):
+                result = await client.async_fetch_context()
+                if isinstance(result, ContextSuccess):
+                    await self.async_set_unique_id(result.household_id)
+                    self._abort_if_unique_id_configured()
+                    return self.async_create_entry(
+                        title=result.household_name,
+                        data={CONF_BASE_URL: self._base_url, CONF_TOKEN: self._token},
+                    )
+                errors["base"] = "unknown"
+            else:
+                errors["base"] = bootstrap_result.error
+
+        return self.async_show_form(
+            step_id="bootstrap",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_SETUP_AUTHORIZATION): selector.TextSelector(
+                        selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)
+                    ),
+                }
+            ),
+            errors=errors,
+            description_placeholders={"home_name": home_name},
         )
 
     async def async_step_reauth(

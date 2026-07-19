@@ -6,6 +6,7 @@ DOMAIN = "kinward"
 
 CONF_BASE_URL = "base_url"
 CONF_TOKEN = "token"
+CONF_SETUP_AUTHORIZATION = "setup_authorization"
 
 CONF_MODEL_PROVIDER = "model_provider"
 CONF_MODEL_BASE_URL = "model_base_url"
