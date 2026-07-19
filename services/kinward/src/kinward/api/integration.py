@@ -9,6 +9,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from kinward.application.accounts import ExternalAccountView
+from kinward.application.accounts import list_accounts as list_external_accounts
 from kinward.application.activity import (
     DEFAULT_ACTIVITY_LIMIT,
     MAX_ACTIVITY_LIMIT,
@@ -1947,3 +1949,42 @@ async def integration_dismiss_attention_item(
         raise _attention_item_invalid_transition(result)
     await session.commit()
     return AttentionItemPayload.from_record(result)
+
+
+class ConnectedAccountPayload(BaseModel):
+    """Sanitized (no tokens) view of one connected Google/Microsoft account, for the
+    Kinward HA integration's coordinator to poll (Epic 5 v1 roadmap item 1/2) - same
+    household-shared-sensor precedent as ``AttentionItemPayload``/``PeopleSensor``:
+    connection status and who owns it are fine to broadcast, the credentials are not.
+    """
+
+    id: str
+    provider: str
+    provider_account_email: str = Field(serialization_alias="providerAccountEmail")
+    status: str
+    owner_person_id: str = Field(serialization_alias="ownerPersonId")
+    owner_display_name: str = Field(serialization_alias="ownerDisplayName")
+    last_synced_at: str | None = Field(default=None, serialization_alias="lastSyncedAt")
+
+    @classmethod
+    def from_view(cls, view: ExternalAccountView) -> ConnectedAccountPayload:
+        return cls(
+            id=view.id,
+            provider=view.provider,
+            provider_account_email=view.provider_account_email,
+            status=view.status,
+            owner_person_id=view.owner_person_id,
+            owner_display_name=view.owner_display_name,
+            last_synced_at=view.last_synced_at.isoformat() if view.last_synced_at else None,
+        )
+
+
+@router.get("/accounts", response_model=list[ConnectedAccountPayload])
+async def integration_list_connected_accounts(
+    _token: IntegrationToken, session: Session
+) -> list[ConnectedAccountPayload]:
+    summary = await fetch_household_summary(session)
+    if summary is None:
+        raise _household_not_configured()
+    views = await list_external_accounts(session, household_id=summary.id)
+    return [ConnectedAccountPayload.from_view(view) for view in views]

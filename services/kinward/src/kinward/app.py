@@ -4,6 +4,8 @@ from fastapi import FastAPI, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from kinward.api.accounts_setup import page_router as accounts_setup_page_router
+from kinward.api.accounts_setup import router as accounts_setup_router
 from kinward.api.setup import router as setup_router
 from kinward.api.layouts import router as layouts_router
 from kinward.api.integration import router as integration_router
@@ -18,6 +20,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(setup_router)
     app.include_router(layouts_router)
     app.include_router(integration_router)
+    app.include_router(accounts_setup_router)
+    app.include_router(accounts_setup_page_router)
 
     @app.exception_handler(RequestValidationError)
     async def sanitized_validation_error(

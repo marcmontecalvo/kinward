@@ -1070,6 +1070,77 @@ def classify_attention_item_action_response(status_code: int, payload: Any) -> A
     return item
 
 
+@dataclass(frozen=True)
+class ConnectedAccount:
+    """One connected Google/Microsoft account (Epic 5 v1 roadmap item 1/2), sanitized
+    - no tokens ever cross this boundary, only connection status.
+    """
+
+    id: str
+    provider: str
+    provider_account_email: str
+    status: str
+    owner_person_id: str
+    owner_display_name: str
+    last_synced_at: str | None
+
+
+@dataclass(frozen=True)
+class ConnectedAccountsFailure:
+    error: ConfigFlowErrorCode
+
+
+ConnectedAccountsResult = list[ConnectedAccount] | ConnectedAccountsFailure
+
+
+def _connected_account_from(payload: Any) -> ConnectedAccount | None:
+    if not isinstance(payload, dict):
+        return None
+    account_id = payload.get("id")
+    provider = payload.get("provider")
+    email = payload.get("providerAccountEmail")
+    status = payload.get("status")
+    owner_person_id = payload.get("ownerPersonId")
+    owner_display_name = payload.get("ownerDisplayName")
+    last_synced_at = payload.get("lastSyncedAt")
+    if (
+        not isinstance(account_id, str)
+        or not isinstance(provider, str)
+        or not isinstance(email, str)
+        or not isinstance(status, str)
+        or not isinstance(owner_person_id, str)
+        or not isinstance(owner_display_name, str)
+    ):
+        return None
+    if last_synced_at is not None and not isinstance(last_synced_at, str):
+        return None
+    return ConnectedAccount(
+        id=account_id,
+        provider=provider,
+        provider_account_email=email,
+        status=status,
+        owner_person_id=owner_person_id,
+        owner_display_name=owner_display_name,
+        last_synced_at=last_synced_at,
+    )
+
+
+def classify_connected_accounts_response(status_code: int, payload: Any) -> ConnectedAccountsResult:
+    if status_code == 401:
+        return ConnectedAccountsFailure("invalid_auth")
+    if status_code == 409:
+        return ConnectedAccountsFailure("household_not_configured")
+    if status_code != 200 or not isinstance(payload, list):
+        return ConnectedAccountsFailure("unknown")
+    accounts: list[ConnectedAccount] = []
+    for account_payload in payload:
+        account = _connected_account_from(account_payload)
+        if account is None:
+            return ConnectedAccountsFailure("unknown")
+        accounts.append(account)
+    return accounts
+
+
 # Epic 7 Story 7.4: documented HA bus events for stable household intent - "purpose-specific
 # HA automation hooks" a household can build automations on top of (e.g. flash a light when
 # an approval is requested). Kept a fixed, minimal set rather than exposing every possible
@@ -1138,6 +1209,14 @@ class KinwardApiClient:
         self._session = session
         self._base_url = base_url.rstrip("/")
         self._token = token
+
+    @property
+    def base_url(self) -> str:
+        """The Kinward backend's own base URL - used to build the account-connection
+        setup page's link (``{base_url}/setup/accounts``) for the connected-accounts
+        sensor, since that page is served by the backend itself, not by HA.
+        """
+        return self._base_url
 
     async def _request(self, method: str, path: str, *, json_body: Any = None) -> tuple[int, Any]:
         headers = {"Authorization": f"Bearer {self._token}"}
@@ -1546,6 +1625,13 @@ class KinwardApiClient:
         except (TimeoutError, aiohttp.ClientError):
             return AttentionItemsFailure("cannot_connect")
         return classify_attention_items_response(status, payload)
+
+    async def async_fetch_connected_accounts(self) -> ConnectedAccountsResult:
+        try:
+            status, payload = await self._request("GET", "/api/v1/integration/accounts")
+        except (TimeoutError, aiohttp.ClientError):
+            return ConnectedAccountsFailure("cannot_connect")
+        return classify_connected_accounts_response(status, payload)
 
     async def _async_resolve_attention_item(
         self, *, ha_user_id: str, item_id: str, decision: Literal["acknowledge", "dismiss"]

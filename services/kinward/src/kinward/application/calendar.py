@@ -23,9 +23,17 @@ from kinward.domain.calendar_change_detection import (
     has_meaningful_time_change,
     is_rsvp_attention_worthy,
 )
+from kinward.application.accounts import ensure_fresh_access_token
+from kinward.config import Settings
 from kinward.domain.calendar_observation import ObservedEvent, observe_events, rsvp_needs_response
+from kinward.integrations import google_calendar, microsoft_calendar
 from kinward.integrations.home_assistant import HomeAssistantClient
-from kinward.persistence.models import AttentionItemRecord, CalendarEntityRecord, CalendarEventObservationRecord
+from kinward.persistence.models import (
+    AttentionItemRecord,
+    CalendarEntityRecord,
+    CalendarEventObservationRecord,
+    ExternalAccountRecord,
+)
 
 # How far ahead each sync pass looks for events - bounded so a household's entire
 # calendar history isn't fetched every pass, generous enough to catch RSVP/overlap
@@ -120,6 +128,52 @@ async def _enabled_entity_ids(session: AsyncSession, *, household_id: str) -> li
         )
     )
     return list(rows)
+
+
+async def _connected_external_accounts(
+    session: AsyncSession, *, household_id: str
+) -> list[ExternalAccountRecord]:
+    rows = await session.scalars(
+        select(ExternalAccountRecord).where(
+            ExternalAccountRecord.household_id == household_id,
+            ExternalAccountRecord.status == "connected",
+        )
+    )
+    return list(rows)
+
+
+def external_account_entity_id(account: ExternalAccountRecord) -> str:
+    """A stable synthetic ``entity_id`` for a connected Google/Microsoft account,
+    keyed into the exact same ``CalendarEventObservationRecord``/``AttentionItemRecord``
+    tables HA calendar entities use (Epic 5 v1 roadmap item 1's "a synced event can
+    be either home_assistant or google/microsoft"). No entity_id column changes are
+    needed - the provider prefix alone is enough to tell the two apart.
+    """
+    return f"{account.provider}:{account.id}"
+
+
+async def fetch_external_account_events(
+    session: AsyncSession,
+    *,
+    account: ExternalAccountRecord,
+    start: datetime,
+    end: datetime,
+    settings: Settings,
+) -> list[dict[str, Any]]:
+    """Fetch one connected account's raw events, already normalized into the exact
+    dict shape ``domain/calendar_observation.py::observe_event`` parses for Home
+    Assistant's own ``/api/calendars/{entity_id}`` rows - see
+    ``integrations/google_calendar.py``/``integrations/microsoft_calendar.py``'s
+    ``list_events``. Returns ``[]`` (never raises) on a missing/expired/revoked
+    token, matching HA's own "unreachable this pass" behavior; ``ensure_fresh_access_token``
+    has already flagged the account ``reauthorization_required`` in that case.
+    """
+    access_token = await ensure_fresh_access_token(session, account=account, settings=settings, now=start)
+    if access_token is None:
+        return []
+    if account.provider == "google":
+        return await google_calendar.list_events(access_token, start=start, end=end)
+    return await microsoft_calendar.list_events(access_token, start=start, end=end)
 
 
 def _event_summary(event: ObservedEvent, *, change_type: str) -> str:
@@ -241,16 +295,25 @@ async def sync_household_calendars(
     *,
     household_id: str,
     ha_client: HomeAssistantClient,
+    settings: Settings | None = None,
     now: datetime | None = None,
     window: timedelta = SYNC_WINDOW,
 ) -> SyncSummary:
-    """Fetch every enabled HA calendar entity's events, detect meaningful changes
-    against the last-known snapshot (Story 5.2), and create/update/resolve attention
-    items (Story 5.3). Deterministic and LLM-free throughout - see
+    """Fetch every enabled HA calendar entity's events plus every connected
+    Google/Microsoft account's events (Epic 5 v1 roadmap item 1), detect meaningful
+    changes against the last-known snapshot (Story 5.2), and create/update/resolve
+    attention items (Story 5.3). Deterministic and LLM-free throughout - see
     ``domain/calendar_change_detection.py``.
+
+    ``settings`` is optional only so callers with no external accounts configured
+    (most tests, any deployment that hasn't set up Google/Microsoft) don't have to
+    thread one through - external account sync is simply skipped when omitted.
     """
     sync_time = now or _now()
     entity_ids = await _enabled_entity_ids(session, household_id=household_id)
+    external_accounts = (
+        await _connected_external_accounts(session, household_id=household_id) if settings else []
+    )
 
     all_current_events: list[ObservedEvent] = []
     per_entity_current: dict[str, dict[str, ObservedEvent]] = {}
@@ -260,6 +323,18 @@ async def sync_household_calendars(
         observed_events = observe_events(raw_events, entity_id=entity_id, observed_at=sync_time)
         per_entity_current[entity_id] = {event.event_uid: event for event in observed_events}
         all_current_events.extend(observed_events)
+
+    for account in external_accounts:
+        assert settings is not None
+        entity_id = external_account_entity_id(account)
+        raw_events = await fetch_external_account_events(
+            session, account=account, start=sync_time, end=sync_time + window, settings=settings
+        )
+        observed_events = observe_events(raw_events, entity_id=entity_id, observed_at=sync_time)
+        per_entity_current[entity_id] = {event.event_uid: event for event in observed_events}
+        all_current_events.extend(observed_events)
+        account.last_synced_at = sync_time
+        account.record_version += 1
 
     for entity_id, current_by_uid in per_entity_current.items():
         previous_rows = list(
@@ -464,7 +539,7 @@ async def sync_household_calendars(
         )
     )
     return SyncSummary(
-        entities_synced=len(entity_ids),
+        entities_synced=len(entity_ids) + len(external_accounts),
         events_observed=len(all_current_events),
         attention_items_active=len(active_items),
     )

@@ -28,6 +28,7 @@ async def async_setup_entry(
             KinwardPetsSensor(coordinator),
             KinwardPendingApprovalsSensor(coordinator),
             KinwardAssistantsSensor(coordinator),
+            KinwardConnectedAccountsSensor(coordinator),
         ]
     )
 
@@ -282,6 +283,50 @@ class KinwardPendingApprovalsSensor(KinwardEntity, SensorEntity):
                 }
                 for action in self.coordinator.pending_actions
             ]
+        }
+
+
+class KinwardConnectedAccountsSensor(KinwardEntity, SensorEntity):
+    """Connected Google/Microsoft calendar accounts (Epic 5 v1 roadmap item 1/2) - off-script
+    per product owner: connecting an account itself happens on a Kinward-served setup page
+    (``setup_url``), not through this sensor or any HA service call, since only a real browser
+    redirect to the provider's consent screen can complete OAuth. This sensor exists so that
+    page is discoverable from Home Assistant, and so connection status - handy when a token
+    needs reauthorization - is visible without leaving HA.
+    """
+
+    _attr_name = "Connected accounts"
+    _attr_icon = "mdi:calendar-sync"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(self, coordinator: KinwardDataUpdateCoordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.household_id}-connected-accounts"
+
+    @property
+    def native_value(self) -> int:
+        return len(self.coordinator.connected_accounts)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, object]:
+        return {
+            "setup_url": f"{self.coordinator.client.base_url}/setup/accounts",
+            "needs_reauthorization": sum(
+                1
+                for account in self.coordinator.connected_accounts
+                if account.status == "reauthorization_required"
+            ),
+            "accounts": [
+                {
+                    "id": account.id,
+                    "provider": account.provider,
+                    "provider_account_email": account.provider_account_email,
+                    "status": account.status,
+                    "owner_display_name": account.owner_display_name,
+                    "last_synced_at": account.last_synced_at,
+                }
+                for account in self.coordinator.connected_accounts
+            ],
         }
 
 

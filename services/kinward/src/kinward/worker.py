@@ -201,7 +201,7 @@ async def sync_calendars(
             base_url=settings.home_assistant_url, token=settings.home_assistant_token
         )
         result = await sync_household_calendars(
-            session, household_id=summary.id, ha_client=resolved_ha_client, now=now
+            session, household_id=summary.id, ha_client=resolved_ha_client, settings=settings, now=now
         )
         await session.commit()
         return result
